@@ -97,7 +97,21 @@ python -X utf8 kline.py 2330 --name 台積電 --cost 850 --months 6
 
 # 5. 執行零臆測自動化交叉驗證測試
 python test_kline_logic.py
+
+# 6. 啟動 Streamlit 手機/電腦 Web 看盤應用
+streamlit run app.py
 ```
+
+### 📱 在 iPhone 上當成原生 App 使用（Streamlit + PWA）
+
+1. **一鍵部署至雲端（免費）**：
+   - 前往 [share.streamlit.io](https://share.streamlit.io) 登入 GitHub。
+   - 選擇您的儲存庫 `typa314/stock`，主執行檔設定為 `app.py`，點擊 **Deploy**。
+2. **加入 iPhone 主畫面**：
+   - 在 iPhone 上以 **Safari** 開啟您的專屬網址。
+   - 點擊下方 **「分享」** 按鈕 ➡️ 選擇 **「加入主畫面」**。
+   - 桌面即會產生專屬圖示，點開享有**全螢幕、無網址列的原生 App 看盤體驗**！
+
 
 ### 參數說明
 
@@ -182,5 +196,6 @@ python test_kline_logic.py
 
 | 日期 | 版本 / 變更內容 |
 |---|---|
+| **2026-09-03** | 📱 **全新發布：Streamlit 行動看盤 Web App (`app.py`)**<br>• 支援 iPhone PWA 全螢幕原生 App 操作體驗（支援 Safari 加入主畫面）<br>• 支援 Streamlit Community Cloud 一鍵免費零伺服器雲端部署<br>• 重構 `kline.py` 提供模組化 `analyze_stock()` 函式呼叫<br>• 新增熱門股一鍵切換、手機響應式卡片排版、快取加速與互動圖表 |
 | **2026-09-02** | 🚀 **重大升級：完整導入 Al Brooks 價格行為學（BPA）分析體系、主圖支撐壓力線與零臆測交叉驗證**<br>• 導入 20 EMA 唯一核心動態基準線與乖離斜率量化計算<br>• 導入 K 線逐根分類（Trend Bar、Reversal Bar、Inside Bar `i`/`ii`、Outside Bar、Doji）<br>• 導入 Always-In 市場狀態判定（AIL / AIS / TR）<br>• 導入經典高勝率交易設定情境濾網（High 1/2/3、Low 1/2/3、20 EMA Pullback、20 EMA Gap Bar）<br>• **主圖新增支撐與壓力矩陣可視化**（R1/R2/S1/S2/Stop-Loss/現價 彩色標註水平線）<br>• 導入 TWSE 證交所精確 Tick 級距規則，輸出 Buy Stop / Sell Stop、防守停損與 Measured Move 測量目標<br>• 建立 `.agents/skills/al-brooks-price-action/SKILL.md` 零臆測標準作業規範與自動化交叉驗證測試腳本 `test_kline_logic.py` |
 | **2026-09-01** | • 支援三大法人買賣超數據（外資、投信、自營商）與視覺化圖表<br>• 支援上市（TWSE）與上櫃（TPEX）雙市場自動切換 |
