@@ -7,12 +7,22 @@ __pycache__/
 *$py.class
 *.so
 
-# Environments
+# Environments & Secrets
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
 ENV/
+*.pem
+*.key
+*.pfx
+*.p12
+secrets.*
+credentials.*
+token.txt
+
 
 # IDE & Editors
 .vscode/
