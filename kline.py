@@ -27,7 +27,7 @@ HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 # ── 解析命令列參數 ────────────────────────────────────────
 parser = argparse.ArgumentParser(description="台股專業 K 線量價 + 籌碼 + 技術形態多維研判系統")
 parser.add_argument("ticker",       type=str,               help="股票代號，例如 3042")
-parser.add_argument("--months",     type=int,  default=12,  help="分析月數（預設 12）")
+parser.add_argument("--months",     type=int,  default=2,   help="分析月數（預設 2）")
 parser.add_argument("--cost",       type=float,default=None, help="持有成本（元）")
 parser.add_argument("--name",       type=str,  default=None, help="自訂股票名稱")
 args = parser.parse_args()
