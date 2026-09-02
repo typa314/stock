@@ -35,7 +35,7 @@ HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 # ── 解析命令列參數 ────────────────────────────────────────
 parser = argparse.ArgumentParser(description="台股 K 線量價分析")
 parser.add_argument("ticker",       type=str,               help="股票代號，例如 3042")
-parser.add_argument("--months",     type=int,  default=12,  help="分析月數（預設 12）")
+parser.add_argument("--months",     type=int,  default=1,   help="分析月數（預設 1）")
 parser.add_argument("--cost",       type=float,default=None, help="持有成本（元）")
 parser.add_argument("--name",       type=str,  default=None, help="自訂股票名稱")
 args = parser.parse_args()
@@ -186,9 +186,9 @@ df["breakout"] = breakout
 df["pullback"]  = pullback
 df["diverge"]   = diverge
 
-# ── 6. 三大法人資料（近30個交易日，僅上市TSE） ──────────────────
+# ── 6. 三大法人資料（近5個交易日，僅上市TSE） ──────────────────
 
-def fetch_institutional(ticker, market, days=30):
+def fetch_institutional(ticker, market, days=5):
     """從 TWSE T86 API 逐日抓取個股三大法人買賣超（張），回傳 DataFrame"""
     if market != "tse":
         return pd.DataFrame()   # OTC 暫不支援
@@ -229,8 +229,8 @@ def fetch_institutional(ticker, market, days=30):
     inst = pd.DataFrame(records).sort_values("date").reset_index(drop=True)
     return inst
 
-print("\n抓取三大法人資料中（近30個交易日）...")
-inst_df = fetch_institutional(TICKER, MARKET, days=30)
+print("\n抓取三大法人資料中（近5個交易日）...")
+inst_df = fetch_institutional(TICKER, MARKET, days=5)
 if not inst_df.empty:
     print(f"[OK] 取得 {len(inst_df)} 筆法人資料")
 else:
