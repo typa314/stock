@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-台股專業量價 + Al Brooks 價格行為學（BPA）行動看盤 Web App
-支援 iPhone PWA 全螢幕原生體驗與 Streamlit Community Cloud 部署
+台股專業量價 + Al Brooks 價格行為學（BPA）極速輕量行動看盤 Web App
+專注 BPA 價格行為學、20 EMA 基準、支撐壓力矩陣與風控掛單指引
 """
 
 import streamlit as st
@@ -13,7 +13,7 @@ from kline import analyze_stock, get_info
 # ── 1. 頁面設定（手機版體驗最佳化） ─────────────────────────
 st.set_page_config(
     page_title="台股 BPA 價格行為學",
-    page_icon="📈",
+    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -67,7 +67,7 @@ def get_cached_analysis(ticker, months, cost):
     return analyze_stock(ticker=ticker, months=months, cost=cost, generate_html=False, print_report=False)
 
 # ── 3. 頂部導覽與股票選擇區 ──────────────────────────────────
-st.markdown("### 📈 台股多維量價 + Al Brooks BPA 研判")
+st.markdown("### ⚡ 台股 Al Brooks BPA 價格行為研判")
 
 # 快捷熱門股按鈕
 quick_tickers = [
@@ -101,7 +101,7 @@ current_ticker = st.session_state["ticker"]
 
 # ── 4. 執行研判與展示 ──────────────────────────────────────
 try:
-    with st.spinner(f"正在分析 {current_ticker} 最新量價與籌碼..."):
+    with st.spinner(f"正在分析 {current_ticker} BPA 價格行為與位階..."):
         res = get_cached_analysis(current_ticker, months_opt, cost_val)
 except Exception as e:
     st.error(f"⚠️ 無法取得股票代號【{current_ticker}】的資料：{e}")
@@ -210,11 +210,8 @@ st.markdown(f"""
 if bpa_res["signals"]:
     st.info("💡 **近期觸發之 BPA 關鍵設定：** " + " ｜ ".join(bpa_res["signals"]))
 
-# ── 4.3 互動式多層 K 線圖表 ──────────────────────────────────
-st.plotly_chart(res["fig"], use_container_width=True, config={"displayModeBar": False, "scrollZoom": True})
-
-# ── 4.4 深度分析分頁（支撐壓力 / 三大法人 / 多因子明細 / 操盤行動）
-tab1, tab2, tab3, tab4 = st.tabs(["🎯 支撐壓力矩陣", "🏛️ 三大法人籌碼", "🧭 多維因子評分", "💡 操盤行動指引"])
+# ── 4.3 核心分析分頁（支撐壓力 / 趨勢與BPA細項 / 操盤行動指引） ────────
+tab1, tab2, tab3 = st.tabs(["🎯 支撐壓力矩陣", "🧭 趨勢與 BPA 評估明細", "💡 操盤行動指引"])
 
 with tab1:
     s_col1, s_col2 = st.columns(2)
@@ -230,21 +227,13 @@ with tab1:
         st.markdown(f"- **防守停損線 (Stop-Loss Pivot)**：`{sr['stop_loss']:.2f} 元`")
 
 with tab2:
-    inst_df = res["inst_df"]
-    if not inst_df.empty:
-        show_inst = inst_df.tail(5)[["date", "fini", "trust", "dealer", "total"]].copy()
-        show_inst["date"] = show_inst["date"].dt.strftime("%m/%d")
-        show_inst.columns = ["日期", "外資(張)", "投信(張)", "自營商(張)", "三大合計(張)"]
-        st.dataframe(show_inst.set_index("日期"), use_container_width=True)
-    else:
-        st.info("上櫃股票（OTC）或目前時段查無三大法人集中買賣超資料。")
-
-with tab3:
     st.write(f"**綜合評級：** `{badge}` ｜ **總得分：** `{trend_score:+d} 分`")
-    for factor in res["trend_factors"]:
+    # 過濾只保留純價格行為、趨勢與均線位階相關因子
+    clean_factors = [f for f in res["trend_factors"] if "法人" not in f and "MACD" not in f and "量" not in f]
+    for factor in clean_factors:
         st.markdown(f"- {factor}")
 
-with tab4:
+with tab3:
     if trend_score >= 3:
         st.success("🟢 **【持股者】** 趨勢偏多，多頭結構穩健，建議續抱並以 S1（月線）作為移動停利點。\n\n"
                    "🟢 **【空手者】** 逢拉回量縮測試 S1 守穩時可分批建立部位，突破 R1 放量加碼。")
@@ -252,7 +241,7 @@ with tab4:
         st.error("🔴 **【持股者】** 趨勢偏空且空方動能增強，反彈遇 R1/MA60 宜逢高減碼，跌破防守線務必停損。\n\n"
                  "🔴 **【空手者】** 暫勿盲目猜底接刀，靜待打底完成或出現帶量底背離反轉再進場。")
     else:
-        st.warning("🟡 **【持股者】** 短線處於區間震盪打底，未跌破防守線前可暫時觀望，密切留意法人籌碼延續性。\n\n"
+        st.warning("🟡 **【持股者】** 短線處於區間震盪打底，未跌破防守線前可暫時觀望，密切留意多空延續性。\n\n"
                    "🟡 **【空手者】** 觀望為主，靜待帶量突破 R1 壓力或回測 S2 底部確認再行佈局。")
 
 # ── 5. iPhone 主畫面捷徑說明 ─────────────────────────────────
@@ -262,5 +251,5 @@ with st.expander("📱 如何在 iPhone 上將此頁面變成原生 App？", exp
     2. 點選螢幕底部的 **「分享」按鈕**（帶箭頭的方框圖示）。
     3. 向下滑動找到並點擊 **「加入主畫面」(Add to Home Screen)**。
     4. 自訂名稱（例如：`台股BPA看盤`），點擊右上角 **「新增」**。
-    5. 返回桌面即可看到專屬圖示，點開後將享有**無網址列的全螢幕原生 App 體驗**！
+    5. 返回桌面即可看到專屬圖示，點開後將享有**極速、無網址列的全螢幕原生 App 體驗**！
     """)
