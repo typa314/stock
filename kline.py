@@ -1,22 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-台股 K 線量價 + 技術指標 + 三大法人分析工具
---------------------------------------------
-資料來源：
-  上市（TSE） → TWSE 官方 rwd API
-  上櫃（OTC） → yfinance（代號自動加 .TWO）
-
-用法：
-  python kline.py 3042
-  python kline.py 6643 --months 12
-  python kline.py 3042 --name 晶技 --cost 190
-  python kline.py 2330 --name 台積電 --cost 850 --months 6
-
-參數：
-  ticker        股票代號（必填，純數字）
-  --months N    分析月數，預設 12
-  --cost   N    持有成本（元），圖表顯示成本線
-  --name   STR  自訂股票名稱（選填）
+台股專業 K 線量價 + 籌碼 + 技術形態多維研判系統
+------------------------------------------------------
+核心架構：
+  1. 趨勢結構：Stan Weinstein 四階段理論 + 均線斜率（Slope）與排列
+  2. 價格行為（Price Action）：多空吞噬、錘子線、流星線、孕線、晨星/暮星
+  3. 量價分析（Wyckoff & VPA）：放量突破、量縮回測、窒息量、爆量滯漲、指標頂/底背離
+  4. 籌碼結構：三大法人集中度、買賣超佔比、土洋同步/對作研判
+  5. 關鍵價位：支撐與壓力矩陣（S1/S2/R1/R2）與動態停損點
 """
 
 import sys
@@ -34,7 +25,7 @@ from dateutil.relativedelta import relativedelta
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 
 # ── 解析命令列參數 ────────────────────────────────────────
-parser = argparse.ArgumentParser(description="台股 K 線量價 + 技術指標 + 三大法人分析")
+parser = argparse.ArgumentParser(description="台股專業 K 線量價 + 籌碼 + 技術形態多維研判系統")
 parser.add_argument("ticker",       type=str,               help="股票代號，例如 3042")
 parser.add_argument("--months",     type=int,  default=12,  help="分析月數（預設 12）")
 parser.add_argument("--cost",       type=float,default=None, help="持有成本（元）")
@@ -66,7 +57,6 @@ print(f"[INFO] {TICKER}（{STOCK_NAME}）| {'上市(TSE)' if MARKET=='tse' else 
 
 # ── 2. 抓歷史資料 ────────────────────────────────────────────
 def fetch_twse(ticker, months):
-    """上市：TWSE rwd API 逐月抓取"""
     now   = datetime.now()
     start = now - relativedelta(months=months)
     records = []
@@ -85,7 +75,7 @@ def fetch_twse(ticker, months):
                     date_fmt = f"{int(yy_tw)+1911}-{mm}-{dd}"
                     records.append({
                         "date":   date_fmt,
-                        "volume": int(row[1].replace(",", "")) / 1000,  # 股→張
+                        "volume": int(row[1].replace(",", "")) / 1000,
                         "open":   float(row[3].replace(",", "")),
                         "high":   float(row[4].replace(",", "")),
                         "low":    float(row[5].replace(",", "")),
@@ -100,7 +90,6 @@ def fetch_twse(ticker, months):
     return records
 
 def fetch_otc(ticker, months):
-    """上櫃：yfinance .TWO 後綴"""
     end   = datetime.now()
     start = end - relativedelta(months=months)
     sym   = ticker + ".TWO"
@@ -114,7 +103,7 @@ def fetch_otc(ticker, months):
         raw.columns = raw.columns.get_level_values(0)
     df = raw.reset_index()
     df.columns = [c.lower() for c in df.columns]
-    df["volume"] = df["volume"] / 1000  # 股→張
+    df["volume"] = df["volume"] / 1000
     return df[["date","open","high","low","close","volume"]].to_dict("records")
 
 print(f"下載近 {MONTHS} 個月歷史資料中...")
@@ -165,7 +154,7 @@ for n in MA_DAYS:
     df[f"ma{n}"] = df["close"].rolling(n, min_periods=1).mean()
 df["vol_ma"] = df["volume"].rolling(VOL_MA, min_periods=1).mean()
 
-# RSI(14) — Wilder EMA
+# RSI(14)
 _delta    = df["close"].diff()
 _gain     = _delta.clip(lower=0)
 _loss     = -_delta.clip(upper=0)
@@ -180,7 +169,7 @@ df["macd"]        = _ema12 - _ema26
 df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
 df["macd_hist"]   = df["macd"] - df["macd_signal"]
 
-# KD(9, 3, 3) — RSV → K(EMA) → D(EMA)
+# KD(9, 3, 3)
 _low9  = df["low"].rolling(9, min_periods=1).min()
 _high9 = df["high"].rolling(9, min_periods=1).max()
 df["kd_rsv"] = (df["close"] - _low9) / (_high9 - _low9 + 1e-9) * 100
@@ -192,33 +181,82 @@ df["bb_mid"]   = df["close"].rolling(20, min_periods=1).mean()
 _bb_std        = df["close"].rolling(20, min_periods=1).std(ddof=0).fillna(0)
 df["bb_upper"] = df["bb_mid"] + 2 * _bb_std
 df["bb_lower"] = df["bb_mid"] - 2 * _bb_std
+df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / (df["bb_mid"] + 1e-9) * 100
 
-# ── 5. 量價訊號 ───────────────────────────────────────────
-close  = df["close"].values.astype(float)
-high   = df["high"].values.astype(float)
-low    = df["low"].values.astype(float)
-volume = df["volume"].values.astype(float)
-vol_ma = df["vol_ma"].values.astype(float)
-ma5    = df["ma5"].values.astype(float)
-N      = len(df)
+# ── 5. 專業量價與 Price Action 形態識別 ─────────────────────────
+close_arr = df["close"].values.astype(float)
+open_arr  = df["open"].values.astype(float)
+high_arr  = df["high"].values.astype(float)
+low_arr   = df["low"].values.astype(float)
+vol_arr   = df["volume"].values.astype(float)
+vol_ma_arr= df["vol_ma"].values.astype(float)
+ma5_arr   = df["ma5"].values.astype(float)
+N         = len(df)
 
-high20 = np.array([high[max(0,i-20):i].max() if i > 0 else high[0] for i in range(N)])
+# K 線實體與上下影線
+body_arr     = np.abs(close_arr - open_arr)
+candle_range = np.maximum(high_arr - low_arr, 1e-5)
+upper_shadow = high_arr - np.maximum(open_arr, close_arr)
+lower_shadow = np.minimum(open_arr, close_arr) - low_arr
+
+# 5.1 放量突破 (Volume Breakout)
+high20 = np.array([high_arr[max(0,i-20):i].max() if i > 0 else high_arr[0] for i in range(N)])
 breakout = np.zeros(N, dtype=bool)
-breakout[1:] = (close[1:] > high20[1:]) & (volume[1:] > 1.5 * vol_ma[1:])
+breakout[1:] = (close_arr[1:] > high20[1:]) & (vol_arr[1:] > 1.5 * vol_ma_arr[1:])
 
-pullback = (np.abs(close - ma5) / ma5 < 0.01) & (volume < 0.7 * vol_ma)
+# 5.2 量縮回測 (Low Volume Pullback)
+pullback = (np.abs(close_arr - ma5_arr) / ma5_arr < 0.015) & (vol_arr < 0.75 * vol_ma_arr)
 
-diverge = np.zeros(N, dtype=bool)
-for i in range(2, N):
-    diverge[i] = (close[i] < close[i-1] < close[i-2]) and (volume[i] > volume[i-1] > volume[i-2])
+# 5.3 窒息量 (Volume Dry-Up, 變盤前夕)
+dryup = vol_arr < 0.45 * vol_ma_arr
 
-df["breakout"] = breakout
-df["pullback"]  = pullback
-df["diverge"]   = diverge
+# 5.4 爆量滯漲 / 出貨警訊 (Volume Churning / Distribution)
+churn = (vol_arr > 1.8 * vol_ma_arr) & ((upper_shadow / candle_range > 0.4) | (body_arr / candle_range < 0.25))
+
+# 5.5 多頭吞噬 (Bullish Engulfing) & 空頭吞噬 (Bearish Engulfing)
+bull_engulf = np.zeros(N, dtype=bool)
+bear_engulf = np.zeros(N, dtype=bool)
+for i in range(1, N):
+    if (close_arr[i-1] < open_arr[i-1]) and (close_arr[i] > open_arr[i]):
+        if open_arr[i] <= close_arr[i-1] and close_arr[i] >= open_arr[i-1]:
+            bull_engulf[i] = True
+    elif (close_arr[i-1] > open_arr[i-1]) and (close_arr[i] < open_arr[i]):
+        if open_arr[i] >= close_arr[i-1] and close_arr[i] <= open_arr[i-1]:
+            bear_engulf[i] = True
+
+# 5.6 錘子線 (Hammer, 探底回升) & 流星線 (Shooting Star, 高檔反壓)
+hammer = (lower_shadow >= 2.0 * body_arr) & (upper_shadow <= 0.15 * candle_range)
+star   = (upper_shadow >= 2.0 * body_arr) & (lower_shadow <= 0.15 * candle_range)
+
+# 5.7 指標頂背離 (Bearish Divergence) 與底背離 (Bullish Divergence)
+rsi_arr  = df["rsi"].values.astype(float)
+macd_arr = df["macd"].values.astype(float)
+bull_div = np.zeros(N, dtype=bool)
+bear_div = np.zeros(N, dtype=bool)
+
+for i in range(15, N):
+    # 底背離：股價破 15 日新低，但 RSI 或 MACD 低點未破新低
+    if close_arr[i] < close_arr[i-15:i].min():
+        if rsi_arr[i] > rsi_arr[i-15:i].min() + 2:
+            bull_div[i] = True
+    # 頂背離：股價創 15 日新高，但 RSI 或 MACD 高點未破新高
+    if close_arr[i] > close_arr[i-15:i].max():
+        if rsi_arr[i] < rsi_arr[i-15:i].max() - 2:
+            bear_div[i] = True
+
+df["breakout"]    = breakout
+df["pullback"]    = pullback
+df["dryup"]       = dryup
+df["churn"]       = churn
+df["bull_engulf"] = bull_engulf
+df["bear_engulf"] = bear_engulf
+df["hammer"]      = hammer
+df["star"]        = star
+df["bull_div"]    = bull_div
+df["bear_div"]    = bear_div
 
 # ── 6. 三大法人資料（近5個交易日，僅上市TSE） ──────────────────
 def fetch_institutional(ticker, market, days=5):
-    """從 TWSE T86 API 逐日抓取個股三大法人買賣超（張），回傳 DataFrame"""
     if market != "tse":
         return pd.DataFrame()
 
@@ -265,159 +303,175 @@ if not inst_df.empty:
 else:
     print("[WARN] 無法取得三大法人資料（OTC 股票或資料不可用）")
 
-# ── 7. 法人訊號評估 ───────────────────────────────────────
-inst_signal = "N/A"
-inst_consecutive_buy = 0
-inst_consecutive_sell = 0
-if not inst_df.empty:
-    recent = inst_df.tail(5)
-    total_5d = recent["total"].sum()
+# ── 7. 專業趨勢研判體系 (Professional Trend Evaluation) ───────────
+def evaluate_professional_trend(df, inst_df):
+    score = 0
+    factors = []
+    
+    close_v   = df["close"].iloc[-1]
+    ma5_v     = df["ma5"].iloc[-1]
+    ma20_v    = df["ma20"].iloc[-1]
+    ma60_v    = df["ma60"].iloc[-1]
+    rsi_v     = df["rsi"].iloc[-1]
+    macd_v    = df["macd"].iloc[-1]
+    sig_v     = df["macd_signal"].iloc[-1]
+    hist_v    = df["macd_hist"].iloc[-1]
+    k_v       = df["kd_k"].iloc[-1]
+    d_v       = df["kd_d"].iloc[-1]
+    bb_mid_v  = df["bb_mid"].iloc[-1]
+    bb_upper_v= df["bb_upper"].iloc[-1]
+    bb_lower_v= df["bb_lower"].iloc[-1]
+    vol_v     = df["volume"].iloc[-1]
+    vol_ma_v  = df["vol_ma"].iloc[-1]
 
-    for v in reversed(inst_df["total"].values):
-        if v > 0:
-            inst_consecutive_buy += 1
-            if inst_consecutive_sell > 0:
-                break
-        elif v < 0:
-            inst_consecutive_sell += 1
-            if inst_consecutive_buy > 0:
-                break
-        else:
-            break
+    # 7.1 均線斜率與階段分析 (Weinstein Stage Analysis)
+    # 計算 MA20 & MA60 近 5 日斜率
+    ma20_5d_ago = df["ma20"].iloc[-5] if len(df) >= 5 else ma20_v
+    ma60_5d_ago = df["ma60"].iloc[-5] if len(df) >= 5 else ma60_v
+    slope_ma20  = (ma20_v - ma20_5d_ago) / (ma20_5d_ago + 1e-9) * 100
+    slope_ma60  = (ma60_v - ma60_5d_ago) / (ma60_5d_ago + 1e-9) * 100
 
-    if total_5d > 1000:
-        inst_signal = f"強力買超（5日合計 >{total_5d:,}張）"
-    elif total_5d > 0:
-        inst_signal = f"小幅買超（5日合計 +{total_5d:,}張）"
-    elif total_5d < -1000:
-        inst_signal = f"強力賣超（5日合計 {total_5d:,}張）"
+    if ma20_v > ma60_v and slope_ma20 > 0.3 and slope_ma60 >= 0:
+        stage = "第 2 階段（主升/多頭推進）"
+        stage_score = +2
+        stage_desc = f"MA20與MA60向上發散（月線斜率 +{slope_ma20:.2f}%）"
+    elif ma20_v < ma60_v and slope_ma20 < -0.3 and slope_ma60 <= 0:
+        stage = "第 4 階段（主跌/空頭修正）"
+        stage_score = -2
+        stage_desc = f"MA20與MA60向下發散（月線斜率 {slope_ma20:.2f}%）"
+    elif slope_ma60 < 0 and ma20_v < ma60_v and slope_ma20 >= -0.2:
+        stage = "第 1 階段（打底築底/跌勢收斂）"
+        stage_score = 0
+        stage_desc = "季線下彎但月線開始走平，進入區間打底"
     else:
-        inst_signal = f"小幅賣超（5日合計 {total_5d:,}張）"
+        stage = "第 3 階段（高檔做頭/震盪分價）"
+        stage_score = -1
+        stage_desc = "均線糾結鈍化，方向性暫不明朗"
 
-# ── 7.5 綜合趨勢評分（-8 ~ +8）────────────────────────────
-def calc_trend_score(df, inst_df):
-    score   = 0
-    details = []
+    score += stage_score
+    factors.append(f"【趨勢結構】{stage_score:+d}分 | {stage}：{stage_desc}")
 
-    ma5_v   = df["ma5"].iloc[-1]
-    ma20_v  = df["ma20"].iloc[-1]
-    ma60_v  = df["ma60"].iloc[-1]
-    rsi_v   = df["rsi"].iloc[-1]
-    macd_v  = df["macd"].iloc[-1]
-    sig_v   = df["macd_signal"].iloc[-1]
-    k_v     = df["kd_k"].iloc[-1]
-    d_v     = df["kd_d"].iloc[-1]
-    bb_mid_v   = df["bb_mid"].iloc[-1]
-    bb_upper_v = df["bb_upper"].iloc[-1]
-    bb_lower_v = df["bb_lower"].iloc[-1]
-    close_v = df["close"].iloc[-1]
-    vol_v   = df["volume"].iloc[-1]
-    vol_ma_v= df["vol_ma"].iloc[-1]
-
-    # ① 均線排列
-    if ma5_v > ma20_v > ma60_v:
-        score += 2; details.append("均線 +2  多頭排列（MA5>MA20>MA60）")
-    elif ma5_v < ma20_v < ma60_v:
-        score -= 2; details.append("均線 -2  空頭排列（MA5<MA20<MA60）")
-    else:
-        details.append("均線  0  均線糾結，方向未明")
-
-    # ② RSI(14)
-    if 50 <= rsi_v <= 70:
-        score += 2; details.append(f"RSI  +2  強勢區間（RSI={rsi_v:.1f}，50~70）")
-    elif rsi_v > 70:
-        score += 1; details.append(f"RSI  +1  超買（RSI={rsi_v:.1f}），留意回調")
-    elif 30 <= rsi_v < 50:
-        score -= 1; details.append(f"RSI  -1  弱勢區間（RSI={rsi_v:.1f}，30~50）")
-    else:
-        score += 1; details.append(f"RSI  +1  超賣反彈機會（RSI={rsi_v:.1f}<30）")
-
-    # ③ MACD(12,26,9)
-    macd_cross = ""
-    if len(df) >= 2:
-        prev_macd = df["macd"].iloc[-2]
-        prev_sig  = df["macd_signal"].iloc[-2]
-        if prev_macd < prev_sig and macd_v > sig_v:
-            macd_cross = "黃金交叉🔔"
-        elif prev_macd > prev_sig and macd_v < sig_v:
-            macd_cross = "死亡交叉⚠️"
-
-    if macd_v > 0 and macd_v > sig_v:
-        s = 2 if "黃金" in macd_cross else 1
-        score += s
-        details.append(f"MACD +{s}  正值多方 MACD={macd_v:+.2f} {'・'+macd_cross if macd_cross else ''}")
-    elif macd_v < 0 and macd_v < sig_v:
-        s = -2 if "死亡" in macd_cross else -1
-        score += s
-        details.append(f"MACD {s}  負值空方 MACD={macd_v:+.2f} {'・'+macd_cross if macd_cross else ''}")
-    elif macd_v > sig_v:
+    # 7.2 均線支撐壓力位置與乖離率 (Bias)
+    bias_ma20 = (close_v - ma20_v) / ma20_v * 100
+    if close_v > ma5_v and close_v > ma20_v:
         score += 1
-        details.append(f"MACD +1  MACD>Signal，偏多（MACD={macd_v:+.2f}）{'・'+macd_cross if macd_cross else ''}")
-    else:
+        factors.append(f"【均線位階】+1分 | 站上 5MA 與 20MA（乖離率 {bias_ma20:+.1f}%）")
+    elif close_v < ma5_v and close_v < ma20_v:
         score -= 1
-        details.append(f"MACD -1  MACD<Signal，偏空（MACD={macd_v:+.2f}）{'・'+macd_cross if macd_cross else ''}")
-
-    # ④ KD(9,3,3)
-    if k_v > d_v and k_v < 80:
-        score += 1
-        details.append(f"KD   +1  K({k_v:.1f})>D({d_v:.1f})，多方排列")
-    elif k_v > d_v and k_v >= 80:
-        details.append(f"KD    0  K({k_v:.1f})超買，謹慎追高")
-    elif k_v < d_v and k_v > 20:
-        score -= 1
-        details.append(f"KD   -1  K({k_v:.1f})<D({d_v:.1f})，空方排列")
+        factors.append(f"【均線位階】-1分 | 跌破 5MA 與 20MA，短線失守支撐")
     else:
-        details.append(f"KD    0  K({k_v:.1f})超賣，留意技術反彈")
+        factors.append(f"【均線位階】 0分 | 夾於 5MA 與 20MA 之間震盪")
 
-    # ⑤ 布林帶位置
-    bb_pct = (close_v - bb_lower_v) / (bb_upper_v - bb_lower_v + 1e-9) * 100
-    if close_v >= bb_mid_v:
-        score += 1
-        details.append(f"布林 +1  收盤於中軌上方（%B={bb_pct:.0f}%，上軌={bb_upper_v:.2f}）")
+    # 7.3 動量與指標結構 (MACD / RSI / KD)
+    macd_cross = "黃金交叉🔔" if (len(df)>=2 and df["macd"].iloc[-2] < df["macd_signal"].iloc[-2] and macd_v > sig_v) else \
+                 "死亡交叉⚠️" if (len(df)>=2 and df["macd"].iloc[-2] > df["macd_signal"].iloc[-2] and macd_v < sig_v) else ""
+
+    if macd_v > 0 and hist_v > 0:
+        m_score = +2 if "黃金" in macd_cross else +1
+        factors.append(f"【動量指標】{m_score:+d}分 | MACD 零軸上多方擴張（DIF={macd_v:+.2f}，柱體={hist_v:+.2f} {macd_cross}）")
+    elif macd_v < 0 and hist_v < 0:
+        m_score = -2 if "死亡" in macd_cross else -1
+        factors.append(f"【動量指標】{m_score:+d}分 | MACD 零軸下空方主導（DIF={macd_v:+.2f}，柱體={hist_v:+.2f} {macd_cross}）")
+    elif hist_v > 0:
+        m_score = +1
+        factors.append(f"【動量指標】+1分 | MACD 柱體轉正收紅（DIF={macd_v:+.2f}）")
     else:
-        score -= 1
-        details.append(f"布林 -1  收盤於中軌下方（%B={bb_pct:.0f}%，下軌={bb_lower_v:.2f}）")
+        m_score = -1
+        factors.append(f"【動量指標】-1分 | MACD 柱體轉負翻綠（DIF={macd_v:+.2f}）")
+    score += m_score
 
-    # ⑥ 法人籌碼
-    if not inst_df.empty:
-        total_5d = inst_df.tail(5)["total"].sum()
-        if total_5d > 500:
-            score += 1; details.append(f"法人 +1  5日買超 +{total_5d:,}張")
-        elif total_5d < -500:
-            score -= 1; details.append(f"法人 -1  5日賣超 {total_5d:,}張")
-        else:
-            details.append(f"法人  0  5日籌碼中立（{total_5d:+,}張）")
+    # RSI 位階
+    if 50 <= rsi_v <= 68:
+        score += 1; factors.append(f"【強弱擺盪】+1分 | RSI={rsi_v:.1f}（多方健康強勢區 50~68）")
+    elif rsi_v > 68:
+        factors.append(f"【強弱擺盪】 0分 | RSI={rsi_v:.1f}（進入過熱超買區 >68，防拉回）")
+    elif 32 <= rsi_v < 50:
+        score -= 1; factors.append(f"【強弱擺盪】-1分 | RSI={rsi_v:.1f}（空方弱勢整理區 32~50）")
     else:
-        details.append("法人  -   OTC/無資料")
+        factors.append(f"【強弱擺盪】 0分 | RSI={rsi_v:.1f}（進入超賣區 <32，隨時具反彈力道）")
 
-    # ⑦ 量價訊號
+    # 7.4 Price Action 與量價特徵 (近 3 日)
+    pa_signals = []
+    if df["bull_div"].tail(3).any():
+        score += 2; pa_signals.append("出現指標底背離（潛在反轉）🔥")
+    if df["bear_div"].tail(3).any():
+        score -= 2; pa_signals.append("出現指標頂背離（高檔誘多）⚠️")
     if df["breakout"].tail(3).any():
-        score += 1; details.append("量價 +1  近3日出現放量突破")
-    elif df["diverge"].tail(3).any():
-        score -= 1; details.append("量價 -1  近3日出現量價背離")
+        score += 2; pa_signals.append("放量長陽突破 20 日高點🚀")
+    if df["churn"].tail(3).any():
+        score -= 2; pa_signals.append("爆量滯漲/上影線沉重（籌碼鬆動）⚠️")
+    if df["bull_engulf"].tail(2).any():
+        score += 1; pa_signals.append("多頭吞噬（陽包陰）")
+    if df["bear_engulf"].tail(2).any():
+        score -= 1; pa_signals.append("空頭吞噬（陰包陽）")
+    if df["hammer"].tail(2).any():
+        score += 1; pa_signals.append("長下影錘子線（低接承接強）")
+    if df["star"].tail(2).any():
+        score -= 1; pa_signals.append("長上影流星線（上方解套賣壓大）")
+    if df["dryup"].tail(2).any():
+        pa_signals.append("出現極度窒息量（變盤前夕）")
+
+    if pa_signals:
+        factors.append(f"【K線形態】{' / '.join(pa_signals)}")
     else:
-        details.append("量價  0  無明顯量價訊號")
+        factors.append("【K線形態】近幾日無特殊反轉或突破形態")
 
-    # ⑧ 均量比較
-    if vol_v > vol_ma_v * 1.2:
-        score += 1; details.append(f"量比 +1  今量({vol_v:,.0f}) 明顯 > 均量({vol_ma_v:,.0f})")
-    elif vol_v < vol_ma_v * 0.7:
-        score -= 1; details.append(f"量比 -1  今量({vol_v:,.0f}) 明顯萎縮 < 均量*0.7")
+    # 7.5 籌碼面深度分析 (三大法人)
+    if not inst_df.empty:
+        last_inst = inst_df.iloc[-1]
+        fini_last = last_inst["fini"]
+        trust_last= last_inst["trust"]
+        total_last= last_inst["total"]
+        total_5d  = inst_df.tail(5)["total"].sum()
+        
+        # 法人買賣佔成交量比重 (集中度)
+        inst_ratio = abs(total_last) / (vol_v + 1e-9) * 100
+
+        # 土洋同步 / 對作分析
+        if fini_last > 100 and trust_last > 50:
+            c_desc = f"外資({fini_last:+,}) 與 投信({trust_last:+,}) 雙作多，土洋聯手看多"
+            c_score = +2
+        elif fini_last < -100 and trust_last < -50:
+            c_desc = f"外資({fini_last:+,}) 與 投信({trust_last:+,}) 雙賣超，土洋聯手提款"
+            c_score = -2
+        elif fini_last > 500:
+            c_desc = f"外資單日大幅加碼 {fini_last:+,} 張（佔量 {inst_ratio:.1f}%）"
+            c_score = +1
+        elif fini_last < -500:
+            c_desc = f"外資單日沈重調節 {fini_last:+,} 張（佔量 {inst_ratio:.1f}%）"
+            c_score = -1
+        else:
+            c_desc = f"5日法人合計 {total_5d:+,} 張，單日動向中性"
+            c_score = 0
+
+        score += c_score
+        factors.append(f"【法人籌碼】{c_score:+d}分 | {c_desc}")
     else:
-        details.append(f"量比  0  量能持平（今={vol_v:,.0f} / 均={vol_ma_v:,.0f}）")
+        factors.append("【法人籌碼】 0分 | 上櫃/無即時法人數據")
 
-    return score, details
+    return score, stage, factors
 
-trend_score, trend_details = calc_trend_score(df, inst_df)
+trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df)
 
-def score_to_rating(s):
-    if s >= 6:   return "⭐⭐⭐ 強烈多頭"
-    if s >= 4:   return "⭐⭐  偏多"
-    if s >= 1:   return "⭐   弱多 / 觀望偏多"
-    if s == 0:   return "     中立觀望"
-    if s >= -3:  return "▽   弱空 / 觀望偏空"
-    if s >= -5:  return "▽▽  偏空"
-    return            "▽▽▽ 強烈空頭"
+# 評級映射
+def get_rating_badge(s):
+    if s >= 6:   return "🟢 強烈多頭（動能充沛，偏多操作）"
+    if s >= 3:   return "🟢 溫和偏多（震盪盤堅，支撐守穩）"
+    if s >= 1:   return "🟡 中性微多（均線整理，等待方向）"
+    if s == 0:   return "🟡 中立盤整（多空拉鋸，靜待放量）"
+    if s >= -2:  return "🟠 中性微空（反彈無力，下方測底）"
+    if s >= -5:  return "🔴 溫和偏空（空頭承壓，反彈宜減碼）"
+    return            "🔴 強烈空頭（主跌段，切勿盲目接刀）"
+
+rating_badge = get_rating_badge(trend_score)
+
+# ── 7.6 關鍵支撐壓力矩陣 (Support & Resistance) ───────────────
+close_now = df["close"].iloc[-1]
+r1 = round(df["high"].tail(20).max(), 2)
+r2 = round(df["bb_upper"].iloc[-1], 2)
+s1 = round(df["ma20"].iloc[-1], 2)
+s2 = round(df["low"].tail(20).min(), 2)
+stop_loss = round(s2 * 0.985, 2)
 
 # ── 8. 繪圖 ──────────────────────────────────────────────
 n_inst = 1 if not inst_df.empty else 0
@@ -442,40 +496,44 @@ fig.add_trace(go.Candlestick(
 
 for n_ma, color in zip(MA_DAYS, MA_COLORS):
     fig.add_trace(go.Scatter(x=df["date"], y=df[f"ma{n_ma}"],
-        mode="lines", line=dict(color=color, width=1), name=f"MA{n_ma}"), row=1, col=1)
+        mode="lines", line=dict(color=color, width=1.2), name=f"MA{n_ma}"), row=1, col=1)
 
 # 布林帶
 fig.add_trace(go.Scatter(
     x=df["date"], y=df["bb_upper"], mode="lines",
-    line=dict(color="rgba(148,163,184,0.5)", width=1, dash="dot"),
+    line=dict(color="rgba(148,163,184,0.45)", width=1, dash="dot"),
     name="BB上軌"), row=1, col=1)
 fig.add_trace(go.Scatter(
     x=df["date"], y=df["bb_lower"], mode="lines",
-    line=dict(color="rgba(148,163,184,0.5)", width=1, dash="dot"),
-    fill="tonexty", fillcolor="rgba(148,163,184,0.08)",
+    line=dict(color="rgba(148,163,184,0.45)", width=1, dash="dot"),
+    fill="tonexty", fillcolor="rgba(148,163,184,0.07)",
     name="BB下軌"), row=1, col=1)
 fig.add_trace(go.Scatter(
     x=df["date"], y=df["bb_mid"], mode="lines",
-    line=dict(color="rgba(148,163,184,0.7)", width=1),
-    name="BB中軌"), row=1, col=1)
+    line=dict(color="rgba(148,163,184,0.6)", width=1),
+    name="BB中軌(20MA)"), row=1, col=1)
 
 if COST is not None:
     fig.add_hline(y=COST, line=dict(color="#facc15", width=1.5, dash="dash"),
-        annotation_text=f"成本 {COST:.1f}", annotation_position="right", row=1, col=1)
+        annotation_text=f"持股成本 {COST:.1f}", annotation_position="right", row=1, col=1)
 
-# 訊號標註
+# 形態標註
 for _, row in df[df["breakout"]].iterrows():
     fig.add_annotation(x=row["date"], y=row["high"], text="▲ 放量突破",
         showarrow=True, arrowhead=2, ax=0, ay=-35,
         bgcolor="#fef08a", font=dict(size=10, color="#92400e"), row=1, col=1)
-for _, row in df[df["pullback"]].iterrows():
-    fig.add_annotation(x=row["date"], y=row["low"], text="◆ 量縮回測",
+for _, row in df[df["bull_div"]].iterrows():
+    fig.add_annotation(x=row["date"], y=row["low"], text="★ 底背離",
         showarrow=True, arrowhead=2, ax=0, ay=35,
-        bgcolor="#bfdbfe", font=dict(size=10, color="#1e40af"), row=1, col=1)
-for _, row in df[df["diverge"]].iterrows():
-    fig.add_annotation(x=row["date"], y=row["low"], text="! 量價背離",
-        showarrow=True, arrowhead=2, ax=0, ay=50,
+        bgcolor="#bbf7d0", font=dict(size=10, color="#166534"), row=1, col=1)
+for _, row in df[df["bear_div"]].iterrows():
+    fig.add_annotation(x=row["date"], y=row["high"], text="⚠ 頂背離",
+        showarrow=True, arrowhead=2, ax=0, ay=-35,
         bgcolor="#fecdd3", font=dict(size=10, color="#991b1b"), row=1, col=1)
+for _, row in df[df["churn"]].iterrows():
+    fig.add_annotation(x=row["date"], y=row["high"], text="⚡ 爆量滯漲",
+        showarrow=True, arrowhead=2, ax=0, ay=-35,
+        bgcolor="#fed7aa", font=dict(size=10, color="#9a3412"), row=1, col=1)
 
 # ── Row 2（選）：三大法人 ─────────────────────────────────
 if not inst_df.empty:
@@ -498,28 +556,22 @@ if not inst_df.empty:
 macd_row = 2 + n_inst
 hist_colors = np.where(df["macd_hist"].values >= 0, "#ef4444", "#22c55e")
 fig.add_trace(go.Bar(x=df["date"], y=df["macd_hist"],
-    marker_color=hist_colors, name="MACD 柱", showlegend=False,
-    opacity=0.7), row=macd_row, col=1)
+    marker_color=hist_colors, name="MACD 柱", showlegend=False, opacity=0.7), row=macd_row, col=1)
 fig.add_trace(go.Scatter(x=df["date"], y=df["macd"],
-    mode="lines", line=dict(color="#f59e0b", width=1.5), name="MACD"),
-    row=macd_row, col=1)
+    mode="lines", line=dict(color="#f59e0b", width=1.5), name="MACD"), row=macd_row, col=1)
 fig.add_trace(go.Scatter(x=df["date"], y=df["macd_signal"],
-    mode="lines", line=dict(color="#a78bfa", width=1.5), name="Signal"),
-    row=macd_row, col=1)
-fig.add_hline(y=0, line=dict(color="rgba(255,255,255,0.2)", width=1),
-    row=macd_row, col=1)
+    mode="lines", line=dict(color="#a78bfa", width=1.5), name="Signal"), row=macd_row, col=1)
+fig.add_hline(y=0, line=dict(color="rgba(255,255,255,0.2)", width=1), row=macd_row, col=1)
 
 # ── RSI 子圖 ──────────────────────────────────────────────
 rsi_row = 3 + n_inst
 fig.add_trace(go.Scatter(x=df["date"], y=df["rsi"],
-    mode="lines", line=dict(color="#38bdf8", width=1.5), name="RSI(14)"),
-    row=rsi_row, col=1)
+    mode="lines", line=dict(color="#38bdf8", width=1.5), name="RSI(14)"), row=rsi_row, col=1)
 fig.add_hline(y=70, line=dict(color="#f87171", width=1, dash="dash"),
     annotation_text="超買 70", annotation_position="right", row=rsi_row, col=1)
 fig.add_hline(y=30, line=dict(color="#4ade80", width=1, dash="dash"),
     annotation_text="超賣 30", annotation_position="right", row=rsi_row, col=1)
-fig.add_hline(y=50, line=dict(color="rgba(255,255,255,0.15)", width=1),
-    row=rsi_row, col=1)
+fig.add_hline(y=50, line=dict(color="rgba(255,255,255,0.15)", width=1), row=rsi_row, col=1)
 fig.update_yaxes(range=[0, 100], row=rsi_row, col=1)
 
 # ── 成交量子圖 ────────────────────────────────────────────
@@ -528,16 +580,14 @@ vol_colors = np.where(df["close"].values >= df["open"].values, "#ef4444", "#22c5
 fig.add_trace(go.Bar(x=df["date"], y=df["volume"], marker_color=vol_colors,
     name="成交量", showlegend=False), row=vol_row, col=1)
 fig.add_trace(go.Scatter(x=df["date"], y=df["vol_ma"], mode="lines",
-    line=dict(color="#f59e0b", width=1, dash="dot"), name=f"VOL MA{VOL_MA}"),
-    row=vol_row, col=1)
+    line=dict(color="#f59e0b", width=1, dash="dot"), name=f"VOL MA{VOL_MA}"), row=vol_row, col=1)
 
 # ── 版面設定 ──────────────────────────────────────────────
 last_close = df["close"].iloc[-1]
 last_date  = df["date"].iloc[-1].strftime("%Y-%m-%d")
-rating     = score_to_rating(trend_score)
-title_text = (f"{STOCK_NAME}（{TICKER}）K線+技術分析 | "
-              f"收盤 {last_close:.2f} 元（{last_date}）| "
-              f"綜合評分 {trend_score:+d} → {rating}")
+title_text = (f"{STOCK_NAME}（{TICKER}）多維量價籌碼評估系統 | "
+              f"最新收盤 {last_close:.2f} 元（{last_date}）| "
+              f"總評 {trend_score:+d}分 → {rating_badge}")
 if COST is not None:
     pnl = (last_close - COST) / COST * 100
     sign = "+" if pnl >= 0 else ""
@@ -558,45 +608,54 @@ output = f"{TICKER}_kline.html"
 fig.write_html(output)
 print(f"\n[OK] 圖表已輸出 -> {output}")
 
-# ── 9. 文字摘要 ───────────────────────────────────────────
-print("\n" + "="*60)
-print(f"  {STOCK_NAME}（{TICKER}）量價 + 技術指標 + 法人分析摘要")
-print("="*60)
-print(f"  分析區間 ：{df['date'].iloc[0].date()} ~ {df['date'].iloc[-1].date()}")
-print(f"  最新收盤 ：{last_close:.2f} 元")
+# ── 9. 專業研判報表輸出 ───────────────────────────────────
+print("\n" + "="*68)
+print(f"  📊 {STOCK_NAME}（{TICKER}）專業多維量價籌碼研判報表")
+print("="*68)
+print(f"  📅 分析區間 ：{df['date'].iloc[0].date()} ~ {df['date'].iloc[-1].date()}")
+print(f"  💰 最新收盤 ：{last_close:.2f} 元")
 if COST is not None:
     pnl_amt = last_close - COST
     pnl_pct = pnl_amt / COST * 100
     sign = "+" if pnl_amt >= 0 else ""
-    print(f"  持有成本 ：{COST:.2f} 元  損益：{sign}{pnl_amt:.2f} 元（{sign}{pnl_pct:.1f}%）")
-print(f"  近60日高 ：{df['high'].tail(60).max():.2f} 元")
-print(f"  近60日低 ：{df['low'].tail(60).min():.2f} 元")
-print(f"  MA5/20/60：{df['ma5'].iloc[-1]:.2f} / {df['ma20'].iloc[-1]:.2f} / {df['ma60'].iloc[-1]:.2f}")
-print(f"  布林帶   ：上軌 {df['bb_upper'].iloc[-1]:.2f} / 中軌 {df['bb_mid'].iloc[-1]:.2f} / 下軌 {df['bb_lower'].iloc[-1]:.2f}")
-print(f"  RSI(14)  ：{df['rsi'].iloc[-1]:.1f}")
-print(f"  MACD     ：{df['macd'].iloc[-1]:+.2f}（Signal: {df['macd_signal'].iloc[-1]:+.2f}，柱: {df['macd_hist'].iloc[-1]:+.2f}）")
-print(f"  KD(9,3,3)：K={df['kd_k'].iloc[-1]:.1f} / D={df['kd_d'].iloc[-1]:.1f}")
-print(f"  今日量   ：{df['volume'].iloc[-1]:,.0f} 張  均量(20)：{df['vol_ma'].iloc[-1]:,.0f} 張")
-print(f"  放量突破（近60日）：{df['breakout'].tail(60).sum()} 次")
-print(f"  量價背離（近60日）：{df['diverge'].tail(60).sum()} 次")
+    print(f"  🎯 持有成本 ：{COST:.2f} 元 ｜ 浮動損益：{sign}{pnl_amt:.2f} 元（{sign}{pnl_pct:.1f}%）")
 
-# 法人摘要
+print(f"\n  ── 📌 核心技術指標數據 ─────────────────────────────────")
+print(f"  均線位階  ：MA5={df['ma5'].iloc[-1]:.2f} ｜ MA20={df['ma20'].iloc[-1]:.2f} ｜ MA60={df['ma60'].iloc[-1]:.2f}")
+print(f"  布林通道  ：上軌={r2:.2f} ｜ 中軌={df['bb_mid'].iloc[-1]:.2f} ｜ 下軌={df['bb_lower'].iloc[-1]:.2f}（頻寬={df['bb_width'].iloc[-1]:.1f}%）")
+print(f"  動量指標  ：MACD={df['macd'].iloc[-1]:+.2f} ｜ Signal={df['macd_signal'].iloc[-1]:+.2f} ｜ 柱體={df['macd_hist'].iloc[-1]:+.2f}")
+print(f"  震盪指標  ：RSI(14)={df['rsi'].iloc[-1]:.1f} ｜ KD(9,3,3) K={df['kd_k'].iloc[-1]:.1f} / D={df['kd_d'].iloc[-1]:.1f}")
+print(f"  成交量能  ：今日={df['volume'].iloc[-1]:,.0f} 張 ｜ 20日均量={df['vol_ma'].iloc[-1]:,.0f} 張")
+
 if not inst_df.empty:
-    print()
-    print("  ─── 近5日三大法人（張）───────────────────")
+    print(f"\n  ── 🏛️ 近 5 日三大法人籌碼分佈（張）───────────────────")
     for _, r in inst_df.tail(5).iterrows():
         sign_t = "+" if r["total"] >= 0 else ""
         print(f"  {r['date'].strftime('%m/%d')}  "
-              f"外資:{r['fini']:+,}  投信:{r['trust']:+,}  自營:{r['dealer']:+,}  "
-              f"合計:{sign_t}{r['total']:,}")
-    print()
-    if inst_consecutive_buy > 0:
-        print(f"  法人動向 ：連續 {inst_consecutive_buy} 日買超 -> {inst_signal}")
-    else:
-        print(f"  法人動向 ：連續 {inst_consecutive_sell} 日賣超 -> {inst_signal}")
+              f"外資:{r['fini']:>+6,} ｜ 投信:{r['trust']:>+5,} ｜ 自營:{r['dealer']:>+5,} ｜ "
+              f"三大合計:{sign_t}{r['total']:>+6,}")
 
-print()
-print(f"  ─── 綜合技術評分：{trend_score:+d} 分（{rating}）───")
-for d_item in trend_details:
-    print(f"    • {d_item}")
-print("="*60)
+print(f"\n  ── 🎯 關鍵支撐與壓力矩陣 ───────────────────────────────")
+print(f"  壓力二 (R2 - 布林上軌/波段頂)：{r2:.2f} 元")
+print(f"  壓力一 (R1 - 近20日高點)    ：{r1:.2f} 元")
+print(f"  目前現價                    ：{close_now:.2f} 元")
+print(f"  支撐一 (S1 - 月線支撐)      ：{s1:.2f} 元")
+print(f"  支撐二 (S2 - 近20日低點)    ：{s2:.2f} 元")
+print(f"  防守停損線 (Stop-Loss Pivot)：{stop_loss:.2f} 元（跌破宜果斷執行）")
+
+print(f"\n  ── 🧭 多維量化評估綜合研判 ─────────────────────────────")
+print(f"  綜合評分 ：{trend_score:+d} 分 ｜ 評級：{rating_badge}")
+for f_item in trend_factors:
+    print(f"  • {f_item}")
+
+print(f"\n  ── 💡 操盤行動指引 ─────────────────────────────────────")
+if trend_score >= 3:
+    print("  【持股者】趨勢偏多，多頭結構穩健，建議續抱並以 S1 作為移動停利點。")
+    print("  【空手者】逢拉回量縮測試 S1 守穩時可分批建立部位，突破 R1 加碼。")
+elif trend_score <= -3:
+    print("  【持股者】趨勢偏空且空方動能增強，反彈遇 R1/MA60 宜逢高減碼，跌破防守線務必停損。")
+    print("  【空手者】暫勿盲目猜底接刀，靜待打底完成或出現帶量底背離反轉再進場。")
+else:
+    print("  【持股者】短線處於區間震盪打底，未跌破防守線前可暫時觀望，密切留意法人籌碼延續性。")
+    print("  【空手者】觀望為主，靜待帶量突破 R1 壓力或回測 S2 底部確認再行佈局。")
+print("="*68)
