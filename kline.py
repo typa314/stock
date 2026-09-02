@@ -154,6 +154,9 @@ for n in MA_DAYS:
     df[f"ma{n}"] = df["close"].rolling(n, min_periods=1).mean()
 df["vol_ma"] = df["volume"].rolling(VOL_MA, min_periods=1).mean()
 
+# 20 EMA（Al Brooks 唯一指定核心基準線）
+df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
+
 # RSI(14)
 _delta    = df["close"].diff()
 _gain     = _delta.clip(lower=0)
@@ -183,7 +186,7 @@ df["bb_upper"] = df["bb_mid"] + 2 * _bb_std
 df["bb_lower"] = df["bb_mid"] - 2 * _bb_std
 df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / (df["bb_mid"] + 1e-9) * 100
 
-# ── 5. 專業量價與 Price Action 形態識別 ─────────────────────────
+# ── 5. Al Brooks 價格行為學（BPA）形態識別與量價特徵 ──────────────
 close_arr = df["close"].values.astype(float)
 open_arr  = df["open"].values.astype(float)
 high_arr  = df["high"].values.astype(float)
@@ -191,6 +194,7 @@ low_arr   = df["low"].values.astype(float)
 vol_arr   = df["volume"].values.astype(float)
 vol_ma_arr= df["vol_ma"].values.astype(float)
 ma5_arr   = df["ma5"].values.astype(float)
+ema20_arr = df["ema20"].values.astype(float)
 N         = len(df)
 
 # K 線實體與上下影線
@@ -199,21 +203,162 @@ candle_range = np.maximum(high_arr - low_arr, 1e-5)
 upper_shadow = high_arr - np.maximum(open_arr, close_arr)
 lower_shadow = np.minimum(open_arr, close_arr) - low_arr
 
-# 5.1 放量突破 (Volume Breakout)
+# 5.1 BPA K 線逐根分類（Bar-by-Bar Classification）
+# 趨勢棒 (Trend Bars)：實體佔比 >= 50%，收於高點或低點 25% 範圍內
+bpa_bull_trend = (close_arr > open_arr) & (body_arr / candle_range >= 0.50) & (close_arr >= high_arr - 0.25 * candle_range)
+bpa_bear_trend = (close_arr < open_arr) & (body_arr / candle_range >= 0.50) & (close_arr <= low_arr + 0.25 * candle_range)
+
+# 反轉棒 (Reversal Bars)：影線顯著拒絕 (>=35%)，收盤朝有利方向 (>=60% / <=40%)
+bull_rev_bar = np.zeros(N, dtype=bool)
+bear_rev_bar = np.zeros(N, dtype=bool)
+for i in range(1, N):
+    if (lower_shadow[i] >= 0.35 * candle_range[i]) and (close_arr[i] >= low_arr[i] + 0.60 * candle_range[i]) and (low_arr[i] <= low_arr[i-1] or low_arr[i] <= ema20_arr[i]):
+        bull_rev_bar[i] = True
+    if (upper_shadow[i] >= 0.35 * candle_range[i]) and (close_arr[i] <= low_arr[i] + 0.40 * candle_range[i]) and (high_arr[i] >= high_arr[i-1] or high_arr[i] >= ema20_arr[i]):
+        bear_rev_bar[i] = True
+
+# 孕線 (Inside Bar `i`)、雙重孕線 (`ii 突破模式`)、外部棒 (`o`)、十字星 (Doji)
+inside_bar    = np.zeros(N, dtype=bool)
+double_inside = np.zeros(N, dtype=bool)
+outside_bar   = np.zeros(N, dtype=bool)
+doji_bar      = (body_arr / candle_range <= 0.25)
+
+for i in range(1, N):
+    if high_arr[i] <= high_arr[i-1] and low_arr[i] >= low_arr[i-1]:
+        inside_bar[i] = True
+        if inside_bar[i-1]:
+            double_inside[i] = True
+    elif high_arr[i] > high_arr[i-1] and low_arr[i] < low_arr[i-1]:
+        outside_bar[i] = True
+
+# 逐根分類標籤
+bar_types = []
+for i in range(N):
+    tags = []
+    if double_inside[i]:
+        tags.append("雙重孕線(ii 突破模式)")
+    elif inside_bar[i]:
+        tags.append("孕線(Inside Bar)")
+    elif outside_bar[i]:
+        tags.append("外部棒(Outside Bar)")
+    
+    if bpa_bull_trend[i]:
+        tags.append("多頭趨勢棒(Bull Trend)")
+    elif bpa_bear_trend[i]:
+        tags.append("空頭趨勢棒(Bear Trend)")
+    elif bull_rev_bar[i]:
+        tags.append("多頭反轉棒(Bull Reversal)")
+    elif bear_rev_bar[i]:
+        tags.append("空頭反轉棒(Bear Reversal)")
+    elif doji_bar[i]:
+        tags.append("十字猶豫棒(Doji)")
+    
+    if not tags:
+        tags.append("普通K線(Trading Bar)")
+    bar_types.append(" / ".join(tags))
+df["bpa_bar_type"] = bar_types
+
+# 5.2 Al Brooks 多空推動計數：High 1/2/3 (H1/H2/H3) 與 Low 1/2/3 (L1/L2/L3)
+bpa_h1 = np.zeros(N, dtype=bool)
+bpa_h2 = np.zeros(N, dtype=bool)
+bpa_h3 = np.zeros(N, dtype=bool)
+bpa_l1 = np.zeros(N, dtype=bool)
+bpa_l2 = np.zeros(N, dtype=bool)
+bpa_l3 = np.zeros(N, dtype=bool)
+
+h_count = 0
+in_bull_pb = False
+for i in range(1, N):
+    recent_high = high_arr[max(0, i-10):i].max()
+    if high_arr[i] >= recent_high:
+        h_count = 0
+        in_bull_pb = False
+    elif high_arr[i] < high_arr[i-1]:
+        in_bull_pb = True
+    elif in_bull_pb and high_arr[i] > high_arr[i-1]:
+        h_count += 1
+        if h_count == 1:
+            bpa_h1[i] = True
+        elif h_count == 2:
+            bpa_h2[i] = True
+        elif h_count >= 3:
+            bpa_h3[i] = True
+        in_bull_pb = False
+
+l_count = 0
+in_bear_bounce = False
+for i in range(1, N):
+    recent_low = low_arr[max(0, i-10):i].min()
+    if low_arr[i] <= recent_low:
+        l_count = 0
+        in_bear_bounce = False
+    elif low_arr[i] > low_arr[i-1]:
+        in_bear_bounce = True
+    elif in_bear_bounce and low_arr[i] < low_arr[i-1]:
+        l_count += 1
+        if l_count == 1:
+            bpa_l1[i] = True
+        elif l_count == 2:
+            bpa_l2[i] = True
+        elif l_count >= 3:
+            bpa_l3[i] = True
+        in_bear_bounce = False
+
+df["bpa_h1"] = bpa_h1
+df["bpa_h2"] = bpa_h2
+df["bpa_h3"] = bpa_h3
+df["bpa_l1"] = bpa_l1
+df["bpa_l2"] = bpa_l2
+df["bpa_l3"] = bpa_l3
+
+# 5.3 20 EMA Pullback (EMA 20 初次回測)
+bpa_ema_pb = np.zeros(N, dtype=bool)
+for i in range(8, N):
+    if np.sum(close_arr[i-8:i] > ema20_arr[i-8:i]) >= 6:
+        if low_arr[i] <= ema20_arr[i] * 1.005 and close_arr[i] >= ema20_arr[i] * 0.985:
+            bpa_ema_pb[i] = True
+    elif np.sum(close_arr[i-8:i] < ema20_arr[i-8:i]) >= 6:
+        if high_arr[i] >= ema20_arr[i] * 0.995 and close_arr[i] <= ema20_arr[i] * 1.015:
+            bpa_ema_pb[i] = True
+df["bpa_ema_pb"] = bpa_ema_pb
+
+# 5.4 20 EMA Gap Bar (Brooks 缺口棒)
+bpa_bull_gap = np.zeros(N, dtype=bool)
+bpa_bear_gap = np.zeros(N, dtype=bool)
+for i in range(10, N):
+    if np.sum(close_arr[i-10:i] > ema20_arr[i-10:i]) >= 7:
+        if high_arr[i] < ema20_arr[i] and not (high_arr[i-1] < ema20_arr[i-1]):
+            bpa_bull_gap[i] = True
+    elif np.sum(close_arr[i-10:i] < ema20_arr[i-10:i]) >= 7:
+        if low_arr[i] > ema20_arr[i] and not (low_arr[i-1] > ema20_arr[i-1]):
+            bpa_bear_gap[i] = True
+df["bpa_bull_gap"] = bpa_bull_gap
+df["bpa_bear_gap"] = bpa_bear_gap
+
+# 5.5 Tight Trading Range (TTR / Barbwire 鐵絲網)
+bpa_ttr = np.zeros(N, dtype=bool)
+for i in range(2, N):
+    overlap_h = min(high_arr[i], high_arr[i-1], high_arr[i-2])
+    overlap_l = max(low_arr[i], low_arr[i-1], low_arr[i-2])
+    if overlap_h > overlap_l:
+        overlap_range = overlap_h - overlap_l
+        avg_range = np.mean(candle_range[i-2:i+1])
+        if (overlap_range / avg_range > 0.45) and (np.mean(body_arr[i-2:i+1] / candle_range[i-2:i+1]) < 0.40):
+            bpa_ttr[i] = True
+df["bpa_ttr"]        = bpa_ttr
+df["double_inside"]  = double_inside
+df["bull_rev_bar"]   = bull_rev_bar
+df["bear_rev_bar"]   = bear_rev_bar
+
+# 5.6 經典 Wyckoff & 量價特徵
 high20 = np.array([high_arr[max(0,i-20):i].max() if i > 0 else high_arr[0] for i in range(N)])
 breakout = np.zeros(N, dtype=bool)
 breakout[1:] = (close_arr[1:] > high20[1:]) & (vol_arr[1:] > 1.5 * vol_ma_arr[1:])
-
-# 5.2 量縮回測 (Low Volume Pullback)
 pullback = (np.abs(close_arr - ma5_arr) / ma5_arr < 0.015) & (vol_arr < 0.75 * vol_ma_arr)
+dryup    = vol_arr < 0.45 * vol_ma_arr
+churn    = (vol_arr > 1.8 * vol_ma_arr) & ((upper_shadow / candle_range > 0.4) | (body_arr / candle_range < 0.25))
 
-# 5.3 窒息量 (Volume Dry-Up, 變盤前夕)
-dryup = vol_arr < 0.45 * vol_ma_arr
-
-# 5.4 爆量滯漲 / 出貨警訊 (Volume Churning / Distribution)
-churn = (vol_arr > 1.8 * vol_ma_arr) & ((upper_shadow / candle_range > 0.4) | (body_arr / candle_range < 0.25))
-
-# 5.5 多頭吞噬 (Bullish Engulfing) & 空頭吞噬 (Bearish Engulfing)
+# 多空吞噬 (Engulfing)
 bull_engulf = np.zeros(N, dtype=bool)
 bear_engulf = np.zeros(N, dtype=bool)
 for i in range(1, N):
@@ -224,22 +369,18 @@ for i in range(1, N):
         if open_arr[i] >= close_arr[i-1] and close_arr[i] <= open_arr[i-1]:
             bear_engulf[i] = True
 
-# 5.6 錘子線 (Hammer, 探底回升) & 流星線 (Shooting Star, 高檔反壓)
 hammer = (lower_shadow >= 2.0 * body_arr) & (upper_shadow <= 0.15 * candle_range)
 star   = (upper_shadow >= 2.0 * body_arr) & (lower_shadow <= 0.15 * candle_range)
 
-# 5.7 指標頂背離 (Bearish Divergence) 與底背離 (Bullish Divergence)
+# 指標頂底背離
 rsi_arr  = df["rsi"].values.astype(float)
 macd_arr = df["macd"].values.astype(float)
 bull_div = np.zeros(N, dtype=bool)
 bear_div = np.zeros(N, dtype=bool)
-
 for i in range(15, N):
-    # 底背離：股價破 15 日新低，但 RSI 或 MACD 低點未破新低
     if close_arr[i] < close_arr[i-15:i].min():
         if rsi_arr[i] > rsi_arr[i-15:i].min() + 2:
             bull_div[i] = True
-    # 頂背離：股價創 15 日新高，但 RSI 或 MACD 高點未破新高
     if close_arr[i] > close_arr[i-15:i].max():
         if rsi_arr[i] < rsi_arr[i-15:i].max() - 2:
             bear_div[i] = True
@@ -303,8 +444,163 @@ if not inst_df.empty:
 else:
     print("[WARN] 無法取得三大法人資料（OTC 股票或資料不可用）")
 
-# ── 7. 專業趨勢研判體系 (Professional Trend Evaluation) ───────────
-def evaluate_professional_trend(df, inst_df):
+# ── 7. Al Brooks 價格行為學（BPA）與綜合量化研判 ───────────────
+def get_tw_tick(price):
+    """台股委託與升降單位（Tick Size）精確級距規則"""
+    if price < 10:
+        return 0.01
+    elif price < 50:
+        return 0.05
+    elif price < 100:
+        return 0.10
+    elif price < 500:
+        return 0.50
+    elif price < 1000:
+        return 1.00
+    else:
+        return 5.00
+
+def evaluate_brooks_price_action(df):
+    """
+    Al Brooks 價格行為學（BPA）核心架構評估：
+      - Always-In 市場狀態（AIL / AIS / TR）
+      - 20 EMA 動態位階、斜率與乖離
+      - 經典高勝率設定（H1/H2, L1/L2, EMA PB, EMA Gap Bar, ii, TTR）
+      - 突破停損掛單價、防守停損價與等距測量目標（Measured Move）
+    """
+    N = len(df)
+    c = df["close"].iloc[-1]
+    ema_v = df["ema20"].iloc[-1]
+    
+    # 20 EMA 近 5 日斜率
+    ema_prev = df["ema20"].iloc[-5] if N >= 5 else ema_v
+    ema_slope = (ema_v - ema_prev) / (ema_prev + 1e-9) * 100
+    
+    # 近 10 根穿越 EMA 次數（判斷是否進入交疊震盪）
+    ema_crosses = 0
+    for i in range(max(1, N-10), N):
+        if (df["close"].iloc[i] - df["ema20"].iloc[i]) * (df["close"].iloc[i-1] - df["ema20"].iloc[i-1]) < 0:
+            ema_crosses += 1
+            
+    is_ttr = bool(df["bpa_ttr"].iloc[-1] or (df["bpa_ttr"].iloc[-2] if N >= 2 else False))
+    
+    # 7.1 Always-In 狀態判定
+    if is_ttr or (ema_crosses >= 3 and abs(ema_slope) < 0.3):
+        always_in = "Trading Range (TR, 箱型交易區間 / 盤整)"
+        always_in_code = "TR"
+        always_in_score = 0
+    elif c > ema_v and ema_slope > 0.15:
+        always_in = "Always In Long (AIL, 恆久做多 / 多頭主控)"
+        always_in_code = "AIL"
+        always_in_score = +2
+    elif c < ema_v and ema_slope < -0.15:
+        always_in = "Always In Short (AIS, 恆久做空 / 空頭主控)"
+        always_in_code = "AIS"
+        always_in_score = -2
+    elif c >= ema_v:
+        always_in = "Always In Long (AIL, 偏多震盪整理)"
+        always_in_code = "AIL"
+        always_in_score = +1
+    else:
+        always_in = "Always In Short (AIS, 偏空震盪整理)"
+        always_in_code = "AIS"
+        always_in_score = -1
+        
+    last_bar_type = df["bpa_bar_type"].iloc[-1]
+    
+    # 7.2 近期 BPA 特徵設定（嚴格遵守 Al Brooks 趨勢環境濾網原則）
+    recent_signals = []
+    bpa_extra_score = 0
+    mid_bb = df["bb_mid"].iloc[-1]
+    
+    # 7.2.1 多方設定（僅在 AIL 多頭環境 或 TR 區間下半部守穩時採納）
+    if always_in_code == "AIL" or (always_in_code == "TR" and c <= mid_bb):
+        if df["bpa_h2"].tail(3).any():
+            recent_signals.append("觸發 High 2 (H2) 雙重推動回踩買點🔥（Al Brooks 最推崇順勢高勝率設定）")
+            bpa_extra_score += 2
+        elif df["bpa_h1"].tail(3).any():
+            recent_signals.append("觸發 High 1 (H1) 初次推動過前高（順勢多方初探）")
+            bpa_extra_score += 1
+        elif df["bpa_h3"].tail(3).any():
+            recent_signals.append("觸發 High 3 (H3 / 楔形多頭旗形 Wedge Bull Flag)")
+            bpa_extra_score += 1
+            
+        if df["bpa_ema_pb"].tail(2).any():
+            recent_signals.append("20 EMA 動態支撐回測確認（20 EMA Pullback 順勢買點）")
+            bpa_extra_score += 1
+            
+        if df["bpa_bull_gap"].tail(2).any():
+            recent_signals.append("出現多頭 20 EMA 乖離缺口棒（Bull Gap Bar：通常引發終極測頂，但也是趨勢老化/MTR反轉警訊）⚠️")
+            bpa_extra_score += 1
+            
+    # 7.2.2 空方設定（僅在 AIS 空頭環境 或 TR 區間上半部受阻時採納）
+    if always_in_code == "AIS" or (always_in_code == "TR" and c >= mid_bb):
+        if df["bpa_l2"].tail(3).any():
+            recent_signals.append("觸發 Low 2 (L2) 雙重反彈逢高空點⚠️（Al Brooks 經典空方高勝率設定）")
+            bpa_extra_score -= 2
+        elif df["bpa_l1"].tail(3).any():
+            recent_signals.append("觸發 Low 1 (L1) 初次反彈破前低（空方重新摜壓）")
+            bpa_extra_score -= 1
+        elif df["bpa_l3"].tail(3).any():
+            recent_signals.append("觸發 Low 3 (L3 / 楔形空頭旗形 Wedge Bear Flag)")
+            bpa_extra_score -= 1
+            
+        if df["bpa_ema_pb"].tail(2).any() and always_in_code == "AIS":
+            recent_signals.append("20 EMA 動態壓力回測確認（20 EMA Pullback 順勢空點）")
+            bpa_extra_score -= 1
+            
+        if df["bpa_bear_gap"].tail(2).any():
+            recent_signals.append("出現空頭 20 EMA 乖離缺口棒（Bear Gap Bar：通常引發終極測底，但也是空方動能耗竭警訊）⚠️")
+            bpa_extra_score -= 1
+
+    # 7.2.3 中性結構（形態壓縮與混亂區）
+    if df["double_inside"].tail(2).any():
+        recent_signals.append("出現雙重孕線（ii Breakout Mode，動能極度壓縮即將變盤噴發）⚑")
+    if is_ttr:
+        recent_signals.append("陷入 TTR 鐵絲網窄幅交疊（多空雙巴，80% 突破失敗率，嚴禁追價）⛔")
+        bpa_extra_score -= 1
+        
+    # 7.3 最新訊號棒（Signal Bar）與掛單風控價位
+    sig_high = df["high"].iloc[-1]
+    sig_low  = df["low"].iloc[-1]
+    tick = get_tw_tick(c)
+    
+    buy_stop  = round(sig_high + tick, 2)
+    sell_stop = round(sig_low - tick, 2)
+    risk_long = round(buy_stop - sell_stop, 2)
+    target_long_1r = round(buy_stop + risk_long, 2)
+    target_long_2r = round(buy_stop + 2 * risk_long, 2)
+    
+    risk_short = round(buy_stop - sell_stop, 2)
+    target_short_1r = round(sell_stop - risk_short, 2)
+    target_short_2r = round(sell_stop - 2 * risk_short, 2)
+    
+    return {
+        "always_in": always_in,
+        "always_in_code": always_in_code,
+        "always_in_score": always_in_score,
+        "last_bar_type": last_bar_type,
+        "signals": recent_signals,
+        "bpa_extra_score": bpa_extra_score,
+        "ema_slope": ema_slope,
+        "bias_ema20": (c - ema_v) / ema_v * 100,
+        "sig_high": sig_high,
+        "sig_low": sig_low,
+        "tick": tick,
+        "buy_stop": buy_stop,
+        "sell_stop": sell_stop,
+        "risk_long": risk_long,
+        "target_long_1r": target_long_1r,
+        "target_long_2r": target_long_2r,
+        "risk_short": risk_short,
+        "target_short_1r": target_short_1r,
+        "target_short_2r": target_short_2r,
+        "is_ttr": is_ttr
+    }
+
+bpa_res = evaluate_brooks_price_action(df)
+
+def evaluate_professional_trend(df, inst_df, bpa_res):
     score = 0
     factors = []
     
@@ -316,16 +612,10 @@ def evaluate_professional_trend(df, inst_df):
     macd_v    = df["macd"].iloc[-1]
     sig_v     = df["macd_signal"].iloc[-1]
     hist_v    = df["macd_hist"].iloc[-1]
-    k_v       = df["kd_k"].iloc[-1]
-    d_v       = df["kd_d"].iloc[-1]
-    bb_mid_v  = df["bb_mid"].iloc[-1]
-    bb_upper_v= df["bb_upper"].iloc[-1]
-    bb_lower_v= df["bb_lower"].iloc[-1]
     vol_v     = df["volume"].iloc[-1]
     vol_ma_v  = df["vol_ma"].iloc[-1]
 
-    # 7.1 均線斜率與階段分析 (Weinstein Stage Analysis)
-    # 計算 MA20 & MA60 近 5 日斜率
+    # 1. Stan Weinstein 趨勢四階段
     ma20_5d_ago = df["ma20"].iloc[-5] if len(df) >= 5 else ma20_v
     ma60_5d_ago = df["ma60"].iloc[-5] if len(df) >= 5 else ma60_v
     slope_ma20  = (ma20_v - ma20_5d_ago) / (ma20_5d_ago + 1e-9) * 100
@@ -351,18 +641,24 @@ def evaluate_professional_trend(df, inst_df):
     score += stage_score
     factors.append(f"【趨勢結構】{stage_score:+d}分 | {stage}：{stage_desc}")
 
-    # 7.2 均線支撐壓力位置與乖離率 (Bias)
+    # 2. Al Brooks 價格行為學（BPA 核心評價）
+    bpa_score = bpa_res["always_in_score"] + bpa_res["bpa_extra_score"]
+    score += bpa_score
+    bpa_sig_text = bpa_res["signals"][0] if bpa_res["signals"] else "順應趨勢動態運行"
+    factors.append(f"【Brooks PA】{bpa_score:+d}分 | {bpa_res['always_in']} ｜ K線：{bpa_res['last_bar_type']} ｜ {bpa_sig_text}")
+
+    # 3. 均線位階與乖離
     bias_ma20 = (close_v - ma20_v) / ma20_v * 100
     if close_v > ma5_v and close_v > ma20_v:
         score += 1
-        factors.append(f"【均線位階】+1分 | 站上 5MA 與 20MA（乖離率 {bias_ma20:+.1f}%）")
+        factors.append(f"【均線位階】+1分 | 站上 5MA 與 20MA（月線乖離率 {bias_ma20:+.1f}%）")
     elif close_v < ma5_v and close_v < ma20_v:
         score -= 1
-        factors.append(f"【均線位階】-1分 | 跌破 5MA 與 20MA，短線失守支撐")
+        factors.append(f"【均線位階】-1分 | 跌破 5MA 與 20MA，短線失守動態支撐")
     else:
         factors.append(f"【均線位階】 0分 | 夾於 5MA 與 20MA 之間震盪")
 
-    # 7.3 動量與指標結構 (MACD / RSI / KD)
+    # 4. 動量指標 (MACD / RSI)
     macd_cross = "黃金交叉🔔" if (len(df)>=2 and df["macd"].iloc[-2] < df["macd_signal"].iloc[-2] and macd_v > sig_v) else \
                  "死亡交叉⚠️" if (len(df)>=2 and df["macd"].iloc[-2] > df["macd_signal"].iloc[-2] and macd_v < sig_v) else ""
 
@@ -390,44 +686,15 @@ def evaluate_professional_trend(df, inst_df):
     else:
         factors.append(f"【強弱擺盪】 0分 | RSI={rsi_v:.1f}（進入超賣區 <32，隨時具反彈力道）")
 
-    # 7.4 Price Action 與量價特徵 (近 3 日)
-    pa_signals = []
-    if df["bull_div"].tail(3).any():
-        score += 2; pa_signals.append("出現指標底背離（潛在反轉）🔥")
-    if df["bear_div"].tail(3).any():
-        score -= 2; pa_signals.append("出現指標頂背離（高檔誘多）⚠️")
-    if df["breakout"].tail(3).any():
-        score += 2; pa_signals.append("放量長陽突破 20 日高點🚀")
-    if df["churn"].tail(3).any():
-        score -= 2; pa_signals.append("爆量滯漲/上影線沉重（籌碼鬆動）⚠️")
-    if df["bull_engulf"].tail(2).any():
-        score += 1; pa_signals.append("多頭吞噬（陽包陰）")
-    if df["bear_engulf"].tail(2).any():
-        score -= 1; pa_signals.append("空頭吞噬（陰包陽）")
-    if df["hammer"].tail(2).any():
-        score += 1; pa_signals.append("長下影錘子線（低接承接強）")
-    if df["star"].tail(2).any():
-        score -= 1; pa_signals.append("長上影流星線（上方解套賣壓大）")
-    if df["dryup"].tail(2).any():
-        pa_signals.append("出現極度窒息量（變盤前夕）")
-
-    if pa_signals:
-        factors.append(f"【K線形態】{' / '.join(pa_signals)}")
-    else:
-        factors.append("【K線形態】近幾日無特殊反轉或突破形態")
-
-    # 7.5 籌碼面深度分析 (三大法人)
+    # 5. 籌碼面深度分析 (三大法人)
     if not inst_df.empty:
         last_inst = inst_df.iloc[-1]
         fini_last = last_inst["fini"]
         trust_last= last_inst["trust"]
         total_last= last_inst["total"]
         total_5d  = inst_df.tail(5)["total"].sum()
-        
-        # 法人買賣佔成交量比重 (集中度)
         inst_ratio = abs(total_last) / (vol_v + 1e-9) * 100
 
-        # 土洋同步 / 對作分析
         if fini_last > 100 and trust_last > 50:
             c_desc = f"外資({fini_last:+,}) 與 投信({trust_last:+,}) 雙作多，土洋聯手看多"
             c_score = +2
@@ -451,9 +718,8 @@ def evaluate_professional_trend(df, inst_df):
 
     return score, stage, factors
 
-trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df)
+trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df, bpa_res)
 
-# 評級映射
 def get_rating_badge(s):
     if s >= 6:   return "🟢 強烈多頭（動能充沛，偏多操作）"
     if s >= 3:   return "🟢 溫和偏多（震盪盤堅，支撐守穩）"
@@ -465,7 +731,7 @@ def get_rating_badge(s):
 
 rating_badge = get_rating_badge(trend_score)
 
-# ── 7.6 關鍵支撐壓力矩陣 (Support & Resistance) ───────────────
+# ── 7.5 關鍵支撐壓力矩陣 (Support & Resistance) ───────────────
 close_now = df["close"].iloc[-1]
 r1 = round(df["high"].tail(20).max(), 2)
 r2 = round(df["bb_upper"].iloc[-1], 2)
@@ -473,30 +739,35 @@ s1 = round(df["ma20"].iloc[-1], 2)
 s2 = round(df["low"].tail(20).min(), 2)
 stop_loss = round(s2 * 0.985, 2)
 
-# ── 8. 繪圖 ──────────────────────────────────────────────
+# ── 8. Plotly 互動圖表繪製 ──────────────────────────────────
 n_inst = 1 if not inst_df.empty else 0
 n_rows = 4 + n_inst
 if n_inst:
     row_heights = [0.38, 0.12, 0.18, 0.18, 0.14]
-    subplot_titles = ["K 線 + 均線 + 布林帶", "三大法人（張）", "MACD(12,26,9)", "RSI(14)", "成交量（張）"]
+    subplot_titles = ["K 線 + 20 EMA(BPA) + 均線 + 布林帶", "三大法人（張）", "MACD(12,26,9)", "RSI(14)", "成交量（張）"]
 else:
     row_heights = [0.42, 0.22, 0.22, 0.14]
-    subplot_titles = ["K 線 + 均線 + 布林帶", "MACD(12,26,9)", "RSI(14)", "成交量（張）"]
+    subplot_titles = ["K 線 + 20 EMA(BPA) + 均線 + 布林帶", "MACD(12,26,9)", "RSI(14)", "成交量（張）"]
 
 fig = make_subplots(rows=n_rows, cols=1, shared_xaxes=True,
                     row_heights=row_heights, vertical_spacing=0.025,
                     subplot_titles=subplot_titles)
 
-# ── Row 1：K 線 + 均線 + 布林帶 ──────────────────────────
+# Row 1：K 線 + EMA20 + 均線 + 布林帶
 fig.add_trace(go.Candlestick(
     x=df["date"], open=df["open"], high=df["high"],
     low=df["low"], close=df["close"],
     increasing_line_color="#ef4444", decreasing_line_color="#22c55e",
     name="K 線"), row=1, col=1)
 
+# 20 EMA (Al Brooks 核心基準線)
+fig.add_trace(go.Scatter(x=df["date"], y=df["ema20"],
+    mode="lines", line=dict(color="#06b6d4", width=1.8), name="EMA20 (BPA核心)"), row=1, col=1)
+
 for n_ma, color in zip(MA_DAYS, MA_COLORS):
     fig.add_trace(go.Scatter(x=df["date"], y=df[f"ma{n_ma}"],
-        mode="lines", line=dict(color=color, width=1.2), name=f"MA{n_ma}"), row=1, col=1)
+        mode="lines", line=dict(color=color, width=1.1, dash="dash" if n_ma==20 else "solid"),
+        name=f"MA{n_ma}"), row=1, col=1)
 
 # 布林帶
 fig.add_trace(go.Scatter(
@@ -508,20 +779,36 @@ fig.add_trace(go.Scatter(
     line=dict(color="rgba(148,163,184,0.45)", width=1, dash="dot"),
     fill="tonexty", fillcolor="rgba(148,163,184,0.07)",
     name="BB下軌"), row=1, col=1)
-fig.add_trace(go.Scatter(
-    x=df["date"], y=df["bb_mid"], mode="lines",
-    line=dict(color="rgba(148,163,184,0.6)", width=1),
-    name="BB中軌(20MA)"), row=1, col=1)
 
 if COST is not None:
     fig.add_hline(y=COST, line=dict(color="#facc15", width=1.5, dash="dash"),
         annotation_text=f"持股成本 {COST:.1f}", annotation_position="right", row=1, col=1)
 
-# 形態標註
+# BPA 與量價形態標註
 for _, row in df[df["breakout"]].iterrows():
     fig.add_annotation(x=row["date"], y=row["high"], text="▲ 放量突破",
         showarrow=True, arrowhead=2, ax=0, ay=-35,
         bgcolor="#fef08a", font=dict(size=10, color="#92400e"), row=1, col=1)
+for _, row in df[df["bpa_h2"]].iterrows():
+    fig.add_annotation(x=row["date"], y=row["low"], text="★ H2 買點",
+        showarrow=True, arrowhead=2, ax=0, ay=35,
+        bgcolor="#10b981", font=dict(size=10, color="#ffffff"), row=1, col=1)
+for _, row in df[df["bpa_l2"]].iterrows():
+    fig.add_annotation(x=row["date"], y=row["high"], text="▼ L2 賣點",
+        showarrow=True, arrowhead=2, ax=0, ay=-35,
+        bgcolor="#ef4444", font=dict(size=10, color="#ffffff"), row=1, col=1)
+for _, row in df[df["bpa_bull_gap"]].iterrows():
+    fig.add_annotation(x=row["date"], y=row["low"], text="🚀 EMA 缺口棒",
+        showarrow=True, arrowhead=2, ax=0, ay=45,
+        bgcolor="#0284c7", font=dict(size=10, color="#ffffff"), row=1, col=1)
+for _, row in df[df["bpa_bear_gap"]].iterrows():
+    fig.add_annotation(x=row["date"], y=row["high"], text="⚠️ EMA 缺口棒",
+        showarrow=True, arrowhead=2, ax=0, ay=-45,
+        bgcolor="#b91c1c", font=dict(size=10, color="#ffffff"), row=1, col=1)
+for _, row in df[df["double_inside"]].iterrows():
+    fig.add_annotation(x=row["date"], y=row["high"], text="⚑ ii 突破",
+        showarrow=True, arrowhead=2, ax=0, ay=-25,
+        bgcolor="#8b5cf6", font=dict(size=10, color="#ffffff"), row=1, col=1)
 for _, row in df[df["bull_div"]].iterrows():
     fig.add_annotation(x=row["date"], y=row["low"], text="★ 底背離",
         showarrow=True, arrowhead=2, ax=0, ay=35,
@@ -535,7 +822,7 @@ for _, row in df[df["churn"]].iterrows():
         showarrow=True, arrowhead=2, ax=0, ay=-35,
         bgcolor="#fed7aa", font=dict(size=10, color="#9a3412"), row=1, col=1)
 
-# ── Row 2（選）：三大法人 ─────────────────────────────────
+# Row 2（選）：三大法人
 if not inst_df.empty:
     inst_row = 2
     fig.add_trace(go.Bar(
@@ -552,7 +839,7 @@ if not inst_df.empty:
         name="自營商", opacity=0.85), row=inst_row, col=1)
     fig.update_layout(barmode="group")
 
-# ── MACD 子圖 ─────────────────────────────────────────────
+# MACD 子圖
 macd_row = 2 + n_inst
 hist_colors = np.where(df["macd_hist"].values >= 0, "#ef4444", "#22c55e")
 fig.add_trace(go.Bar(x=df["date"], y=df["macd_hist"],
@@ -563,7 +850,7 @@ fig.add_trace(go.Scatter(x=df["date"], y=df["macd_signal"],
     mode="lines", line=dict(color="#a78bfa", width=1.5), name="Signal"), row=macd_row, col=1)
 fig.add_hline(y=0, line=dict(color="rgba(255,255,255,0.2)", width=1), row=macd_row, col=1)
 
-# ── RSI 子圖 ──────────────────────────────────────────────
+# RSI 子圖
 rsi_row = 3 + n_inst
 fig.add_trace(go.Scatter(x=df["date"], y=df["rsi"],
     mode="lines", line=dict(color="#38bdf8", width=1.5), name="RSI(14)"), row=rsi_row, col=1)
@@ -574,7 +861,7 @@ fig.add_hline(y=30, line=dict(color="#4ade80", width=1, dash="dash"),
 fig.add_hline(y=50, line=dict(color="rgba(255,255,255,0.15)", width=1), row=rsi_row, col=1)
 fig.update_yaxes(range=[0, 100], row=rsi_row, col=1)
 
-# ── 成交量子圖 ────────────────────────────────────────────
+# 成交量子圖
 vol_row = 4 + n_inst
 vol_colors = np.where(df["close"].values >= df["open"].values, "#ef4444", "#22c55e")
 fig.add_trace(go.Bar(x=df["date"], y=df["volume"], marker_color=vol_colors,
@@ -582,14 +869,44 @@ fig.add_trace(go.Bar(x=df["date"], y=df["volume"], marker_color=vol_colors,
 fig.add_trace(go.Scatter(x=df["date"], y=df["vol_ma"], mode="lines",
     line=dict(color="#f59e0b", width=1, dash="dot"), name=f"VOL MA{VOL_MA}"), row=vol_row, col=1)
 
-# ── 版面設定 ──────────────────────────────────────────────
-last_close = df["close"].iloc[-1]
+# ── 支撐與壓力矩陣（S/R 水平線）可視化 ────────────────────────────
+# 以色調區分：壓力 = 橙/紅色調；支撐 = 綠/青色調；停損 = 紫紅色虛線
+
+sr_levels = [
+    (r2,        f"R2 布林上軌  {r2:.2f}",  "#f97316", "solid",  2.0),   # 壓力二 橘
+    (r1,        f"R1 近期高點  {r1:.2f}",  "#ef4444", "dash",   1.5),   # 壓力一 紅虛線
+    (s1,        f"S1 月線支撐  {s1:.2f}",  "#22c55e", "dash",   1.5),   # 支撐一 綠虛線
+    (s2,        f"S2 近期低點  {s2:.2f}",  "#06b6d4", "solid",  2.0),   # 支撐二 青
+    (stop_loss, f"停損 Pivot   {stop_loss:.2f}", "#a855f7", "dot", 1.5), # 停損線 紫虛線
+]
+
+for level, label, color, dash_style, lw in sr_levels:
+    fig.add_hline(
+        y=level,
+        line=dict(color=color, width=lw, dash=dash_style),
+        annotation_text=label,
+        annotation_position="right",
+        annotation_font=dict(color=color, size=11),
+        row=1, col=1
+    )
+
+# 當前收盤價水平虛線（白色半透明）
+fig.add_hline(
+    y=close_now,
+    line=dict(color="rgba(255,255,255,0.55)", width=1.2, dash="dot"),
+    annotation_text=f"現價 {close_now:.2f}",
+    annotation_position="left",
+    annotation_font=dict(color="rgba(255,255,255,0.75)", size=11),
+    row=1, col=1
+)
+
+# 版面設定
 last_date  = df["date"].iloc[-1].strftime("%Y-%m-%d")
-title_text = (f"{STOCK_NAME}（{TICKER}）多維量價籌碼評估系統 | "
-              f"最新收盤 {last_close:.2f} 元（{last_date}）| "
+title_text = (f"{STOCK_NAME}（{TICKER}）多維量價籌碼 + Al Brooks BPA 研判 | "
+              f"最新收盤 {close_now:.2f} 元（{last_date}）| "
               f"總評 {trend_score:+d}分 → {rating_badge}")
 if COST is not None:
-    pnl = (last_close - COST) / COST * 100
+    pnl = (close_now - COST) / COST * 100
     sign = "+" if pnl >= 0 else ""
     title_text += f" | 成本 {COST:.1f}（{sign}{pnl:.1f}%）"
 
@@ -608,20 +925,20 @@ output = f"{TICKER}_kline.html"
 fig.write_html(output)
 print(f"\n[OK] 圖表已輸出 -> {output}")
 
-# ── 9. 專業研判報表輸出 ───────────────────────────────────
-print("\n" + "="*68)
-print(f"  📊 {STOCK_NAME}（{TICKER}）專業多維量價籌碼研判報表")
-print("="*68)
+# ── 9. 專業多維研判報表輸出 ───────────────────────────────────
+print("\n" + "="*70)
+print(f"  📊 {STOCK_NAME}（{TICKER}）專業多維量價籌碼 + Al Brooks BPA 研判報表")
+print("="*70)
 print(f"  📅 分析區間 ：{df['date'].iloc[0].date()} ~ {df['date'].iloc[-1].date()}")
-print(f"  💰 最新收盤 ：{last_close:.2f} 元")
+print(f"  💰 最新收盤 ：{close_now:.2f} 元")
 if COST is not None:
-    pnl_amt = last_close - COST
+    pnl_amt = close_now - COST
     pnl_pct = pnl_amt / COST * 100
     sign = "+" if pnl_amt >= 0 else ""
     print(f"  🎯 持有成本 ：{COST:.2f} 元 ｜ 浮動損益：{sign}{pnl_amt:.2f} 元（{sign}{pnl_pct:.1f}%）")
 
 print(f"\n  ── 📌 核心技術指標數據 ─────────────────────────────────")
-print(f"  均線位階  ：MA5={df['ma5'].iloc[-1]:.2f} ｜ MA20={df['ma20'].iloc[-1]:.2f} ｜ MA60={df['ma60'].iloc[-1]:.2f}")
+print(f"  均線位階  ：EMA20={df['ema20'].iloc[-1]:.2f} ｜ MA5={df['ma5'].iloc[-1]:.2f} ｜ MA20={df['ma20'].iloc[-1]:.2f} ｜ MA60={df['ma60'].iloc[-1]:.2f}")
 print(f"  布林通道  ：上軌={r2:.2f} ｜ 中軌={df['bb_mid'].iloc[-1]:.2f} ｜ 下軌={df['bb_lower'].iloc[-1]:.2f}（頻寬={df['bb_width'].iloc[-1]:.1f}%）")
 print(f"  動量指標  ：MACD={df['macd'].iloc[-1]:+.2f} ｜ Signal={df['macd_signal'].iloc[-1]:+.2f} ｜ 柱體={df['macd_hist'].iloc[-1]:+.2f}")
 print(f"  震盪指標  ：RSI(14)={df['rsi'].iloc[-1]:.1f} ｜ KD(9,3,3) K={df['kd_k'].iloc[-1]:.1f} / D={df['kd_d'].iloc[-1]:.1f}")
@@ -630,10 +947,39 @@ print(f"  成交量能  ：今日={df['volume'].iloc[-1]:,.0f} 張 ｜ 20日均�
 if not inst_df.empty:
     print(f"\n  ── 🏛️ 近 5 日三大法人籌碼分佈（張）───────────────────")
     for _, r in inst_df.tail(5).iterrows():
-        sign_t = "+" if r["total"] >= 0 else ""
         print(f"  {r['date'].strftime('%m/%d')}  "
               f"外資:{r['fini']:>+6,} ｜ 投信:{r['trust']:>+5,} ｜ 自營:{r['dealer']:>+5,} ｜ "
-              f"三大合計:{sign_t}{r['total']:>+6,}")
+              f"三大合計:{r['total']:>+6,}")
+
+print(f"\n  ── 📘 Al Brooks 價格行為學（BPA）量化研判 ───────────────")
+print(f"  市場狀態 (Always-In) ：{bpa_res['always_in']}")
+print(f"  當前 K 線結構        ：{bpa_res['last_bar_type']}")
+print(f"  20 EMA 動態位階      ：現價 {close_now:.2f} ｜ 20 EMA={df['ema20'].iloc[-1]:.2f}（乖離率 {bpa_res['bias_ema20']:+.2f}%，斜率 {bpa_res['ema_slope']:+.2f}%）")
+if bpa_res['signals']:
+    print(f"  BPA 關鍵型態與設定   ：")
+    for sig in bpa_res['signals']:
+        print(f"    • {sig}")
+else:
+    print(f"  BPA 關鍵型態與設定   ：近幾日無高勝率特殊設定，順應 20 EMA 趨勢動態運行")
+
+print(f"\n  ── 🎯 Brooks 操盤訂單與停損風控指引 ───────────────────────")
+if bpa_res['always_in_code'] == 'AIL':
+    print(f"  偏多操作策略 (AIL)   ：多頭主控，拉回逢支撐尋找 H1/H2 買點，或以 Signal Bar 突破進場")
+    print(f"  • 訊號棒極值 (Signal Bar)   ：高 {bpa_res['sig_high']:.2f} ｜ 低 {bpa_res['sig_low']:.2f} ｜ 震幅 {bpa_res['sig_high']-bpa_res['sig_low']:.2f} 元")
+    print(f"  • 多方突破進場 (Buy Stop)   ：{bpa_res['buy_stop']:.2f} 元（突破訊號棒高點啟動）")
+    print(f"  • 多方防守停損 (Prot Stop)  ：{bpa_res['sell_stop']:.2f} 元（跌破訊號棒低點，風險 {bpa_res['risk_long']:.2f} 元）")
+    print(f"  • 等距測量目標 (MM 1R / 2R) ：目標一 {bpa_res['target_long_1r']:.2f} 元 ｜ 目標二 {bpa_res['target_long_2r']:.2f} 元")
+elif bpa_res['always_in_code'] == 'AIS':
+    print(f"  偏空操作策略 (AIS)   ：空方主控，反彈尋找 L1/L2 空點，持股者逢高調節，空方設 Stop 單")
+    print(f"  • 訊號棒極值 (Signal Bar)   ：高 {bpa_res['sig_high']:.2f} ｜ 低 {bpa_res['sig_low']:.2f} ｜ 震幅 {bpa_res['sig_high']-bpa_res['sig_low']:.2f} 元")
+    print(f"  • 空方跌破進場 (Sell Stop)  ：{bpa_res['sell_stop']:.2f} 元（跌破訊號棒低點啟動）")
+    print(f"  • 空方防守停損 (Prot Stop)  ：{bpa_res['buy_stop']:.2f} 元（突破訊號棒高點，風險 {bpa_res['risk_short']:.2f} 元）")
+    print(f"  • 等距測量目標 (MM 1R / 2R) ：目標一 {bpa_res['target_short_1r']:.2f} 元 ｜ 目標二 {bpa_res['target_short_2r']:.2f} 元")
+else:
+    print(f"  區間震盪策略 (TR)    ：【80% 法則】80% 的區間突破會失敗！嚴禁盲目追高殺低")
+    print(f"  • 操作準則 (BLSHS)   ：Buy Low, Sell High, Scalp（低買高賣短沖，接近 S1/S2 買，接近 R1/R2 賣）")
+    if bpa_res['is_ttr']:
+        print(f"  • 鐵絲網警示 (Barbwire)：目前處於密集重疊區，多空雙巴機率極高，強烈建議空手觀望！")
 
 print(f"\n  ── 🎯 關鍵支撐與壓力矩陣 ───────────────────────────────")
 print(f"  壓力二 (R2 - 布林上軌/波段頂)：{r2:.2f} 元")
@@ -658,4 +1004,4 @@ elif trend_score <= -3:
 else:
     print("  【持股者】短線處於區間震盪打底，未跌破防守線前可暫時觀望，密切留意法人籌碼延續性。")
     print("  【空手者】觀望為主，靜待帶量突破 R1 壓力或回測 S2 底部確認再行佈局。")
-print("="*68)
+print("="*70)
