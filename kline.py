@@ -435,7 +435,7 @@ def get_rating_badge(s):
     return            "🔴 強烈空頭（主跌段，切勿盲目接刀）"
 
 # ── 6. 核心分析主函數 ─────────────────────────────────────────
-def analyze_stock(ticker, months=2, cost=None, custom_name=None, generate_html=True, print_report=True):
+def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=True, print_report=True):
     ticker = str(ticker).strip()
     market, auto_name = get_info(ticker)
     stock_name = custom_name if custom_name else auto_name
@@ -1026,7 +1026,7 @@ def analyze_stock(ticker, months=2, cost=None, custom_name=None, generate_html=T
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="台股專業 K 線量價 + 籌碼 + 技術形態多維研判系統")
     parser.add_argument("ticker",       type=str,               help="股票代號，例如 3042")
-    parser.add_argument("--months",     type=int,  default=2,   help="分析月數（預設 2）")
+    parser.add_argument("--months",     type=int,  default=1,   help="分析月數（預設 1）")
     parser.add_argument("--cost",       type=float,default=None, help="持有成本（元）")
     parser.add_argument("--name",       type=str,  default=None, help="自訂股票名稱")
     args = parser.parse_args()

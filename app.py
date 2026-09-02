@@ -90,7 +90,7 @@ for i, (qname, qtick) in enumerate(quick_tickers):
 with st.expander("⚙️ 搜尋股票與自訂參數", expanded=False):
     c1, c2, c3 = st.columns([2, 1, 1])
     input_ticker = c1.text_input("股票代號（上市/上櫃）", value=st.session_state["ticker"]).strip()
-    months_opt = c2.selectbox("歷史分析月數", options=[1, 2, 3, 6, 12], index=1)
+    months_opt = c2.selectbox("歷史分析月數", options=[1, 2, 3, 6, 12], index=0)
     cost_opt = c3.number_input("個人持有成本（選填）", value=0.0, step=0.5, format="%.2f")
     cost_val = cost_opt if cost_opt > 0 else None
     
