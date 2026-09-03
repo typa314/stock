@@ -145,25 +145,30 @@ quick_tickers = [
     ("長榮", "2603")
 ]
 
-if "ticker" not in st.session_state:
-    st.session_state["ticker"] = "2330"
+if "ticker_input" not in st.session_state:
+    st.session_state["ticker_input"] = "2330"
+
+def select_ticker(t):
+    st.session_state["ticker_input"] = str(t).strip()
 
 cols_btn = st.columns(len(quick_tickers))
 for i, (qname, qtick) in enumerate(quick_tickers):
-    if cols_btn[i].button(f"{qname}\n{qtick}", key=f"btn_{qtick}", use_container_width=True):
-        st.session_state["ticker"] = qtick
+    cols_btn[i].button(
+        f"{qname}\n{qtick}",
+        key=f"btn_{qtick}",
+        on_click=select_ticker,
+        args=(qtick,),
+        use_container_width=True
+    )
 
 with st.expander("⚙️ 搜尋股票與自訂參數", expanded=False):
     c1, c2, c3 = st.columns([2, 1, 1])
-    input_ticker = c1.text_input("股票代號（上市/上櫃）", value=st.session_state["ticker"]).strip()
+    input_ticker = c1.text_input("股票代號（上市/上櫃）", key="ticker_input").strip()
     months_opt = c2.selectbox("歷史分析月數", options=[1, 2, 3, 6, 12], index=0)
     cost_opt = c3.number_input("個人持有成本（選填）", value=0.0, step=0.5, format="%.2f")
     cost_val = cost_opt if cost_opt > 0 else None
-    
-    if input_ticker != st.session_state["ticker"]:
-        st.session_state["ticker"] = input_ticker
 
-current_ticker = st.session_state["ticker"]
+current_ticker = st.session_state["ticker_input"]
 
 # ── 4. 執行研判與展示 ──────────────────────────────────────
 try:

@@ -73,22 +73,28 @@ def fetch_twse(ticker, months):
         cur += relativedelta(months=1)
     return records
 
-def fetch_otc(ticker, months):
+def fetch_from_yfinance(sym, months):
     end   = datetime.now()
     start = end - relativedelta(months=months)
-    sym   = ticker + ".TWO"
-    raw   = yf.download(sym,
-                start=start.strftime("%Y-%m-%d"),
-                end=end.strftime("%Y-%m-%d"),
-                progress=False)
-    if raw.empty:
-        sys.exit(f"[ERROR] yfinance 無法取得 {sym} 資料，請確認代號。")
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
-    df = raw.reset_index()
-    df.columns = [c.lower() for c in df.columns]
-    df["volume"] = df["volume"] / 1000
-    return df[["date","open","high","low","close","volume"]].to_dict("records")
+    try:
+        raw = yf.download(sym,
+                    start=start.strftime("%Y-%m-%d"),
+                    end=end.strftime("%Y-%m-%d"),
+                    progress=False)
+        if raw is not None and not raw.empty:
+            if isinstance(raw.columns, pd.MultiIndex):
+                raw.columns = raw.columns.get_level_values(0)
+            df = raw.reset_index()
+            df.columns = [c.lower() for c in df.columns]
+            if "date" in df.columns and "close" in df.columns and "volume" in df.columns:
+                df["volume"] = df["volume"] / 1000
+                return df[["date","open","high","low","close","volume"]].dropna().to_dict("records")
+    except Exception as e:
+        print(f"  [WARN] yfinance 取得 {sym} 失敗：{e}")
+    return []
+
+def fetch_otc(ticker, months):
+    return fetch_from_yfinance(f"{ticker}.TWO", months)
 
 # ── 3. 補今日即時與盤中行情（TWSE MIS 官方撮合 + Yahoo 雙軌備援） ───
 def fetch_realtime_bar(ticker, market):
@@ -642,13 +648,29 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         print(f"[INFO] {ticker}（{stock_name}）| {'上市(TSE)' if market=='tse' else '上櫃(OTC)'}")
         print(f"下載近 {months} 個月歷史資料中...")
 
+    records = []
     if market == "tse":
         records = fetch_twse(ticker, months)
+        if not records:
+            if print_report:
+                print(f"[WARN] TWSE 官方 API 未能取得 {ticker} 資料，啟動 yfinance (.TW) 備援...")
+            records = fetch_from_yfinance(f"{ticker}.TW", months)
     else:
         records = fetch_otc(ticker, months)
+        if not records:
+            if print_report:
+                print(f"[WARN] yfinance (.TWO) 未能取得 {ticker} 資料，嘗試 (.TW)...")
+            records = fetch_from_yfinance(f"{ticker}.TW", months)
+
+    # 交叉最後備援：若仍無資料，嘗試對向市場代號
+    if not records:
+        alt_sym = f"{ticker}.TWO" if market == "tse" else f"{ticker}.TW"
+        records = fetch_from_yfinance(alt_sym, months)
+        if records:
+            market = "otc" if alt_sym.endswith(".TWO") else "tse"
 
     if not records:
-        raise ValueError(f"查無 {ticker} 資料，請確認代號。")
+        raise ValueError(f"查無 {ticker} 資料，請確認代號是否正確。")
 
     df = pd.DataFrame(records)
     df["date"] = pd.to_datetime(df["date"])
