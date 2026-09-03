@@ -219,9 +219,14 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
     market_txt_5m = "上市 (TSE)" if res5["market"] == "tse" else "上櫃 (OTC)"
 
     st.markdown(f"""
-    <div style="background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.3); color: #a5b4fc; padding: 7px 14px; border-radius: 6px; font-size: 0.82rem; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-        <span>⚡ <b>5 分鐘 K 線 Al Brooks 日內價格行為研判</b>（{stock_name_5m} {current_ticker} | {market_txt_5m}）</span>
-        <span style="font-size: 0.74rem; color: #cbd5e1; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">資料時間：{res5['data_time_str']}（盤中延遲約15分）</span>
+    <div style="background: rgba(0,0,0,0.3); border: 1.5px solid {res5.get('action_color', '#38bdf8')}; border-left: 6px solid {res5.get('action_color', '#38bdf8')}; padding: 10px 16px; border-radius: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 1.25rem; font-weight: 800; color: {res5.get('action_color', '#38bdf8')}; background: {res5.get('bpa_bg', 'rgba(0,0,0,0.2)')}; padding: 4px 12px; border-radius: 6px; border: 1px solid {res5.get('action_color', '#38bdf8')}; letter-spacing: 0.5px;">{res5.get('action_tag', '🟡 建議觀望')}</span>
+            <span style="font-size: 0.88rem; color: #f1f5f9; font-weight: 600;">{res5.get('action_sub', '')}</span>
+        </div>
+        <div style="font-size: 0.78rem; color: #94a3b8;">
+            ⚡ <b>5分K 當沖架構</b>（{stock_name_5m} {current_ticker}）｜ 資料時間：{res5['data_time_str']}
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -369,6 +374,26 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# 頂部核心操盤動作橫幅（建議買入 / 建議持有 / 建議觀望 / 建議賣出）
+comp = res.get("composite_rating", {})
+action_tag = comp.get("action_tag", "🟡 建議觀望")
+action_color = comp.get("action_color", "#fbbf24")
+action_bg = comp.get("action_bg", "rgba(245, 158, 11, 0.16)")
+action_border = comp.get("action_border", "#fbbf24")
+action_sub = comp.get("action_sub", "多空拉鋸，靜待方向")
+
+st.markdown(f"""
+<div style="background: rgba(0,0,0,0.3); border: 1.5px solid {action_border}; border-left: 6px solid {action_border}; padding: 10px 16px; border-radius: 8px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 1.25rem; font-weight: 800; color: {action_color}; background: {action_bg}; padding: 4px 12px; border-radius: 6px; border: 1px solid {action_border}; letter-spacing: 0.5px;">{action_tag}</span>
+        <span style="font-size: 0.90rem; color: #f1f5f9; font-weight: 600;">{action_sub}</span>
+    </div>
+    <div style="font-size: 0.8rem; color: #94a3b8;">
+        綜合評分：<b style="color: {action_color}; font-size: 1.05rem;">{comp.get('score', 0)}</b> / 100 ｜ 體質：<span style="color: {comp.get('badge_color', '#60a5fa')}; font-weight: 600;">{comp.get('badge', '').split('（')[0]}</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
 # ── 4.1 四大關鍵指標橫幅卡片 ─────────────────────────────────
 k1, k2, k3, k4 = st.columns(4)
 
@@ -425,7 +450,10 @@ if comp:
     <div class="dashboard-card" style="border-left: 4px solid {comp.get('badge_color', '#38bdf8')};">
         <div class="card-header">
             <span class="card-title">🌟 多維綜合評級 <span style="font-size: 0.78rem; color: #94a3b8; font-weight: normal; margin-left: 6px;">綜合評分：<b style="color: {comp.get('badge_color', '#38bdf8')}; font-size: 1.05rem;">{comp.get('score', 0)}</b> / 100</span></span>
-            <span class="pill-badge" style="background: {comp.get('badge_bg', 'rgba(59, 130, 246, 0.2)')}; color: {comp.get('badge_color', '#60a5fa')};">{comp.get('badge', '')}</span>
+            <div style="display: flex; gap: 6px; align-items: center;">
+                <span class="pill-badge" style="background: {comp.get('action_bg', 'rgba(59,130,246,0.2)')}; color: {comp.get('action_color', '#38bdf8')}; border: 1px solid {comp.get('action_border', '#38bdf8')}; font-weight: 700;">{comp.get('action_tag', '🟡 建議觀望')}</span>
+                <span class="pill-badge" style="background: {comp.get('badge_bg', 'rgba(59, 130, 246, 0.2)')}; color: {comp.get('badge_color', '#60a5fa')};">{comp.get('badge', '')}</span>
+            </div>
         </div>
         <div class="grid-4">
             <div class="grid-cell">
@@ -450,7 +478,7 @@ if comp:
             </div>
         </div>
         <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px;">
-            <b>🎯 操盤定位：</b>{comp.get('summary_advice', '')}
+            <b>🎯 操盤方針：</b><b style="color: {comp.get('action_color', '#38bdf8')};">{comp.get('action_tag', '')}</b> ｜ {comp.get('summary_advice', '')}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -779,6 +807,12 @@ with tab2:
         st.markdown(f"- {factor}")
 
 with tab3:
+    st.markdown(f"""
+    <div style="background: rgba(0,0,0,0.25); border: 1.5px solid {action_border}; border-left: 6px solid {action_border}; padding: 8px 14px; border-radius: 6px; margin-bottom: 12px; display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 1.15rem; font-weight: 800; color: {action_color}; background: {action_bg}; padding: 2px 10px; border-radius: 4px; border: 1px solid {action_border};">{action_tag}</span>
+        <span style="font-size: 0.85rem; color: #f1f5f9; font-weight: 600;">{action_sub}</span>
+    </div>
+    """, unsafe_allow_html=True)
     s1_p = sr['s1']
     s2_p = sr['s2']
     r1_p = sr['r1']

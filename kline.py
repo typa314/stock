@@ -964,11 +964,47 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         b_bg = "rgba(239, 68, 68, 0.2)"
         summary_advice = "跌破中長期均線或基本面動能放緩，空方主導格局，嚴禁盲目猜底接刀，持股者逢反彈宜嚴格風控。"
 
+    # 5. 核心操盤動作決策（建議買入 / 建議持有 / 建議觀望 / 建議賣出）
+    if total_score >= 75 and ("多" in bpa_zh or "主升" in badge):
+        action_tag = "🟢 建議買入"
+        action_type = "BUY"
+        action_color = "#22c55e"
+        action_bg = "rgba(34, 197, 94, 0.18)"
+        action_border = "#22c55e"
+        action_sub = "強烈主升動能，逢 20 EMA 支撐拉回或放量突破為高勝率買點"
+    elif total_score >= 60 and "空" not in bpa_zh:
+        action_tag = "🟡 建議持有"
+        action_type = "HOLD"
+        action_color = "#38bdf8"
+        action_bg = "rgba(56, 189, 248, 0.18)"
+        action_border = "#38bdf8"
+        action_sub = "多頭架構穩健守穩支撐，持股續抱享受利潤；空手者尋找回踩點分批佈局"
+    elif total_score >= 45:
+        action_tag = "🟡 建議觀望"
+        action_type = "WAIT"
+        action_color = "#fbbf24"
+        action_bg = "rgba(245, 158, 11, 0.18)"
+        action_border = "#fbbf24"
+        action_sub = "處於箱型震盪或打底整理階段，多空不明，空手者切忌追高，靜待帶量表態"
+    else:
+        action_tag = "🔴 建議賣出"
+        action_type = "SELL"
+        action_color = "#ef4444"
+        action_bg = "rgba(239, 68, 68, 0.18)"
+        action_border = "#ef4444"
+        action_sub = "跌破關鍵均線或防守停損線，空方主導，持股者逢反彈宜嚴格減碼，切勿盲目接刀"
+
     return {
         "score": total_score,
         "badge": badge,
         "badge_color": b_color,
         "badge_bg": b_bg,
+        "action_tag": action_tag,
+        "action_type": action_type,
+        "action_color": action_color,
+        "action_bg": action_bg,
+        "action_border": action_border,
+        "action_sub": action_sub,
         "minervini_passed": m_passed,
         "minervini_status": "Stage 2 主升段" if m_passed >= 6 else ("符合多數樣板" if m_passed >= 4 else "弱勢整理型態"),
         "minervini_color": "#4ade80" if m_passed >= 5 else ("#fbbf24" if m_passed >= 4 else "#f87171"),
@@ -1714,6 +1750,20 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         target_1r = round(close_now - r_val, 2)
         target_2r = round(close_now - 2 * r_val, 2)
 
+    # 5m 當沖動作決策
+    if "多" in bpa_status:
+        action_tag_5m = "🟢 建議偏多買進"
+        action_sub_5m = "順應 5m 20 EMA 支撐拉回逢低買進"
+        action_color_5m = "#22c55e"
+    elif "空" in bpa_status:
+        action_tag_5m = "🔴 建議逢高做空"
+        action_sub_5m = "受制 5m 20 EMA 反壓，反彈逢高或破底順勢放空"
+        action_color_5m = "#ef4444"
+    else:
+        action_tag_5m = "🟡 建議觀望整理"
+        action_sub_5m = "日內箱型均線糾結，高出低進或暫不開倉"
+        action_color_5m = "#fbbf24"
+
     # 繪製 Plotly 5 分K 互動圖表
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True,
@@ -1793,6 +1843,9 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         "r_val": r_val,
         "target_1r": target_1r,
         "target_2r": target_2r,
+        "action_tag": action_tag_5m,
+        "action_sub": action_sub_5m,
+        "action_color": action_color_5m,
         "data_time_str": data_time_str
     }
 
