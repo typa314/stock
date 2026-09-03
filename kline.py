@@ -22,7 +22,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-__version__ = "2.3.0"
+__version__ = "2.4.0"
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 MA_DAYS   = [5, 20, 60]
