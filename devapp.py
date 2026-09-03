@@ -433,7 +433,7 @@ with col_vol:
 
 # ── 4.3 完整互動 K 線圖表（下拉折疊選單，電腦端方便檢視，手機端預設收合保持清爽） ────
 if "fig" in res and res["fig"] is not None:
-    with st.expander("📈 展開完整互動 K 線圖表（含 BPA 支撐壓力線、EMA20、三大法人與指標）", expanded=False):
+    with st.expander("📈 展開完整互動 K 線圖表（含 BPA 支撐壓力線、20 EMA、布林通道與技術指標）", expanded=False):
         st.plotly_chart(
             res["fig"],
             use_container_width=True,
