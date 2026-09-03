@@ -189,10 +189,28 @@ def test_realtime_bar_fetching():
         assert "date" in bar_otc and "source" in bar_otc
     print("[PASS] 5. Realtime Intraday Price Fetching Logic Validation (TSE & OTC)")
 
+# ── 6. 靜態程式品質檢查與零未定義變數驗證 (Quality Assurance) ──────
+def test_static_code_quality():
+    import io
+    from pyflakes.api import checkPath
+    from pyflakes.reporter import Reporter
+
+    checked_files = ["app.py", "kline.py", "test_kline_logic.py"]
+    for filename in checked_files:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        reporter = Reporter(stdout, stderr)
+        checkPath(filename, reporter)
+        out = stdout.getvalue() + stderr.getvalue()
+        undefined_errors = [line for line in out.splitlines() if "undefined name" in line]
+        assert not undefined_errors, f"❌ 品質檢查失敗：在 {filename} 中發現未定義變數錯誤！\n" + "\n".join(undefined_errors)
+    print("[PASS] 6. Static Code Quality & Zero-Undefined-Variable Validation (No NameError)")
+
 if __name__ == "__main__":
     test_tick_sizes()
     test_indicator_math()
     test_bpa_bar_classification()
     test_volume_price_evaluation()
     test_realtime_bar_fetching()
-    print("\nALL 5 CORE TESTS PASSED WITH 100% ACCURACY!")
+    test_static_code_quality()
+    print("\nALL 6 CORE TESTS & QA CHECKS PASSED WITH 100% ACCURACY!")

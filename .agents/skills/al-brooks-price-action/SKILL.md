@@ -153,3 +153,26 @@ $$\text{Tick}(P) = \begin{cases}
    - 上市權值股測試（如 2330 台積電）
    - 上市中型股測試（如 3042 晶技）
    - 上櫃/高價股測試（如 6446 藥華藥、6472 保瑞）
+
+---
+
+## 八、 軟體工程品質檢查與零未定義變數規範（Quality Assurance & Zero-Error Protocol）
+
+為確保 Web 看盤應用（Streamlit）與 CLI 工具在生產環境（包含 Streamlit Community Cloud、Docker 與原生環境）高可靠運行，任何代碼推送前必須嚴格遵守以下品質防護檢查流程：
+
+1. **靜態程式碼品質檢驗（Zero Undefined Variables Check）**：
+   - 嚴禁僅以 `py_compile` 作為驗證標準（`py_compile` 僅檢查語法層級，無法攔截執行期 `NameError`）。
+   - 必須透過 `pyflakes` 靜態掃描所有核心檔案（`app.py`、`kline.py`、`test_kline_logic.py`），確保**零未定義變數（No Undefined Names）**。
+   - 所有在條件分支或 UI 元件區塊中引用的變數（如 `cost_opt`、`months_opt`），必須在作用域前定義完整，杜絕變數遺失。
+2. **Streamlit 全域執行流檢查（Streamlit App Sanity Run）**：
+   - 每次變更 Web App（`app.py`），必須執行整合測試驗證所有自訂參數（成本、月數、股票切換）與快取邏輯在全域執行時無異常拋出。
+   - 確保所有 UI 元件（如輸入框、按鈕）之 `key` 與 `session_state` 雙向綁定正確無衝突。
+3. **多環境與雲端機房防禦（Cloud Sandbox Safety）**：
+   - 外部數據串接必須具備**雙軌備援機制**（如 FinMind + TWSE），防止海外雲端機房（如 AWS / Streamlit Cloud）受官方 IP 阻擋。
+   - 任何外部資料請求失敗時，必須進行優雅降級或替代軌道重試，嚴禁在模組內部呼叫 `sys.exit()` 導致伺服器崩潰。
+4. **自動化驗證執行守則**：
+   - 任何提交前必須執行：
+     ```powershell
+     python -X utf8 test_kline_logic.py
+     ```
+   - 必須確認第 6 項測試 `Static Code Quality & Zero-Undefined-Variable Validation` 為 `[PASS]` 始可提交。

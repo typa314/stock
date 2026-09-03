@@ -6,3 +6,4 @@ numpy>=1.24.0
 plotly>=5.15.0
 python-dateutil>=2.8.2
 streamlit>=1.30.0
+pyflakes>=3.0.0
