@@ -1601,6 +1601,201 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         "output_html": output if generate_html else None
     }
 
+def analyze_stock_5m(ticker, days=3, custom_name=None):
+    """
+    台股 5 分鐘 K 線 Al Brooks 價格行為學（BPA）極速日內分析
+    包含：5m 20 EMA、開盤區間、反轉棒識別、Always-In 多空定調與 Tick 級風控掛單
+    """
+    ticker = str(ticker).strip()
+    market, auto_name = get_info(ticker)
+    stock_name = custom_name if custom_name else auto_name
+
+    sym = f"{ticker}.TW" if market == "tse" else f"{ticker}.TWO"
+    raw = yf.download(sym, interval="5m", period=f"{days}d", progress=False)
+    if raw is None or raw.empty:
+        sym_alt = f"{ticker}.TWO" if market == "tse" else f"{ticker}.TW"
+        raw = yf.download(sym_alt, interval="5m", period=f"{days}d", progress=False)
+    if raw is None or raw.empty:
+        raise ValueError(f"無法取得 {ticker} 的 5 分鐘 K 線數據。")
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = [c[0].lower() for c in raw.columns]
+    else:
+        raw.columns = [c.lower() for c in raw.columns]
+    df = raw.reset_index()
+
+    # 轉為台灣時區 (Asia/Taipei)
+    if "Datetime" in df.columns:
+        dt_col = "Datetime"
+    elif "datetime" in df.columns:
+        dt_col = "datetime"
+    else:
+        dt_col = df.columns[0]
+
+    if df[dt_col].dt.tz is None:
+        df["date"] = df[dt_col].dt.tz_localize("UTC").dt.tz_convert("Asia/Taipei")
+    else:
+        df["date"] = df[dt_col].dt.tz_convert("Asia/Taipei")
+
+    df["volume"] = df["volume"] / 1000.0  # 轉為張數
+    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
+
+    # 今日數據統計
+    today_date = df["date"].iloc[-1].date()
+    df_today = df[df["date"].dt.date == today_date]
+
+    close_now = float(df["close"].iloc[-1])
+    open_today = float(df_today["open"].iloc[0]) if not df_today.empty else close_now
+    high_today = float(df_today["high"].max()) if not df_today.empty else close_now
+    low_today = float(df_today["low"].min()) if not df_today.empty else close_now
+    range_today = round(high_today - low_today, 2)
+    change_today = round(close_now - open_today, 2)
+    change_today_pct = round(change_today / (open_today + 1e-9) * 100, 2)
+
+    # 5m 20 EMA 乖離
+    ema_now = float(df["ema20"].iloc[-1])
+    ema_bias = round(close_now - ema_now, 2)
+    ema_bias_pct = round(ema_bias / (ema_now + 1e-9) * 100, 2)
+
+    # 5m BPA Always-In 多空動態狀態
+    c = df["close"]
+    ema = df["ema20"]
+    slope = (ema.iloc[-1] - ema.iloc[-4]) / (ema.iloc[-4] + 1e-9) * 100 if len(ema) >= 4 else 0
+
+    if c.iloc[-1] > ema.iloc[-1] and slope > 0.05:
+        bpa_status = "多頭主控（拉回逢低做多）"
+        bpa_status_color = "#4ade80"
+        bpa_bg = "rgba(34, 197, 94, 0.2)"
+        bpa_guide = "目前 5 分K 處於順勢多方軌道，站在 20 EMA 之上，逢拉回回測 20 EMA 出現陽棒可順勢佈局。"
+    elif c.iloc[-1] < ema.iloc[-1] and slope < -0.05:
+        bpa_status = "空方主導（反彈逢高做空）"
+        bpa_status_color = "#f87171"
+        bpa_bg = "rgba(239, 68, 68, 0.2)"
+        bpa_guide = "目前 5 分K 受制於 20 EMA 反壓，空方主控，反彈無力突破均線前切忌急於搶反彈。"
+    else:
+        bpa_status = "箱型震盪（區間高出低進）"
+        bpa_status_color = "#fbbf24"
+        bpa_bg = "rgba(245, 158, 11, 0.2)"
+        bpa_guide = "目前 5 分K 均線走平，穿梭於 20 EMA 兩側，屬於典型日內區間整理，嚴禁追高殺低。"
+
+    # 最新 5 分K 棒形態分析
+    last_bar = df.iloc[-1]
+    bar_h = float(last_bar["high"])
+    bar_l = float(last_bar["low"])
+    bar_c = float(last_bar["close"])
+    bar_o = float(last_bar["open"])
+    rng = max(0.01, bar_h - bar_l)
+    body = abs(bar_c - bar_o)
+
+    if body / rng >= 0.6:
+        bar_type = "🟢 多頭趨勢棒 (Bull Trend)" if bar_c > bar_o else "🔴 空頭趨勢棒 (Bear Trend)"
+    elif min(bar_c, bar_o) - bar_l >= 0.5 * rng:
+        bar_type = "🔨 多頭反轉下影棒 (Bull Reversal)"
+    elif bar_h - max(bar_c, bar_o) >= 0.5 * rng:
+        bar_type = "☄️ 空頭反轉上影棒 (Bear Reversal)"
+    elif body / rng <= 0.2:
+        bar_type = "⚖️ 十字猶豫棒 (Doji)"
+    else:
+        bar_type = "⚪ 普通震盪棒 (Trading Bar)"
+
+    # 台股 Tick 級風控與掛單建議
+    tick = get_tw_tick(close_now)
+    buy_stop = round(bar_h + tick, 2)
+    sell_stop = round(bar_l - tick, 2)
+
+    if "多" in bpa_status:
+        stop_loss = round(bar_l - tick, 2)
+        r_val = round(max(tick, close_now - stop_loss), 2)
+        target_1r = round(close_now + r_val, 2)
+        target_2r = round(close_now + 2 * r_val, 2)
+    else:
+        stop_loss = round(bar_h + tick, 2)
+        r_val = round(max(tick, stop_loss - close_now), 2)
+        target_1r = round(close_now - r_val, 2)
+        target_2r = round(close_now - 2 * r_val, 2)
+
+    # 繪製 Plotly 5 分K 互動圖表
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        row_heights=[0.75, 0.25], vertical_spacing=0.03,
+        subplot_titles=[f"{stock_name} ({ticker}) 5 分鐘 K 線 + 20 EMA", "5 分鐘成交量（張）"]
+    )
+
+    fig.add_trace(go.Candlestick(
+        x=df["date"],
+        open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+        name="5分K",
+        increasing_line_color="#ef4444", increasing_fillcolor="#ef4444",
+        decreasing_line_color="#22c55e", decreasing_fillcolor="#22c55e"
+    ), row=1, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["ema20"],
+        line=dict(color="#6366f1", width=2),
+        name="20 EMA"
+    ), row=1, col=1)
+
+    # 標記今日開盤價、最高價、最低價
+    if not df_today.empty:
+        fig.add_hline(y=open_today, line_dash="dash", line_color="#94a3b8", row=1, col=1,
+                      annotation_text=f"今日開盤 {open_today}", annotation_position="top left", annotation_font_size=10)
+        fig.add_hline(y=high_today, line_dash="dot", line_color="#ef4444", row=1, col=1,
+                      annotation_text=f"今日最高 {high_today}", annotation_position="top right", annotation_font_size=10)
+        fig.add_hline(y=low_today, line_dash="dot", line_color="#22c55e", row=1, col=1,
+                      annotation_text=f"今日最低 {low_today}", annotation_position="bottom right", annotation_font_size=10)
+
+    # 成交量
+    vol_colors = ["#ef4444" if df["close"].iloc[i] >= df["open"].iloc[i] else "#22c55e" for i in range(len(df))]
+    fig.add_trace(go.Bar(
+        x=df["date"], y=df["volume"],
+        marker_color=vol_colors, name="成交量"
+    ), row=2, col=1)
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=560,
+        margin=dict(t=50, b=30, l=50, r=20),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", y=1.02, x=1, xanchor="right")
+    )
+    # 過濾非交易時段（每日 13:30 ~ 隔日 09:00 及週末）
+    fig.update_xaxes(rangebreaks=[
+        dict(bounds=[13.5, 9], pattern="hour"),
+        dict(bounds=["sat", "mon"])
+    ])
+
+    data_time_str = df["date"].iloc[-1].strftime("%Y/%m/%d %H:%M")
+
+    return {
+        "ticker": ticker,
+        "stock_name": stock_name,
+        "market": market,
+        "df": df,
+        "fig": fig,
+        "close_now": close_now,
+        "open_today": open_today,
+        "high_today": high_today,
+        "low_today": low_today,
+        "range_today": range_today,
+        "change_today": change_today,
+        "change_today_pct": change_today_pct,
+        "ema_now": ema_now,
+        "ema_bias": ema_bias,
+        "ema_bias_pct": ema_bias_pct,
+        "bpa_status": bpa_status,
+        "bpa_status_color": bpa_status_color,
+        "bpa_bg": bpa_bg,
+        "bpa_guide": bpa_guide,
+        "last_bar_type": bar_type,
+        "buy_stop": buy_stop,
+        "sell_stop": sell_stop,
+        "stop_loss": stop_loss,
+        "r_val": r_val,
+        "target_1r": target_1r,
+        "target_2r": target_2r,
+        "data_time_str": data_time_str
+    }
+
 # ── 7. 命令列執行入口 ─────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="台股專業 K 線量價 + 籌碼 + 技術形態多維研判系統")
