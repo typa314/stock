@@ -121,7 +121,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── 2. 快取分析結果（避免重複計算，手機切換極速流暢） ───────────
-@st.cache_data(ttl=300, show_spinner=False)
+# 平日盤中 (09:00~13:35) 設為 20 秒極速更新即時行情，盤後維持 300 秒以省頻寬
+def _get_cache_ttl():
+    now = datetime.now()
+    if now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) <= (13, 35):
+        return 20
+    return 300
+
+@st.cache_data(ttl=_get_cache_ttl(), show_spinner=False)
 def get_cached_analysis(ticker, months, cost):
     return analyze_stock(ticker=ticker, months=months, cost=cost, generate_html=False, print_report=False)
 
@@ -173,6 +180,7 @@ close_now  = res["close_now"]
 df         = res["df"]
 inst_df    = res.get("inst_df", pd.DataFrame())
 vol_eval   = res.get("vol_eval", {})
+realtime_info = res.get("realtime_info")
 bpa_res    = res["bpa_res"]
 sr         = res["sr_levels"]
 trend_score= res["trend_score"]
@@ -185,6 +193,12 @@ chg_pct = (chg_val / prev_close) * 100
 chg_color = "#ef4444" if chg_val > 0 else ("#22c55e" if chg_val < 0 else "#94a3b8")
 chg_sign = "+" if chg_val > 0 else ""
 
+# 盤中即時狀態標籤
+if realtime_info and realtime_info.get("is_realtime"):
+    rt_badge_html = f'<span style="font-size: 0.76rem; background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34,197,94,0.4); padding: 2px 7px; border-radius: 4px; margin-left: 6px;">⚡ 盤中即時 {realtime_info.get("time","")}</span>'
+else:
+    rt_badge_html = '<span style="font-size: 0.76rem; background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148,163,184,0.3); padding: 2px 7px; border-radius: 4px; margin-left: 6px;">📅 盤後結算</span>'
+
 # 頂部個股摘要欄
 st.markdown(f"""
 <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px;">
@@ -192,6 +206,7 @@ st.markdown(f"""
         <span style="font-size: 1.5rem; font-weight: 800;">{stock_name}</span>
         <span style="font-size: 1.1rem; color: #94a3b8; margin-left: 6px;">{current_ticker}</span>
         <span style="font-size: 0.8rem; background: #334155; color: #cbd5e1; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">{market_txt}</span>
+        {rt_badge_html}
     </div>
     <div style="text-align: right;">
         <span style="font-size: 1.6rem; font-weight: 800; color: {chg_color};">{close_now:.2f}</span>

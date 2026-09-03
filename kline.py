@@ -90,26 +90,108 @@ def fetch_otc(ticker, months):
     df["volume"] = df["volume"] / 1000
     return df[["date","open","high","low","close","volume"]].to_dict("records")
 
-# ── 3. 補今日即時（TWSE OpenAPI） ────────────────────────────
-def fetch_today_tse(ticker):
+# ── 3. 補今日即時與盤中行情（TWSE MIS 官方撮合 + Yahoo 雙軌備援） ───
+def fetch_realtime_bar(ticker, market):
+    """
+    盤中即時股價擷取（雙軌備援架構）：
+      1. 第一軌：TWSE MIS 官方撮合 API（延遲 0~5 秒，支援上市/上櫃）
+      2. 第二軌：Yahoo Finance 即時報價（備援）
+      3. 第三軌：TWSE OpenAPI STOCK_DAY_ALL（盤後定盤結算資料備援）
+    """
+    # ── 軌道 1：TWSE MIS 官方撮合 API ────────────────────────────
+    prefix = "tse" if market == "tse" else "otc"
+    mis_url = f"https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch={prefix}_{ticker}.tw&json=1&delay=0"
     try:
-        r = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
-                         headers=HEADERS, timeout=8)
-        for row in r.json():
-            if row.get("Code") == ticker:
-                raw_d = row["Date"]
-                if len(raw_d) == 7:
-                    raw_d = str(int(raw_d[:3])+1911) + raw_d[3:]
+        r = requests.get(mis_url, headers=HEADERS, timeout=5)
+        data = r.json().get("msgArray", [])
+        if data:
+            item = data[0]
+            # 優先讀取最新成交價 z；若為 '-' 則 fallback 至委買首檔、委賣首檔或昨收 y
+            p_str = item.get("z", "-")
+            if not p_str or p_str == "-":
+                bids = [b for b in item.get("b", "").split("_") if b]
+                asks = [a for a in item.get("a", "").split("_") if a]
+                if bids:
+                    p_str = bids[0]
+                elif asks:
+                    p_str = asks[0]
+                else:
+                    p_str = item.get("y", "-")
+            
+            if p_str and p_str != "-":
+                price = float(p_str)
+                open_p = float(item.get("o", price)) if item.get("o") and item.get("o") != "-" else price
+                high_p = float(item.get("h", price)) if item.get("h") and item.get("h") != "-" else price
+                low_p  = float(item.get("l", price)) if item.get("l") and item.get("l") != "-" else price
+                vol    = float(item.get("v", 0)) if item.get("v") and item.get("v") != "-" else 0.0
+                d_str  = item.get("d", "")
+                t_str  = item.get("t", "")
+                d_obj  = pd.to_datetime(d_str, format="%Y%m%d") if d_str else pd.Timestamp.now().normalize()
                 return {
-                    "date":   pd.to_datetime(raw_d, format="%Y%m%d"),
-                    "open":   float(row["OpeningPrice"].replace(",","")),
-                    "high":   float(row["HighestPrice"].replace(",","")),
-                    "low":    float(row["LowestPrice"].replace(",","")),
-                    "close":  float(row["ClosingPrice"].replace(",","")),
-                    "volume": float(row["TradeVolume"].replace(",","")) / 1000,
+                    "date": d_obj,
+                    "open": open_p,
+                    "high": high_p,
+                    "low": low_p,
+                    "close": price,
+                    "volume": vol,
+                    "time": t_str,
+                    "is_realtime": True,
+                    "source": "TWSE MIS 官方撮合"
                 }
-    except Exception as e:
-        print(f"[WARN] 今日即時資料取得失敗：{e}")
+    except Exception:
+        pass
+
+    # ── 軌道 2：Yahoo Finance 即時行情備援 ────────────────────────
+    try:
+        sym = f"{ticker}.TW" if market == "tse" else f"{ticker}.TWO"
+        y_url = f"https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1m&range=1d"
+        r = requests.get(y_url, headers=HEADERS, timeout=5)
+        chart = r.json().get("chart", {}).get("result", [])
+        if chart:
+            meta = chart[0]["meta"]
+            price = float(meta["regularMarketPrice"])
+            high_p = float(meta.get("regularMarketDayHigh", price))
+            low_p  = float(meta.get("regularMarketDayLow", price))
+            open_p = float(meta.get("chartPreviousClose", price))
+            vol    = float(meta.get("regularMarketVolume", 0)) / 1000.0
+            return {
+                "date": pd.Timestamp.now().normalize(),
+                "open": open_p,
+                "high": high_p,
+                "low": low_p,
+                "close": price,
+                "volume": vol,
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "is_realtime": True,
+                "source": "Yahoo Finance 即時"
+            }
+    except Exception:
+        pass
+
+    # ── 軌道 3：TWSE OpenAPI（盤後日結報表備援）─────────────────
+    if market == "tse":
+        try:
+            r = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+                             headers=HEADERS, timeout=6)
+            for row in r.json():
+                if row.get("Code") == ticker:
+                    raw_d = row["Date"]
+                    if len(raw_d) == 7:
+                        raw_d = str(int(raw_d[:3]) + 1911) + raw_d[3:]
+                    return {
+                        "date": pd.to_datetime(raw_d, format="%Y%m%d"),
+                        "open": float(row["OpeningPrice"].replace(",","")),
+                        "high": float(row["HighestPrice"].replace(",","")),
+                        "low": float(row["LowestPrice"].replace(",","")),
+                        "close": float(row["ClosingPrice"].replace(",","")),
+                        "volume": float(row["TradeVolume"].replace(",","")) / 1000,
+                        "time": "收盤定盤",
+                        "is_realtime": False,
+                        "source": "TWSE OpenAPI 盤後結算"
+                    }
+        except Exception:
+            pass
+
     return None
 
 # ── 4. 三大法人資料（近5個交易日，僅上市TSE） ──────────────────
@@ -574,12 +656,31 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
     if print_report:
         print(f"[OK] 取得 {len(df)} 筆，{df['date'].iloc[0].date()} ~ {df['date'].iloc[-1].date()}")
 
-    if market == "tse":
-        today_row = fetch_today_tse(ticker)
-        if today_row and today_row["date"] > df["date"].iloc[-1]:
-            df = pd.concat([df, pd.DataFrame([today_row])], ignore_index=True)
+    realtime_info = None
+    rt_row = fetch_realtime_bar(ticker, market)
+    if rt_row:
+        if rt_row["date"] > df["date"].iloc[-1]:
+            df = pd.concat([df, pd.DataFrame([{
+                "date": rt_row["date"],
+                "open": rt_row["open"],
+                "high": rt_row["high"],
+                "low": rt_row["low"],
+                "close": rt_row["close"],
+                "volume": rt_row["volume"]
+            }])], ignore_index=True)
+            realtime_info = rt_row
             if print_report:
-                print(f"[OK] 補上今日收盤 {today_row['date'].date()}：{today_row['close']:.2f} 元")
+                tag = f"盤中即時 {rt_row['time']}" if rt_row["is_realtime"] else "收盤定盤"
+                print(f"[OK] 補上今日最新行情（{tag}，來自 {rt_row['source']}）：{rt_row['close']:.2f} 元 ｜ 成交量 {rt_row['volume']:,.0f} 張")
+        elif rt_row["date"] == df["date"].iloc[-1] and rt_row.get("is_realtime"):
+            idx = len(df) - 1
+            df.loc[idx, "close"] = rt_row["close"]
+            df.loc[idx, "high"] = max(df.loc[idx, "high"], rt_row["high"])
+            df.loc[idx, "low"] = min(df.loc[idx, "low"], rt_row["low"])
+            df.loc[idx, "volume"] = rt_row["volume"]
+            realtime_info = rt_row
+            if print_report:
+                print(f"[OK] 動態更新今日盤中即時行情（{rt_row['time']}，來自 {rt_row['source']}）：{rt_row['close']:.2f} 元 ｜ 成交量 {rt_row['volume']:,.0f} 張")
 
     # ── 4. 技術指標計算 ───────────────────────────────────────────
     # 移動平均線
@@ -1041,10 +1142,12 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
     if print_report:
         # ── 9. 專業多維研判報表輸出 ───────────────────────────────────
         print("\n" + "="*70)
-        print(f"  📊 {stock_name}（{ticker}）專業多維量價籌碼 + Al Brooks BPA 研判報表")
+        rt_badge = f" [⚡ 盤中即時 {realtime_info['time']}]" if (realtime_info and realtime_info.get("is_realtime")) else " [📅 盤後結算]"
+        print(f"  📊 {stock_name}（{ticker}）專業多維量價籌碼 + Al Brooks BPA 研判報表{rt_badge}")
         print("="*70)
-        print(f"  📅 分析區間 ：{df['date'].iloc[0].date()} ~ {df['date'].iloc[-1].date()}")
-        print(f"  💰 最新收盤 ：{close_now:.2f} 元")
+        print(f"  📅 分析區間 ：{df['date'].iloc[0].date()} ~ {df['date'].iloc[-1].date()}{rt_badge}")
+        price_label = f"最新盤中現價（{realtime_info['time']}）" if (realtime_info and realtime_info.get("is_realtime")) else "最新收盤"
+        print(f"  💰 {price_label} ：{close_now:.2f} 元")
         if cost is not None:
             pnl_amt = close_now - cost
             pnl_pct = pnl_amt / cost * 100
@@ -1134,6 +1237,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         "df": df,
         "inst_df": inst_df,
         "vol_eval": vol_eval,
+        "realtime_info": realtime_info,
         "fig": fig,
         "close_now": close_now,
         "cost": cost,

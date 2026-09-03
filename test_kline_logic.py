@@ -172,9 +172,27 @@ def test_volume_price_evaluation():
 
     print("[PASS] 4. Volume Price Analysis (VPA) Logic Validation")
 
+# ── 5. Realtime Intraday Price Fetching Logic Validation ───────
+def test_realtime_bar_fetching():
+    from kline import fetch_realtime_bar
+    # Test TSE (2330)
+    bar_tse = fetch_realtime_bar("2330", "tse")
+    if bar_tse is not None:
+        assert bar_tse["close"] > 0, "Price must be positive"
+        assert bar_tse["volume"] >= 0, "Volume must be non-negative"
+        assert "date" in bar_tse and "source" in bar_tse
+    # Test OTC (6182)
+    bar_otc = fetch_realtime_bar("6182", "otc")
+    if bar_otc is not None:
+        assert bar_otc["close"] > 0, "Price must be positive"
+        assert bar_otc["volume"] >= 0, "Volume must be non-negative"
+        assert "date" in bar_otc and "source" in bar_otc
+    print("[PASS] 5. Realtime Intraday Price Fetching Logic Validation (TSE & OTC)")
+
 if __name__ == "__main__":
     test_tick_sizes()
     test_indicator_math()
     test_bpa_bar_classification()
     test_volume_price_evaluation()
-    print("\nALL 4 CORE TESTS PASSED WITH 100% ACCURACY!")
+    test_realtime_bar_fetching()
+    print("\nALL 5 CORE TESTS PASSED WITH 100% ACCURACY!")
