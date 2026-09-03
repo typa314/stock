@@ -321,25 +321,35 @@ def evaluate_brooks_price_action(df):
             
     is_ttr = bool(df["bpa_ttr"].iloc[-1] or (df["bpa_ttr"].iloc[-2] if N >= 2 else False))
     
-    # 7.1 Always-In 狀態判定
+    # 7.1 Always-In 狀態判定（純中文語意標註）
     if is_ttr or (ema_crosses >= 3 and abs(ema_slope) < 0.3):
-        always_in = "Trading Range (TR, 箱型交易區間 / 盤整)"
+        always_in = "箱型震盪（區間盤整）"
+        always_in_zh = "箱型震盪"
+        always_in_desc = "區間高出低進（突破易失敗）"
         always_in_code = "TR"
         always_in_score = 0
     elif c > ema_v and ema_slope > 0.15:
-        always_in = "Always In Long (AIL, 恆久做多 / 多頭主控)"
+        always_in = "多頭主控（逢低做多）"
+        always_in_zh = "多頭主控"
+        always_in_desc = "拉回逢低做多（順勢主控）"
         always_in_code = "AIL"
         always_in_score = +2
     elif c < ema_v and ema_slope < -0.15:
-        always_in = "Always In Short (AIS, 恆久做空 / 空頭主控)"
+        always_in = "空方主導（逢高做空）"
+        always_in_zh = "空方主導"
+        always_in_desc = "反彈逢高做空（空方主控）"
         always_in_code = "AIS"
         always_in_score = -2
     elif c >= ema_v:
-        always_in = "Always In Long (AIL, 偏多震盪整理)"
+        always_in = "偏多整理（守穩支撐）"
+        always_in_zh = "偏多整理"
+        always_in_desc = "震盪守穩支撐（偏多看待）"
         always_in_code = "AIL"
         always_in_score = +1
     else:
-        always_in = "Always In Short (AIS, 偏空震盪整理)"
+        always_in = "偏空整理（反彈遇壓）"
+        always_in_zh = "偏空整理"
+        always_in_desc = "震盪反彈遇壓（偏空看待）"
         always_in_code = "AIS"
         always_in_score = -1
         
@@ -415,6 +425,8 @@ def evaluate_brooks_price_action(df):
     return {
         "always_in": always_in,
         "always_in_code": always_in_code,
+        "always_in_zh": always_in_zh,
+        "always_in_desc": always_in_desc,
         "always_in_score": always_in_score,
         "last_bar_type": last_bar_type,
         "signals": recent_signals,

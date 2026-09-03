@@ -233,11 +233,20 @@ st.markdown(f"""
 k1, k2, k3, k4 = st.columns(4)
 
 with k1:
+    ai_zh = bpa_res.get("always_in_zh", "箱型震盪")
+    ai_desc = bpa_res.get("always_in_desc", "區間高出低進（突破易失敗）")
+    if "多" in ai_zh:
+        ai_color = "#4ade80"
+    elif "空" in ai_zh:
+        ai_color = "#f87171"
+    else:
+        ai_color = "#fbbf24"
+
     st.markdown(f"""
     <div class="metric-card">
-        <div class="metric-title">BPA 市場狀態 (Always-In)</div>
-        <div class="metric-value" style="font-size: 1.05rem; color: #38bdf8;">{bpa_res['always_in_code']}</div>
-        <div class="metric-sub">{bpa_res['always_in'].split('(')[0].strip()}</div>
+        <div class="metric-title">BPA 市場狀態</div>
+        <div class="metric-value" style="font-size: 1.15rem; color: {ai_color}; font-weight: 800;">{ai_zh}</div>
+        <div class="metric-sub">{ai_desc}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -438,17 +447,26 @@ if "fig" in res and res["fig"] is not None:
 # ── 4.4 Al Brooks 操盤掛單與風控指引 ─────────────────────────
 st.markdown("#### 🎯 Brooks 操盤訂單與停損指引")
 if bpa_res['always_in_code'] == 'AIL':
-    strat_title = "偏多操作策略 (AIL) ── 多頭主控"
-    strat_desc = "順應 20 EMA 多頭架構，拉回尋找 H1/H2 買點，或以突破停損單（Buy Stop）進場"
+    strat_title = "多頭主控策略 ── 順勢偏多操作"
+    strat_desc = "順應 20 EMA 多頭架構，拉回尋找 H1/H2 買點，或以突破掛單進場"
     strat_color = "#10b981"
+    entry_lbl = f"突破買進 {bpa_res['buy_stop']:.2f} 元"
+    stop_lbl = f"跌破停損 {bpa_res['sell_stop']:.2f} 元"
+    target_lbl = f"{bpa_res['target_long_1r']:.2f} 元"
 elif bpa_res['always_in_code'] == 'AIS':
-    strat_title = "偏空操作策略 (AIS) ── 空方主控"
-    strat_desc = "反彈尋找 L1/L2 空點，持股者逢高調節，空方設 Sell Stop 順勢佈局"
+    strat_title = "空方主導策略 ── 順勢偏空操作"
+    strat_desc = "反彈尋找 L1/L2 空點，持股者逢高調節，空方設跌破放空單順勢佈局"
     strat_color = "#ef4444"
+    entry_lbl = f"跌破放空 {bpa_res['sell_stop']:.2f} 元"
+    stop_lbl = f"突破停損 {bpa_res['buy_stop']:.2f} 元"
+    target_lbl = f"{bpa_res['target_short_1r']:.2f} 元"
 else:
-    strat_title = "區間震盪策略 (TR) ── 80% 突破失敗法則"
-    strat_desc = f"遵守 BLSHS（低買高賣短沖）：接近支撐 S1/S2（{sr['s1']:.2f} / {sr['s2']:.2f} 元）低接，接近壓力 R1/R2（{sr['r1']:.2f} / {sr['r2']:.2f} 元）調節，嚴禁於箱型中間盲目追價，防範鐵絲網多空雙巴"
+    strat_title = "區間震盪策略 ── 80% 突破失敗法則"
+    strat_desc = f"遵守低買高賣短沖原則：接近支撐 S1/S2（{sr['s1']:.2f} / {sr['s2']:.2f} 元）低接，接近壓力 R1/R2（{sr['r1']:.2f} / {sr['r2']:.2f} 元）調節，嚴禁於箱型中間盲目追價，防範鐵絲網多空雙巴"
     strat_color = "#f59e0b"
+    entry_lbl = f"支撐區逢低買進 {sr['s1']:.2f} 元"
+    stop_lbl = f"跌破防守停損 {sr['stop_loss']:.2f} 元"
+    target_lbl = f"{sr['r1']:.2f} 元"
 
 st.markdown(f"""
 <div class="order-box" style="border-left-color: {strat_color};">
@@ -456,9 +474,9 @@ st.markdown(f"""
     <div style="font-size: 0.88rem; color: #cbd5e1; margin-bottom: 8px;">{strat_desc}</div>
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; font-size: 0.82rem; background: rgba(0,0,0,0.25); padding: 8px; border-radius: 6px;">
         <div><b>訊號棒極值：</b>高 {bpa_res['sig_high']:.2f} / 低 {bpa_res['sig_low']:.2f}</div>
-        <div><b>進場掛單價：</b>{'Buy Stop ' + str(bpa_res['buy_stop']) if bpa_res['always_in_code']=='AIL' else 'Sell Stop ' + str(bpa_res['sell_stop'])}</div>
-        <div><b>防守停損價：</b>{'Prot Stop ' + str(bpa_res['sell_stop']) if bpa_res['always_in_code']=='AIL' else 'Prot Stop ' + str(bpa_res['buy_stop'])}</div>
-        <div><b>等距測量 MM 1R：</b>{bpa_res['target_long_1r'] if bpa_res['always_in_code']=='AIL' else bpa_res['target_short_1r']:.2f} 元</div>
+        <div><b>進場參考價：</b>{entry_lbl}</div>
+        <div><b>防守停損價：</b>{stop_lbl}</div>
+        <div><b>等距目標價：</b>{target_lbl}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
