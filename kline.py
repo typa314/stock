@@ -793,6 +793,168 @@ def get_rating_badge(s):
     if s >= -5:  return "🔴 溫和偏空（空頭承壓，反彈宜減碼）"
     return            "🔴 強烈空頭（主跌段，切勿盲目接刀）"
 
+def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market):
+    """
+    多維綜合評級：融合 Minervini 趨勢樣板 + CANSLIM 成長動能 + BPA 價格行為 + 法人量價結構
+    保持乾淨精簡，輸出高訊號比之綜合評級卡片資料
+    """
+    c = df["close"]
+    ma50 = ma150 = ma200 = ma200_20d = low_52w = high_52w = None
+    if len(c) >= 200:
+        ma50 = c.rolling(50).mean().iloc[-1]
+        ma150 = c.rolling(150).mean().iloc[-1]
+        ma200 = c.rolling(200).mean().iloc[-1]
+        ma200_20d = c.rolling(200).mean().iloc[-22] if len(c) >= 222 else ma200
+        low_52w = c.tail(250).min()
+        high_52w = c.tail(250).max()
+    else:
+        try:
+            sym = f"{ticker}.TW" if market == "tse" else f"{ticker}.TWO"
+            raw = yf.download(sym, period="15mo", progress=False)
+            if raw is None or raw.empty:
+                sym_alt = f"{ticker}.TWO" if market == "tse" else f"{ticker}.TW"
+                raw = yf.download(sym_alt, period="15mo", progress=False)
+            if raw is not None and not raw.empty:
+                if isinstance(raw.columns, pd.MultiIndex):
+                    raw.columns = [col[0].lower() for col in raw.columns]
+                else:
+                    raw.columns = [col.lower() for col in raw.columns]
+                c_long = raw["close"]
+                if len(c_long) >= 50:
+                    ma50 = c_long.rolling(50).mean().iloc[-1]
+                if len(c_long) >= 150:
+                    ma150 = c_long.rolling(150).mean().iloc[-1]
+                if len(c_long) >= 200:
+                    ma200 = c_long.rolling(200).mean().iloc[-1]
+                    ma200_20d = c_long.rolling(200).mean().iloc[-22] if len(c_long) >= 222 else ma200
+                low_52w = c_long.tail(250).min()
+                high_52w = c_long.tail(250).max()
+        except Exception:
+            pass
+
+    c_now = float(c.iloc[-1])
+    m_checks = []
+    if ma50 is not None and ma150 is not None and ma200 is not None and low_52w is not None and high_52w is not None:
+        m_checks.append(c_now > ma150 and c_now > ma200)
+        m_checks.append(ma150 > ma200)
+        m_checks.append(ma200 >= ma200_20d * 0.995)
+        m_checks.append(ma50 > ma150 and ma50 > ma200)
+        m_checks.append(c_now > ma50)
+        m_checks.append((c_now - low_52w) / (low_52w + 1e-9) >= 0.25)
+        m_checks.append((high_52w - c_now) / (high_52w + 1e-9) <= 0.25)
+        m_passed = sum(m_checks)
+    else:
+        m_passed = 4
+
+    # 2. CANSLIM 成長動能評分
+    rev_yoy = fundamentals.get("revenue_yoy") if fundamentals else None
+    eps_ttm = fundamentals.get("eps_ttm") if fundamentals else None
+    gm = fundamentals.get("gross_margin") if fundamentals else None
+    
+    c_score = 0
+    if rev_yoy is not None:
+        if rev_yoy >= 20: c_score += 2
+        elif rev_yoy >= 0: c_score += 1
+        else: c_score -= 1
+    if eps_ttm is not None and eps_ttm > 0:
+        c_score += 2
+    if gm is not None and gm >= 30:
+        c_score += 1
+        
+    if c_score >= 4:
+        canslim_grade = "A+ 卓越"
+        canslim_sub = "營收盈餘高速成長"
+        c_color = "#4ade80"
+    elif c_score >= 2:
+        canslim_grade = "A 優質"
+        canslim_sub = "基本面穩健成長"
+        c_color = "#60a5fa"
+    elif c_score >= 0:
+        canslim_grade = "B 中性"
+        canslim_sub = "獲利動能平穩"
+        c_color = "#fbbf24"
+    else:
+        canslim_grade = "C 偏弱"
+        canslim_sub = "動能趨緩或虧損"
+        c_color = "#f87171"
+
+    # 3. BPA 價格行為
+    bpa_zh = bpa_res.get("always_in_zh", "箱型震盪")
+    if "多" in bpa_zh:
+        bpa_sub = "20 EMA 順勢多方"
+        bpa_color = "#4ade80"
+    elif "空" in bpa_zh:
+        bpa_sub = "20 EMA 順勢空方"
+        bpa_color = "#f87171"
+    else:
+        bpa_sub = "區間高出低進"
+        bpa_color = "#fbbf24"
+
+    # 4. 籌碼與量價結構
+    v_score = vol_eval.get("score", 0) if vol_eval else 0
+    inst_5d = int(inst_df.tail(5)["total"].sum()) if (inst_df is not None and not inst_df.empty) else 0
+    if inst_5d > 0 and v_score >= 0:
+        chip_zh = "法人主力加碼"
+        chip_sub = f"5日買超 {inst_5d:,}張"
+        chip_color = "#4ade80"
+    elif inst_5d < 0 and v_score <= 0:
+        chip_zh = "法人主力調節"
+        chip_sub = f"5日賣超 {abs(inst_5d):,}張"
+        chip_color = "#f87171"
+    elif inst_5d > 0:
+        chip_zh = "籌碼偏多支撐"
+        chip_sub = "內外資偏多佈局"
+        chip_color = "#60a5fa"
+    else:
+        chip_zh = "籌碼動向觀望"
+        chip_sub = "多空分歧整理"
+        chip_color = "#fbbf24"
+
+    # 綜合評分與操盤定位
+    total_score = (m_passed / 7.0) * 35 + (max(0, c_score) / 5.0) * 25 + (30 if "多" in bpa_zh else (15 if "整理" in bpa_zh or "震盪" in bpa_zh else 5)) + (10 if inst_5d > 0 else 0)
+    total_score = int(round(total_score))
+
+    if total_score >= 80 and m_passed >= 5:
+        badge = "⭐⭐⭐⭐⭐ 頂級飆股體質（Stage 2 主升）"
+        b_color = "#4ade80"
+        b_bg = "rgba(34, 197, 94, 0.2)"
+        summary_advice = "長中短均線呈多頭排列，基本面盈餘與營收高成長，順應 20 EMA 拉回守穩皆為絕佳順勢佈局點。"
+    elif total_score >= 65:
+        badge = "⭐⭐⭐⭐ 優質多頭（穩健推升中）"
+        b_color = "#60a5fa"
+        b_bg = "rgba(59, 130, 246, 0.2)"
+        summary_advice = "中期架構偏多且守穩關鍵支撐，基本面具支撐力道，持股者續抱，空手者尋找量縮回踩點分批佈局。"
+    elif total_score >= 45:
+        badge = "⭐⭐⭐ 區間震盪（待動能表態）"
+        b_color = "#fbbf24"
+        b_bg = "rgba(245, 158, 11, 0.2)"
+        summary_advice = "短線處於箱型整理或均線糾結階段，突破前切忌追價，嚴格遵守低買高賣或靜待帶量表態。"
+    else:
+        badge = "⚠️ 空頭承壓（弱勢修正中）"
+        b_color = "#f87171"
+        b_bg = "rgba(239, 68, 68, 0.2)"
+        summary_advice = "跌破中長期均線或基本面動能放緩，空方主導格局，嚴禁盲目猜底接刀，持股者逢反彈宜嚴格風控。"
+
+    return {
+        "score": total_score,
+        "badge": badge,
+        "badge_color": b_color,
+        "badge_bg": b_bg,
+        "minervini_passed": m_passed,
+        "minervini_status": "Stage 2 主升段" if m_passed >= 6 else ("符合多數樣板" if m_passed >= 4 else "弱勢整理型態"),
+        "minervini_color": "#4ade80" if m_passed >= 5 else ("#fbbf24" if m_passed >= 4 else "#f87171"),
+        "canslim_grade": canslim_grade,
+        "canslim_sub": canslim_sub,
+        "canslim_color": c_color,
+        "bpa_zh": bpa_zh,
+        "bpa_sub": bpa_sub,
+        "bpa_color": bpa_color,
+        "chip_zh": chip_zh,
+        "chip_sub": chip_sub,
+        "chip_color": chip_color,
+        "summary_advice": summary_advice
+    }
+
 # ── 6. 核心分析主函數 ─────────────────────────────────────────
 def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=True, print_report=True):
     ticker = str(ticker).strip()
@@ -1120,6 +1282,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
     fundamentals = fetch_fundamentals(ticker)
     trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df, bpa_res, vol_eval)
     rating_badge = get_rating_badge(trend_score)
+    composite_rating = evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market)
 
     close_now = df["close"].iloc[-1]
     r1 = round(df["high"].tail(20).max(), 2)
@@ -1393,6 +1556,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         "inst_df": inst_df,
         "vol_eval": vol_eval,
         "fundamentals": fundamentals,
+        "composite_rating": composite_rating,
         "realtime_info": realtime_info,
         "fig": fig,
         "close_now": close_now,

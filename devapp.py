@@ -278,7 +278,44 @@ with k4:
     </div>
     """, unsafe_allow_html=True)
 
-# ── 4.2 三大法人籌碼、量價結構與基本面財報獲利圖卡 ─────────────
+# ── 4.2 巨星多維綜合評級圖卡（Minervini + CANSLIM + BPA + 法人量價） ─────────
+comp = res.get("composite_rating", {})
+if comp:
+    st.markdown(f"""
+    <div class="dashboard-card" style="border-left: 4px solid {comp.get('badge_color', '#38bdf8')};">
+        <div class="card-header">
+            <span class="card-title">🌟 多維綜合評級 <span style="font-size: 0.78rem; color: #94a3b8; font-weight: normal; margin-left: 6px;">綜合評分：<b style="color: {comp.get('badge_color', '#38bdf8')}; font-size: 1.05rem;">{comp.get('score', 0)}</b> / 100</span></span>
+            <span class="pill-badge" style="background: {comp.get('badge_bg', 'rgba(59, 130, 246, 0.2)')}; color: {comp.get('badge_color', '#60a5fa')};">{comp.get('badge', '')}</span>
+        </div>
+        <div class="grid-4">
+            <div class="grid-cell">
+                <div class="cell-label">趨勢樣板 (Minervini)</div>
+                <div class="cell-val" style="color: {comp.get('minervini_color', '#cbd5e1')};">{comp.get('minervini_passed', 0)}/7 項</div>
+                <div class="cell-sub">{comp.get('minervini_status', '')}</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">成長動能 (CANSLIM)</div>
+                <div class="cell-val" style="color: {comp.get('canslim_color', '#cbd5e1')};">{comp.get('canslim_grade', '--')}</div>
+                <div class="cell-sub">{comp.get('canslim_sub', '')}</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">價格行為 (BPA)</div>
+                <div class="cell-val" style="color: {comp.get('bpa_color', '#cbd5e1')};">{comp.get('bpa_zh', '--')}</div>
+                <div class="cell-sub">{comp.get('bpa_sub', '')}</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">量能籌碼 (VPA/法人)</div>
+                <div class="cell-val" style="color: {comp.get('chip_color', '#cbd5e1')};">{comp.get('chip_zh', '--')}</div>
+                <div class="cell-sub">{comp.get('chip_sub', '')}</div>
+            </div>
+        </div>
+        <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px;">
+            <b>🎯 操盤定位：</b>{comp.get('summary_advice', '')}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ── 4.3 三大法人籌碼、量價結構與基本面財報獲利圖卡 ─────────────
 col_inst, col_vol, col_fund = st.columns(3)
 fundamentals = res.get("fundamentals", {})
 
