@@ -207,6 +207,11 @@ def fetch_institutional(ticker, market, days=5):
 
     records = []
     d = datetime.now()
+    # 證交所三大法人買賣超 (T86) 於每日收盤後（約 14:30~15:00）才進行統計結算公告。
+    # 盤中交易時段（< 15:00）無當日法人資料，直接自前一交易日開始抓取，避免發出無效請求降低延遲
+    if d.hour < 15:
+        d -= relativedelta(days=1)
+
     fetched = 0
     attempts = 0
     while fetched < days and attempts < days * 2:
@@ -600,7 +605,10 @@ def evaluate_professional_trend(df, inst_df, bpa_res, vol_eval=None):
         trust_last= last_inst["trust"]
         total_last= last_inst["total"]
         total_5d  = inst_df.tail(5)["total"].sum()
-        inst_ratio = abs(total_last) / (vol_v + 1e-9) * 100
+        # 籌碼集中度：對比該法人公告日當天的成交量（而非盤中即時部分成交量）
+        match_vol = df[df["date"].dt.date == last_inst["date"].date()]
+        ref_vol   = match_vol["volume"].iloc[0] if not match_vol.empty else vol_v
+        inst_ratio = abs(total_last) / (ref_vol + 1e-9) * 100
 
         if fini_last > 100 and trust_last > 50:
             c_desc = f"外資({fini_last:+,}) 與 投信({trust_last:+,}) 雙作多，土洋聯手看多"
@@ -621,7 +629,7 @@ def evaluate_professional_trend(df, inst_df, bpa_res, vol_eval=None):
         score += c_score
         factors.append(f"【法人籌碼】{c_score:+d}分 | {c_desc}")
     else:
-        factors.append("【法人籌碼】 0分 | 上櫃/無即時法人數據")
+        factors.append("【法人籌碼】 0分 | 上櫃/無盤後法人公告數據")
 
     # 6. 量價結構與動能評估 (Wyckoff & VPA)
     if vol_eval is not None:

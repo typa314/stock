@@ -304,10 +304,15 @@ with col_inst:
             sign = "+" if val > 0 else ""
             return f'<span style="color: {color}; font-weight: 700;">{sign}{val:,}</span>'
 
+        # 籌碼集中度：比對該法人公告日當天之成交量（而非盤中即時部分成交量）
+        match_row = df[df["date"].dt.date == last_inst["date"].date()]
+        inst_day_vol = match_row["volume"].iloc[0] if not match_row.empty else (df["volume"].iloc[-2] if len(df) >= 2 else df["volume"].iloc[-1])
+        inst_conc = abs(total_val) / (inst_day_vol + 1e-9) * 100
+
         st.markdown(f"""
         <div class="dashboard-card">
             <div class="card-header">
-                <span class="card-title">🏛️ 三大法人籌碼圖卡 <span style="font-size: 0.8rem; color: #94a3b8; font-weight: normal;">({inst_date} 最新)</span></span>
+                <span class="card-title">🏛️ 三大法人籌碼圖卡 <span style="font-size: 0.76rem; color: #94a3b8; font-weight: normal; background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; margin-left: 4px;">📅 {inst_date} 盤後公告</span></span>
                 <span class="pill-badge" style="background: {tag_bg}; color: {tag_color};">{inst_tag}</span>
             </div>
             <div class="grid-4">
@@ -333,7 +338,7 @@ with col_inst:
                 </div>
             </div>
             <div style="font-size: 0.8rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 10px; border-radius: 6px; margin-top: 6px;">
-                <b>近 5 日三大法人合計：</b> {fmt_inst_html(total_5d)} 張 ｜ 佔量集中度 <b>{abs(total_val) / (df['volume'].iloc[-1] + 1e-9) * 100:.1f}%</b>
+                <b>近 5 日三大法人合計：</b> {fmt_inst_html(total_5d)} 張 ｜ 公告日佔量集中度 <b>{inst_conc:.1f}%</b>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -345,8 +350,8 @@ with col_inst:
                 <span class="pill-badge" style="background: rgba(148, 163, 184, 0.2); color: #cbd5e1;">上櫃 / 暫無數據</span>
             </div>
             <div style="font-size: 0.85rem; color: #94a3b8; padding: 16px 8px; text-align: center;">
-                ℹ️ 該個股為上櫃 (OTC) 股票或目前無即時三大法人資料。<br>
-                TWSE 官方 API 僅提供上市 (TSE) 買賣超數據，技術面與量價指標皆維持完整研判。
+                ℹ️ 該個股為上櫃 (OTC) 股票或非上市法人資料。<br>
+                三大法人買賣超為證交所盤後（每日約 15:00）公布之日結數據，盤中無法人即時數據；技術面與量價指標皆維持盤中即時動態研判。
             </div>
         </div>
         """, unsafe_allow_html=True)
