@@ -281,6 +281,103 @@ def fetch_institutional(ticker, market, days=5):
 
     return pd.DataFrame()
 
+# ── 4.1 基本面與財報獲利數據（FinMind CDN 極速接口，涵蓋上市櫃） ──
+def fetch_fundamentals(ticker):
+    """取得台股個股基本面數據（近四季 EPS、本益比、殖利率、淨值比、雙率與月營收 YoY）"""
+    now = datetime.now()
+    start_1y = (now - relativedelta(years=1, months=6)).strftime("%Y-%m-%d")
+    start_recent = (now - relativedelta(days=15)).strftime("%Y-%m-%d")
+    start_rev = (now - relativedelta(months=14)).strftime("%Y-%m-%d")
+
+    res = {
+        "per": None,
+        "pbr": None,
+        "dividend_yield": None,
+        "eps_ttm": None,
+        "latest_eps": None,
+        "latest_quarter": "",
+        "gross_margin": None,
+        "operating_margin": None,
+        "latest_revenue_val": None,
+        "revenue_date": "",
+        "revenue_yoy": None,
+        "has_data": False
+    }
+
+    def get_per():
+        try:
+            r = requests.get(f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={ticker}&start_date={start_recent}", headers=HEADERS, timeout=5)
+            return ("per", r.json().get("data", []) if r.status_code == 200 else [])
+        except Exception:
+            return ("per", [])
+
+    def get_fs():
+        try:
+            r = requests.get(f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={ticker}&start_date={start_1y}", headers=HEADERS, timeout=5)
+            return ("fs", r.json().get("data", []) if r.status_code == 200 else [])
+        except Exception:
+            return ("fs", [])
+
+    def get_rev():
+        try:
+            r = requests.get(f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={ticker}&start_date={start_rev}", headers=HEADERS, timeout=5)
+            return ("rev", r.json().get("data", []) if r.status_code == 200 else [])
+        except Exception:
+            return ("rev", [])
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            data_map = dict(executor.map(lambda f: f(), [get_per, get_fs, get_rev]))
+    except Exception:
+        data_map = {"per": [], "fs": [], "rev": []}
+
+    # 1. PER, PBR, 殖利率
+    per_data = data_map.get("per", [])
+    if per_data:
+        last_per = per_data[-1]
+        res["per"] = last_per.get("PER")
+        res["pbr"] = last_per.get("PBR")
+        res["dividend_yield"] = last_per.get("dividend_yield")
+        res["has_data"] = True
+
+    # 2. 季報 EPS 與雙率
+    fs_data = data_map.get("fs", [])
+    if fs_data:
+        eps_list = [x for x in fs_data if x.get("type") == "EPS"]
+        if eps_list:
+            eps_list = sorted(eps_list, key=lambda x: x["date"])
+            res["latest_eps"] = eps_list[-1]["value"]
+            res["latest_quarter"] = eps_list[-1]["date"][:7]
+            recent_4 = eps_list[-4:]
+            res["eps_ttm"] = round(sum(x["value"] for x in recent_4), 2)
+            res["has_data"] = True
+
+        latest_date = eps_list[-1]["date"] if eps_list else None
+        if latest_date:
+            q_items = {x["type"]: x["value"] for x in fs_data if x.get("date") == latest_date}
+            rev = q_items.get("Revenue", 0)
+            gp = q_items.get("GrossProfit", 0)
+            op = q_items.get("OperatingIncome", 0)
+            if rev > 0:
+                res["gross_margin"] = round(gp / rev * 100, 1)
+                res["operating_margin"] = round(op / rev * 100, 1)
+
+    # 3. 月營收與 YoY
+    rev_data = data_map.get("rev", [])
+    if len(rev_data) >= 12:
+        latest_r = rev_data[-1]
+        same_m_ly = [x for x in rev_data[:-1] if x.get("revenue_month") == latest_r.get("revenue_month")]
+        if same_m_ly:
+            ly = same_m_ly[-1]
+            if ly.get("revenue", 0) > 0:
+                res["revenue_yoy"] = round((latest_r["revenue"] - ly["revenue"]) / ly["revenue"] * 100, 2)
+        res["latest_revenue_val"] = round(latest_r["revenue"] / 1e8, 1)
+        res["revenue_date"] = f"{latest_r['revenue_year']}/{latest_r['revenue_month']}"
+        res["has_data"] = True
+
+    return res
+
 # ── 5. Al Brooks 價格行為學（BPA）核心與多維量化 ──────────────
 def get_tw_tick(price):
     """台股委託與升降單位（Tick Size）精確級距規則"""
@@ -1018,6 +1115,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
 
     vol_eval = evaluate_volume_price(df)
     bpa_res = evaluate_brooks_price_action(df)
+    fundamentals = fetch_fundamentals(ticker)
     trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df, bpa_res, vol_eval)
     rating_badge = get_rating_badge(trend_score)
 
@@ -1292,6 +1390,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         "df": df,
         "inst_df": inst_df,
         "vol_eval": vol_eval,
+        "fundamentals": fundamentals,
         "realtime_info": realtime_info,
         "fig": fig,
         "close_now": close_now,

@@ -91,7 +91,7 @@ st.markdown("""
         gap: 8px;
         margin-bottom: 8px;
     }
-    @media (max-width: 640px) {
+    @media (max-width: 1100px) {
         .grid-4 {
             grid-template-columns: repeat(2, 1fr);
         }
@@ -278,8 +278,9 @@ with k4:
     </div>
     """, unsafe_allow_html=True)
 
-# ── 4.2 三大法人籌碼與量價結構圖卡 ─────────────────────────
-col_inst, col_vol = st.columns(2)
+# ── 4.2 三大法人籌碼、量價結構與基本面財報獲利圖卡 ─────────────
+col_inst, col_vol, col_fund = st.columns(3)
+fundamentals = res.get("fundamentals", {})
 
 with col_inst:
     if not inst_df.empty:
@@ -430,6 +431,101 @@ with col_vol:
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+with col_fund:
+    if fundamentals.get("has_data"):
+        per = fundamentals.get("per")
+        pbr = fundamentals.get("pbr")
+        dy = fundamentals.get("dividend_yield")
+        eps_ttm = fundamentals.get("eps_ttm")
+        latest_eps = fundamentals.get("latest_eps")
+        lq = fundamentals.get("latest_quarter", "")
+        gm = fundamentals.get("gross_margin")
+        om = fundamentals.get("operating_margin")
+        rev_val = fundamentals.get("latest_revenue_val")
+        rev_d = fundamentals.get("revenue_date", "")
+        rev_yoy = fundamentals.get("revenue_yoy")
+
+        if per is not None:
+            if per < 15:
+                fund_tag = "🟢 價值低估 (P/E<15)"
+                f_bg = "rgba(34, 197, 94, 0.2)"
+                f_color = "#4ade80"
+            elif per <= 30:
+                fund_tag = "🔵 估值合理 (P/E 15~30)"
+                f_bg = "rgba(59, 130, 246, 0.2)"
+                f_color = "#60a5fa"
+            else:
+                fund_tag = "🟡 成長溢價 (P/E>30)"
+                f_bg = "rgba(245, 158, 11, 0.2)"
+                f_color = "#fbbf24"
+        else:
+            fund_tag = "⚪ 穩健營運"
+            f_bg = "rgba(148, 163, 184, 0.2)"
+            f_color = "#cbd5e1"
+
+        per_str = f"{per:.1f} 倍" if per is not None else "--"
+        pbr_str = f"{pbr:.2f} 倍" if pbr is not None else "--"
+        dy_str = f"{dy:.2f}%" if dy is not None else "--"
+        eps_str = f"{eps_ttm:.2f} 元" if eps_ttm is not None else "--"
+        lq_str = f"最新單季 {latest_eps:.2f} 元" if latest_eps is not None else "--"
+        gm_str = f"{gm:.1f}%" if gm is not None else "--"
+        om_str = f"營益率 {om:.1f}%" if om is not None else "--"
+
+        if rev_val is not None:
+            y_color = "#ef4444" if (rev_yoy is not None and rev_yoy >= 0) else "#22c55e"
+            y_sign = "+" if (rev_yoy is not None and rev_yoy >= 0) else ""
+            yoy_str = f"{y_sign}{rev_yoy:.1f}%" if rev_yoy is not None else "--"
+            yoy_html = f"<b>{rev_d} 營收：</b>{rev_val:,.1f} 億 ｜ 年增率 (YoY) <span style='color: {y_color}; font-weight: 700;'>{yoy_str}</span>"
+        else:
+            yoy_html = "<b>財報說明：</b>臺灣證交所與官方公開觀測站最新公佈申報資料"
+
+        st.markdown(f"""
+        <div class="dashboard-card">
+            <div class="card-header">
+                <span class="card-title">🏢 基本面與財報獲利 <span style="font-size: 0.76rem; color: #94a3b8; font-weight: normal; background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; margin-left: 4px;">📅 {lq} 季報</span></span>
+                <span class="pill-badge" style="background: {f_bg}; color: {f_color};">{fund_tag}</span>
+            </div>
+            <div class="grid-4">
+                <div class="grid-cell">
+                    <div class="cell-label">近四季 EPS</div>
+                    <div class="cell-val" style="color: #f8fafc;">{eps_str}</div>
+                    <div class="cell-sub">{lq_str}</div>
+                </div>
+                <div class="grid-cell">
+                    <div class="cell-label">本益比 (P/E)</div>
+                    <div class="cell-val" style="color: #cbd5e1;">{per_str}</div>
+                    <div class="cell-sub">淨值比 {pbr_str}</div>
+                </div>
+                <div class="grid-cell">
+                    <div class="cell-label">現金殖利率</div>
+                    <div class="cell-val" style="color: #4ade80;">{dy_str}</div>
+                    <div class="cell-sub">最新日結估算</div>
+                </div>
+                <div class="grid-cell">
+                    <div class="cell-label">單季毛利率</div>
+                    <div class="cell-val" style="color: #cbd5e1;">{gm_str}</div>
+                    <div class="cell-sub">{om_str}</div>
+                </div>
+            </div>
+            <div style="font-size: 0.8rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 10px; border-radius: 6px; margin-top: 6px;">
+                {yoy_html}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="dashboard-card">
+            <div class="card-header">
+                <span class="card-title">🏢 基本面與財報獲利</span>
+                <span class="pill-badge" style="background: rgba(148, 163, 184, 0.2); color: #cbd5e1;">ETF / 無財報</span>
+            </div>
+            <div style="font-size: 0.85rem; color: #94a3b8; padding: 16px 8px; text-align: center;">
+                ℹ️ 此標的為 ETF、指數或尚未公告財報之個股，暫無每股盈餘 (EPS) 與本益比數據。<br>
+                技術面與量價指標皆維持完整動態研判。
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ── 4.3 完整互動 K 線圖表（下拉折疊選單，電腦端方便檢視，手機端預設收合保持清爽） ────
 if "fig" in res and res["fig"] is not None:
