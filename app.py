@@ -4,11 +4,26 @@
 專注 BPA 價格行為學、20 EMA 基準、支撐壓力矩陣與風控掛單指引
 """
 
+import os
+import sys
+
+# 確保當前目錄在 Python 模組搜尋路徑第一位（解決 Linux / Streamlit Cloud /mount/src/stock 路徑解析問題）
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from kline import analyze_stock, get_info, __version__
+
+try:
+    from kline import analyze_stock, get_info, __version__
+except Exception as e:
+    import streamlit as st
+    st.error(f"❌ 模組載入錯誤 (Import Error): {e}")
+    st.exception(e)
+    st.stop()
 
 # ── 1. 頁面設定（手機版體驗最佳化） ─────────────────────────
 st.set_page_config(
