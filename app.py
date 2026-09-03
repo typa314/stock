@@ -8,11 +8,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from kline import analyze_stock, get_info
+from kline import analyze_stock, get_info, __version__
 
 # ── 1. 頁面設定（手機版體驗最佳化） ─────────────────────────
 st.set_page_config(
-    page_title="台股 BPA 價格行為學",
+    page_title=f"台股 BPA 價格行為學 v{__version__}",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -91,7 +91,7 @@ st.markdown("""
         gap: 8px;
         margin-bottom: 8px;
     }
-    @media (max-width: 640px) {
+    @media (max-width: 1100px) {
         .grid-4 {
             grid-template-columns: repeat(2, 1fr);
         }
@@ -133,7 +133,7 @@ def get_cached_analysis(ticker, months, cost):
     return analyze_stock(ticker=ticker, months=months, cost=cost, generate_html=False, print_report=False)
 
 # ── 3. 頂部導覽與股票選擇區 ──────────────────────────────────
-st.markdown("### ⚡ 台股 Al Brooks BPA 價格行為研判")
+st.markdown(f"### ⚡ 台股 Al Brooks BPA 價格行為研判 <span style='font-size: 0.8rem; color: #94a3b8; font-weight: normal;'>v{__version__}</span>", unsafe_allow_html=True)
 
 # 快捷熱門股按鈕
 quick_tickers = [
@@ -227,11 +227,20 @@ st.markdown(f"""
 k1, k2, k3, k4 = st.columns(4)
 
 with k1:
+    ai_zh = bpa_res.get("always_in_zh", "箱型震盪")
+    ai_desc = bpa_res.get("always_in_desc", "區間高出低進（突破易失敗）")
+    if "多" in ai_zh:
+        ai_color = "#4ade80"
+    elif "空" in ai_zh:
+        ai_color = "#f87171"
+    else:
+        ai_color = "#fbbf24"
+
     st.markdown(f"""
     <div class="metric-card">
-        <div class="metric-title">BPA 市場狀態 (Always-In)</div>
-        <div class="metric-value" style="font-size: 1.05rem; color: #38bdf8;">{bpa_res['always_in_code']}</div>
-        <div class="metric-sub">{bpa_res['always_in'].split('(')[0].strip()}</div>
+        <div class="metric-title">BPA 市場狀態</div>
+        <div class="metric-value" style="font-size: 1.15rem; color: {ai_color}; font-weight: 800;">{ai_zh}</div>
+        <div class="metric-sub">{ai_desc}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -263,8 +272,9 @@ with k4:
     </div>
     """, unsafe_allow_html=True)
 
-# ── 4.2 三大法人籌碼與量價結構圖卡 ─────────────────────────
-col_inst, col_vol = st.columns(2)
+# ── 4.2 三大法人籌碼、量價結構與基本面財報獲利圖卡 ─────────────
+col_inst, col_vol, col_fund = st.columns(3)
+fundamentals = res.get("fundamentals", {})
 
 with col_inst:
     if not inst_df.empty:
@@ -416,20 +426,137 @@ with col_vol:
     </div>
     """, unsafe_allow_html=True)
 
-# ── 4.3 Al Brooks 操盤掛單與風控指引 ─────────────────────────
+with col_fund:
+    if fundamentals.get("has_data"):
+        per = fundamentals.get("per")
+        pbr = fundamentals.get("pbr")
+        dy = fundamentals.get("dividend_yield")
+        eps_ttm = fundamentals.get("eps_ttm")
+        latest_eps = fundamentals.get("latest_eps")
+        lq = fundamentals.get("latest_quarter", "")
+        gm = fundamentals.get("gross_margin")
+        om = fundamentals.get("operating_margin")
+        rev_val = fundamentals.get("latest_revenue_val")
+        rev_d = fundamentals.get("revenue_date", "")
+        rev_yoy = fundamentals.get("revenue_yoy")
+
+        if per is not None:
+            if per < 15:
+                fund_tag = "🟢 價值低估 (P/E<15)"
+                f_bg = "rgba(34, 197, 94, 0.2)"
+                f_color = "#4ade80"
+            elif per <= 30:
+                fund_tag = "🔵 估值合理 (P/E 15~30)"
+                f_bg = "rgba(59, 130, 246, 0.2)"
+                f_color = "#60a5fa"
+            else:
+                fund_tag = "🟡 成長溢價 (P/E>30)"
+                f_bg = "rgba(245, 158, 11, 0.2)"
+                f_color = "#fbbf24"
+        else:
+            fund_tag = "⚪ 穩健營運"
+            f_bg = "rgba(148, 163, 184, 0.2)"
+            f_color = "#cbd5e1"
+
+        per_str = f"{per:.1f} 倍" if per is not None else "--"
+        pbr_str = f"{pbr:.2f} 倍" if pbr is not None else "--"
+        dy_str = f"{dy:.2f}%" if dy is not None else "--"
+        eps_str = f"{eps_ttm:.2f} 元" if eps_ttm is not None else "--"
+        lq_str = f"最新單季 {latest_eps:.2f} 元" if latest_eps is not None else "--"
+        gm_str = f"{gm:.1f}%" if gm is not None else "--"
+        om_str = f"營益率 {om:.1f}%" if om is not None else "--"
+
+        if rev_val is not None:
+            y_color = "#ef4444" if (rev_yoy is not None and rev_yoy >= 0) else "#22c55e"
+            y_sign = "+" if (rev_yoy is not None and rev_yoy >= 0) else ""
+            yoy_str = f"{y_sign}{rev_yoy:.1f}%" if rev_yoy is not None else "--"
+            yoy_html = f"<b>{rev_d} 營收：</b>{rev_val:,.1f} 億 ｜ 年增率 (YoY) <span style='color: {y_color}; font-weight: 700;'>{yoy_str}</span>"
+        else:
+            yoy_html = "<b>財報說明：</b>臺灣證交所與官方公開觀測站最新公佈申報資料"
+
+        st.markdown(f"""
+        <div class="dashboard-card">
+            <div class="card-header">
+                <span class="card-title">🏢 基本面與財報獲利 <span style="font-size: 0.76rem; color: #94a3b8; font-weight: normal; background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; margin-left: 4px;">📅 {lq} 季報</span></span>
+                <span class="pill-badge" style="background: {f_bg}; color: {f_color};">{fund_tag}</span>
+            </div>
+            <div class="grid-4">
+                <div class="grid-cell">
+                    <div class="cell-label">近四季 EPS</div>
+                    <div class="cell-val" style="color: #f8fafc;">{eps_str}</div>
+                    <div class="cell-sub">{lq_str}</div>
+                </div>
+                <div class="grid-cell">
+                    <div class="cell-label">本益比 (P/E)</div>
+                    <div class="cell-val" style="color: #cbd5e1;">{per_str}</div>
+                    <div class="cell-sub">淨值比 {pbr_str}</div>
+                </div>
+                <div class="grid-cell">
+                    <div class="cell-label">現金殖利率</div>
+                    <div class="cell-val" style="color: #4ade80;">{dy_str}</div>
+                    <div class="cell-sub">最新日結估算</div>
+                </div>
+                <div class="grid-cell">
+                    <div class="cell-label">單季毛利率</div>
+                    <div class="cell-val" style="color: #cbd5e1;">{gm_str}</div>
+                    <div class="cell-sub">{om_str}</div>
+                </div>
+            </div>
+            <div style="font-size: 0.8rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 10px; border-radius: 6px; margin-top: 6px;">
+                {yoy_html}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="dashboard-card">
+            <div class="card-header">
+                <span class="card-title">🏢 基本面與財報獲利</span>
+                <span class="pill-badge" style="background: rgba(148, 163, 184, 0.2); color: #cbd5e1;">ETF / 無財報</span>
+            </div>
+            <div style="font-size: 0.85rem; color: #94a3b8; padding: 16px 8px; text-align: center;">
+                ℹ️ 此標的為 ETF、指數或尚未公告財報之個股，暫無每股盈餘 (EPS) 與本益比數據。<br>
+                技術面與量價指標皆維持完整動態研判。
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ── 4.3 完整互動 K 線圖表（下拉折疊選單，電腦端方便檢視，手機端預設收合保持清爽） ────
+if "fig" in res and res["fig"] is not None:
+    with st.expander("📈 展開完整互動 K 線圖表（含 BPA 支撐壓力線、20 EMA、布林通道與技術指標）", expanded=False):
+        st.plotly_chart(
+            res["fig"],
+            use_container_width=True,
+            config={
+                "scrollZoom": True,
+                "displaylogo": False,
+                "modeBarButtonsToRemove": ["lasso2d", "select2d"]
+            }
+        )
+
+# ── 4.4 Al Brooks 操盤掛單與風控指引 ─────────────────────────
 st.markdown("#### 🎯 Brooks 操盤訂單與停損指引")
 if bpa_res['always_in_code'] == 'AIL':
-    strat_title = "偏多操作策略 (AIL) ── 多頭主控"
-    strat_desc = "順應 20 EMA 多頭架構，拉回尋找 H1/H2 買點，或以突破停損單（Buy Stop）進場"
+    strat_title = "多頭主控策略 ── 順勢偏多操作"
+    strat_desc = "順應 20 EMA 多頭架構，拉回尋找 H1/H2 買點，或以突破掛單進場"
     strat_color = "#10b981"
+    entry_lbl = f"突破買進 {bpa_res['buy_stop']:.2f} 元"
+    stop_lbl = f"跌破停損 {bpa_res['sell_stop']:.2f} 元"
+    target_lbl = f"{bpa_res['target_long_1r']:.2f} 元"
 elif bpa_res['always_in_code'] == 'AIS':
-    strat_title = "偏空操作策略 (AIS) ── 空方主控"
-    strat_desc = "反彈尋找 L1/L2 空點，持股者逢高調節，空方設 Sell Stop 順勢佈局"
+    strat_title = "空方主導策略 ── 順勢偏空操作"
+    strat_desc = "反彈尋找 L1/L2 空點，持股者逢高調節，空方設跌破放空單順勢佈局"
     strat_color = "#ef4444"
+    entry_lbl = f"跌破放空 {bpa_res['sell_stop']:.2f} 元"
+    stop_lbl = f"突破停損 {bpa_res['buy_stop']:.2f} 元"
+    target_lbl = f"{bpa_res['target_short_1r']:.2f} 元"
 else:
-    strat_title = "區間震盪策略 (TR) ── 80% 突破失敗法則"
-    strat_desc = f"遵守 BLSHS（低買高賣短沖）：接近支撐 S1/S2（{sr['s1']:.2f} / {sr['s2']:.2f} 元）低接，接近壓力 R1/R2（{sr['r1']:.2f} / {sr['r2']:.2f} 元）調節，嚴禁於箱型中間盲目追價，防範鐵絲網多空雙巴"
+    strat_title = "區間震盪策略 ── 80% 突破失敗法則"
+    strat_desc = f"遵守低買高賣短沖原則：接近支撐 S1/S2（{sr['s1']:.2f} / {sr['s2']:.2f} 元）低接，接近壓力 R1/R2（{sr['r1']:.2f} / {sr['r2']:.2f} 元）調節，嚴禁於箱型中間盲目追價，防範鐵絲網多空雙巴"
     strat_color = "#f59e0b"
+    entry_lbl = f"支撐區逢低買進 {sr['s1']:.2f} 元"
+    stop_lbl = f"跌破防守停損 {sr['stop_loss']:.2f} 元"
+    target_lbl = f"{sr['r1']:.2f} 元"
 
 st.markdown(f"""
 <div class="order-box" style="border-left-color: {strat_color};">
@@ -437,9 +564,9 @@ st.markdown(f"""
     <div style="font-size: 0.88rem; color: #cbd5e1; margin-bottom: 8px;">{strat_desc}</div>
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; font-size: 0.82rem; background: rgba(0,0,0,0.25); padding: 8px; border-radius: 6px;">
         <div><b>訊號棒極值：</b>高 {bpa_res['sig_high']:.2f} / 低 {bpa_res['sig_low']:.2f}</div>
-        <div><b>進場掛單價：</b>{'Buy Stop ' + str(bpa_res['buy_stop']) if bpa_res['always_in_code']=='AIL' else 'Sell Stop ' + str(bpa_res['sell_stop'])}</div>
-        <div><b>防守停損價：</b>{'Prot Stop ' + str(bpa_res['sell_stop']) if bpa_res['always_in_code']=='AIL' else 'Prot Stop ' + str(bpa_res['buy_stop'])}</div>
-        <div><b>等距測量 MM 1R：</b>{bpa_res['target_long_1r'] if bpa_res['always_in_code']=='AIL' else bpa_res['target_short_1r']:.2f} 元</div>
+        <div><b>進場參考價：</b>{entry_lbl}</div>
+        <div><b>防守停損價：</b>{stop_lbl}</div>
+        <div><b>等距目標價：</b>{target_lbl}</div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -495,3 +622,9 @@ with st.expander("📱 如何在 iPhone 上將此頁面變成原生 App？", exp
     4. 自訂名稱（例如：`台股BPA看盤`），點擊右上角 **「新增」**。
     5. 返回桌面即可看到專屬圖示，點開後將享有**極速、無網址列的全螢幕原生 App 體驗**！
     """)
+
+st.markdown(f"""
+<div style="text-align: center; color: #64748b; font-size: 0.76rem; margin-top: 2rem; padding: 14px 0; border-top: 1px solid rgba(255,255,255,0.06);">
+    台股 BPA 價格行為量化研判系統 <b>v{__version__}</b> ｜ 遵循 SemVer 語意化版本管理規範 ｜ Git Tag 發布管理
+</div>
+""", unsafe_allow_html=True)
