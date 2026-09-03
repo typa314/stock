@@ -8,11 +8,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from kline import analyze_stock, get_info
+from kline import analyze_stock, get_info, __version__
 
 # ── 1. 頁面設定（手機版體驗最佳化） ─────────────────────────
 st.set_page_config(
-    page_title="[DEV] 台股 BPA 價格行為學",
+    page_title=f"[DEV] 台股 BPA 價格行為學 v{__version__}",
     page_icon="🛠️",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -133,13 +133,13 @@ def get_cached_analysis(ticker, months, cost):
     return analyze_stock(ticker=ticker, months=months, cost=cost, generate_html=False, print_report=False)
 
 # ── 3. 頂部導覽與股票選擇區 ──────────────────────────────────
-st.markdown("""
+st.markdown(f"""
 <div style="background: rgba(234, 179, 8, 0.12); border: 1px solid #eab308; color: #facc15; padding: 6px 12px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
     <span>🛠️ <b>DEV 開發驗證環境 (devapp.py)</b>：新功能與介面試驗中，驗證確認無誤後再同步推送到正式環境 (app.py)</span>
-    <span style="font-size: 0.72rem; color: #94a3b8; font-weight: normal;">隔離保護中</span>
+    <span style="font-size: 0.72rem; color: #94a3b8; font-weight: normal; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">v{__version__}-dev</span>
 </div>
 """, unsafe_allow_html=True)
-st.markdown("### ⚡ 台股 Al Brooks BPA 價格行為研判")
+st.markdown(f"### ⚡ 台股 Al Brooks BPA 價格行為研判 <span style='font-size: 0.8rem; color: #94a3b8; font-weight: normal;'>v{__version__}</span>", unsafe_allow_html=True)
 
 # 快捷熱門股按鈕
 quick_tickers = [
@@ -628,3 +628,9 @@ with st.expander("📱 如何在 iPhone 上將此頁面變成原生 App？", exp
     4. 自訂名稱（例如：`台股BPA看盤`），點擊右上角 **「新增」**。
     5. 返回桌面即可看到專屬圖示，點開後將享有**極速、無網址列的全螢幕原生 App 體驗**！
     """)
+
+st.markdown(f"""
+<div style="text-align: center; color: #64748b; font-size: 0.76rem; margin-top: 2rem; padding: 14px 0; border-top: 1px solid rgba(255,255,255,0.06);">
+    台股 BPA 價格行為量化研判系統 <b>v{__version__}</b> ｜ 遵循 SemVer 語意化版本管理規範 ｜ Git Tag 發布管理
+</div>
+""", unsafe_allow_html=True)

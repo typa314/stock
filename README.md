@@ -218,9 +218,13 @@ streamlit run app.py
 
 ---
 
-## 📝 版本更新紀錄 (Changelog)
+## 🏷️ 版本發布紀錄 (Changelog)
 
-| 日期 | 版本 / 變更內容 |
-| **2026-09-03** | 🚀 **重大發布：Streamlit 行動看盤 Web App、盤中即時行情、專業圖卡與量價深度評估**<br>• **Streamlit 行動看盤 Web App (`app.py`)**：支援 iPhone PWA 全螢幕原生 App 操作體驗（Safari 加入主畫面）、一鍵免費部署至 Streamlit Cloud、熱門股快捷切換與手機響應式卡片排版<br>• **⚡ 盤中即時行情與 K 線動態合成**：串接 TWSE MIS 官方撮合（0~5 秒延遲）與 Yahoo Finance 雙軌備援，自動合成今日盤中 K 棒，使 BPA 價格行為、20 EMA 與量價圖卡在盤中即時動態連動<br>• **🏛️ 三大法人籌碼圖卡**：呈現外資/投信/自營單日與近 5 日累計買賣超（紅正綠負）、土洋動向態勢徽章、籌碼集中度<br>• **📊 量價動能圖卡與 Wyckoff/VPA 深度評估**：20MA 均量比率診斷、6 大核心量價結構（價量齊揚、價跌量縮、量價背離、窒息量打底等）並納入多維量化評分<br>• **🎯 操盤指引具體股價動態替換**：操盤行動指引與 Brooks 訂單指引全面替換 R1/R2/S1/S2/MA60/Stop-Loss 為實際計算股價，掛單明確無歧義<br>• **雙軌備援與狀態同步優化**：歷史數據支援 TWSE 與 yfinance 自動切換，修復 Streamlit 快捷切換按鈕狀態同步，擴充自動化測試（5/5 項測試 100% 通過） |
-| **2026-09-02** | 🚀 **重大升級：完整導入 Al Brooks 價格行為學（BPA）分析體系、主圖支撐壓力線與零臆測交叉驗證**<br>• 導入 20 EMA 唯一核心動態基準線與乖離斜率量化計算<br>• 導入 K 線逐根分類（Trend Bar、Reversal Bar、Inside Bar `i`/`ii`、Outside Bar、Doji）<br>• 導入 Always-In 市場狀態判定（AIL / AIS / TR）<br>• 導入經典高勝率交易設定情境濾網（High 1/2/3、Low 1/2/3、20 EMA Pullback、20 EMA Gap Bar）<br>• **主圖新增支撐與壓力矩陣可視化**（R1/R2/S1/S2/Stop-Loss/現價 彩色標註水平線）<br>• 導入 TWSE 證交所精確 Tick 級距規則，輸出 Buy Stop / Sell Stop、防守停損與 Measured Move 測量目標<br>• 建立 `.agents/skills/al-brooks-price-action/SKILL.md` 零臆測標準作業規範與自動化交叉驗證測試腳本 `test_kline_logic.py` |
-| **2026-09-01** | • 支援三大法人買賣超數據（外資、投信、自營商）與視覺化圖表<br>• 支援上市（TWSE）與上櫃（TPEX）雙市場自動切換 |
+本專案遵循 [語意化版本 2.0.0 (SemVer)](https://semver.org/lang/zh-TW/) 規範，使用 Git Tags 進行正式發布管理。
+
+| 版本 | 核心里程碑與重點變更 |
+|:---:|---|
+| **`v2.1.0`** | • **Streamlit 行動看盤**：推出輕量手機 PWA (`app.py` 正式 / `devapp.py` 開發雙軌)<br>• **盤中即時行情**：支援平日即時撮合（TWSE MIS + Yahoo 雙軌）與盤中 K 線動態合成<br>• **三大核心圖卡**：三大法人籌碼、Wyckoff/VPA 量價動能、基本面財報獲利 (EPS/PER/營收)<br>• **在地化與工程品質**：BPA 市場狀態中文化、具體股價掛單替換、全模組零未定義變數 QA 測試 |
+| **`v2.0.0`** | • **Al Brooks BPA 體系**：導入 20 EMA 基準線、逐根 K 線形態分類（趨勢棒/反轉棒/孕線/外部棒/十字棒）<br>• **多維量化決策**：Always-In 市場狀態判定、H1/H2/L1/L2 情境濾網、主圖支撐壓力線與台股 Tick 風控<br>• **品質規範**：建立 BPA 零臆測標準作業規範與自動化交叉驗證測試腳本 |
+| **`v1.1.0`** | • 支援三大法人買賣超數據（外資、投信、自營商）與視覺化呈現<br>• 支援上市（TWSE）與上櫃（TPEX）雙市場自動切換 |
+| **`v1.0.0`** | • 初始版本發布：台股 K 線圖量價分析、技術指標（MACD、RSI、KD、均線）與終端多因子研判報告 |
