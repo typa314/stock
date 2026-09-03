@@ -217,6 +217,7 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
         <div style="display: flex; align-items: center; gap: 10px;">
             <span style="font-size: 1.25rem; font-weight: 800; color: {res5.get('action_color', '#38bdf8')}; background: {res5.get('bpa_bg', 'rgba(0,0,0,0.2)')}; padding: 4px 12px; border-radius: 6px; border: 1px solid {res5.get('action_color', '#38bdf8')}; letter-spacing: 0.5px;">{res5.get('action_tag', '🟡 建議觀望')}</span>
             <span style="font-size: 0.88rem; color: #f1f5f9; font-weight: 600;">{res5.get('action_sub', '')}</span>
+            <span style="font-size: 0.80rem; background: {res5.get('whale_bg', 'rgba(0,0,0,0.2)')}; color: {res5.get('whale_color', '#94a3b8')}; border: 1px solid {res5.get('whale_color', '#94a3b8')}; padding: 2px 8px; border-radius: 4px; font-weight: 700;">{res5.get('whale_tag', '')}</span>
         </div>
         <div style="font-size: 0.78rem; color: #94a3b8;">
             ⚡ <b>5分K 當沖架構</b>（{stock_name_5m} {current_ticker}）｜ 資料時間：{res5['data_time_str']}
@@ -256,9 +257,9 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
     with k4:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-title">當前 5分K 結構</div>
-            <div class="metric-value" style="font-size: 0.98rem;">{res5['last_bar_type'].split('(')[0].strip()}</div>
-            <div class="metric-sub">現價 {res5['close_now']:.2f} 元</div>
+            <div class="metric-title">5m 主力量能狀態</div>
+            <div class="metric-value" style="color: {res5.get('whale_color', '#94a3b8')}; font-size: 1.02rem;">{res5.get('whale_tag', '⚪ 常態量能')}</div>
+            <div class="metric-sub">{res5.get('vol_ratio_5m', 1.0)}倍 5m均量 ｜ {res5['last_bar_type'].split('(')[0].strip()}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -267,7 +268,10 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
     <div class="dashboard-card" style="border-left: 4px solid {res5['bpa_status_color']};">
         <div class="card-header">
             <span class="card-title">⚡ Al Brooks 5 分 K 日內風控與掛單指引 (Intraday Order Box)</span>
-            <span class="pill-badge" style="background: {res5['bpa_bg']}; color: {res5['bpa_status_color']};">{res5['bpa_status'].split('（')[0]}</span>
+            <div style="display: flex; gap: 6px; align-items: center;">
+                <span class="pill-badge" style="background: {res5.get('whale_bg', 'rgba(0,0,0,0.2)')}; color: {res5.get('whale_color', '#94a3b8')}; border: 1px solid {res5.get('whale_color', '#94a3b8')}; font-weight: 700;">{res5.get('whale_tag', '')}</span>
+                <span class="pill-badge" style="background: {res5['bpa_bg']}; color: {res5['bpa_status_color']};">{res5['bpa_status'].split('（')[0]}</span>
+            </div>
         </div>
         <div class="grid-4">
             <div class="grid-cell">
@@ -290,6 +294,9 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
                 <div class="cell-val" style="color: #38bdf8;">{res5['target_1r']:.2f} / {res5['target_2r']:.2f}</div>
                 <div class="cell-sub">勝率期望值達標位</div>
             </div>
+        </div>
+        <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px; border-left: 3px solid {res5.get('whale_color', '#94a3b8')};">
+            <b>⚡ 主力量能診斷：</b><span style="color: {res5.get('whale_color', '#94a3b8')}; font-weight: 700;">{res5.get('whale_tag', '')}</span> ｜ {res5.get('whale_advice', '')}
         </div>
         <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px;">
             <b>🎯 日內操盤指引：</b>{res5['bpa_guide']}
