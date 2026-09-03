@@ -125,8 +125,56 @@ def test_bpa_bar_classification():
     
     print("[PASS] 3. BPA Bar-by-Bar Classification Synthetic Test")
 
+# ── 4. Volume Price Analysis (VPA) Logic Validation ───────────
+def test_volume_price_evaluation():
+    from kline import evaluate_volume_price
+    # Case 1: 價漲量增 (Bullish Expansion)
+    df_bull = pd.DataFrame({
+        "open": [100.0, 102.0],
+        "high": [102.0, 108.0],
+        "low": [99.0, 101.5],
+        "close": [101.0, 107.0], # +5.9%
+        "volume": [1000.0, 2000.0],
+        "vol_ma": [1200.0, 1200.0], # ratio = 2000/1200 = 1.67 >= 1.25
+        "ma20": [100.0, 101.0]
+    })
+    res_bull = evaluate_volume_price(df_bull)
+    assert res_bull["status_code"] == "BULL_EXP", f"Expected BULL_EXP, got {res_bull['status_code']}"
+    assert res_bull["score"] == 2
+
+    # Case 2: 價跌量縮 (Healthy Pullback)
+    df_ret = pd.DataFrame({
+        "open": [105.0, 104.0],
+        "high": [106.0, 104.5],
+        "low": [103.0, 102.0],
+        "close": [105.0, 102.5], # -2.38%
+        "volume": [1000.0, 600.0],
+        "vol_ma": [1000.0, 1000.0], # ratio = 600/1000 = 0.6 <= 0.75
+        "ma20": [100.0, 100.5] # close 102.5 >= ma20 100.5
+    })
+    res_ret = evaluate_volume_price(df_ret)
+    assert res_ret["status_code"] == "BEAR_RET", f"Expected BEAR_RET, got {res_ret['status_code']}"
+    assert res_ret["score"] == 1
+
+    # Case 3: 窒息量打底 (Dryup)
+    df_dry = pd.DataFrame({
+        "open": [100.0, 100.2],
+        "high": [100.5, 100.4],
+        "low": [99.8, 99.9],
+        "close": [100.0, 100.1],
+        "volume": [1000.0, 400.0],
+        "vol_ma": [1000.0, 1000.0], # 400 < 0.45 * 1000
+        "dryup": [False, True],
+        "ma20": [100.0, 100.0]
+    })
+    res_dry = evaluate_volume_price(df_dry)
+    assert res_dry["status_code"] == "DRYUP", f"Expected DRYUP, got {res_dry['status_code']}"
+
+    print("[PASS] 4. Volume Price Analysis (VPA) Logic Validation")
+
 if __name__ == "__main__":
     test_tick_sizes()
     test_indicator_math()
     test_bpa_bar_classification()
-    print("\nALL 3 CORE TESTS PASSED WITH 100% ACCURACY!")
+    test_volume_price_evaluation()
+    print("\nALL 4 CORE TESTS PASSED WITH 100% ACCURACY!")

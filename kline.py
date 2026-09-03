@@ -307,7 +307,119 @@ def evaluate_brooks_price_action(df):
         "is_ttr": is_ttr
     }
 
-def evaluate_professional_trend(df, inst_df, bpa_res):
+def evaluate_volume_price(df):
+    """
+    量價結構與動能深度評估（Wyckoff & Volume Price Analysis）：
+      - 判定量價配合關係（價漲量增、價跌量縮、量價背離、放量下殺、爆量滯漲、窒息量打底）
+      - 量能均線倍數（20MA 均量比、5MA 均量比）
+      - 結合 Wyckoff 特徵（突破、拉回、背離）
+      - 提供結構狀態、得分、量價診斷與操盤應對建議
+    """
+    N = len(df)
+    vol_now = float(df["volume"].iloc[-1])
+    vol_ma20 = float(df["vol_ma"].iloc[-1]) if "vol_ma" in df else vol_now
+    vol_ma5 = float(df["volume"].rolling(5, min_periods=1).mean().iloc[-1])
+    vol_ratio_20 = vol_now / (vol_ma20 + 1e-9)
+    vol_ratio_5 = vol_now / (vol_ma5 + 1e-9)
+    
+    close_now = float(df["close"].iloc[-1])
+    open_now = float(df["open"].iloc[-1])
+    high_now = float(df["high"].iloc[-1])
+    low_now = float(df["low"].iloc[-1])
+    prev_close = float(df["close"].iloc[-2]) if N >= 2 else close_now
+    chg = close_now - prev_close
+    chg_pct = (chg / (prev_close + 1e-9)) * 100
+    
+    # 蠟燭結構與影線
+    candle_rng = max(high_now - low_now, 1e-5)
+    body = abs(close_now - open_now)
+    upper_sh = high_now - max(open_now, close_now)
+    lower_sh = min(open_now, close_now) - low_now
+    
+    # 特殊量價與 Wyckoff 標記
+    is_breakout = bool(df["breakout"].iloc[-1]) if "breakout" in df else False
+    is_dryup = bool(df["dryup"].iloc[-1]) if "dryup" in df else (vol_now < 0.45 * vol_ma20)
+    is_churn = bool(df["churn"].iloc[-1]) if "churn" in df else (vol_ratio_20 > 1.8 and (upper_sh / candle_rng > 0.4 or body / candle_rng < 0.25))
+    is_pullback = bool(df["pullback"].iloc[-1]) if "pullback" in df else False
+    bull_div = bool(df["bull_div"].iloc[-1]) if "bull_div" in df else False
+    bear_div = bool(df["bear_div"].iloc[-1]) if "bear_div" in df else False
+
+    # 量價型態診斷
+    if is_churn:
+        status = "爆量滯漲（主力調節警戒）"
+        status_code = "CHURN"
+        score = -1
+        desc = f"成交量達 20MA 的 {vol_ratio_20*100:.0f}%（爆量），但漲勢受阻留長上影線或實體窄小，顯示主力逢高調節或高檔換手分歧"
+        advice = "短線追高風險極大，提防主力誘多出貨，持股者宜逢高分批減碼"
+    elif is_breakout:
+        status = "帶量突破（主力放量表態）"
+        status_code = "BREAKOUT"
+        score = +2
+        desc = f"放量突破近 20 日高點（成交量為 20MA 的 {vol_ratio_20*100:.0f}%），多方強勢表態展開波段攻勢"
+        advice = "量價俱佳，順勢偏多操作，可以突破價或前波高點作為動態防守位"
+    elif is_dryup:
+        status = "窒息量打底（沉澱沉寂變盤前夕）"
+        status_code = "DRYUP"
+        score = 0
+        desc = f"成交量僅 20MA 的 {vol_ratio_20*100:.0f}%（極致萎縮），市場浮額大幅洗淨，殺盤動能衰竭"
+        advice = "量能萎縮至波段極低水平，往往孕育變盤反轉，空手者可密切留意帶量起漲訊號"
+    elif chg > 0 and vol_ratio_20 >= 1.25:
+        status = "價量齊揚（健康放量推升）"
+        status_code = "BULL_EXP"
+        score = +2
+        desc = f"股價上揚 {chg_pct:+.2f}% 伴隨量能放大至 20MA 的 {vol_ratio_20*100:.0f}%，買盤積極推升，多方架構扎實"
+        advice = "量能配合良好，多頭動能充沛，持股續抱，空手者可待短線回踩守穩時分批佈局"
+    elif chg > 0 and vol_ratio_20 <= 0.75:
+        status = "量價背離（縮量推升動能趨緩）"
+        status_code = "BULL_DIV"
+        score = 0
+        desc = f"股價上漲 {chg_pct:+.2f}% 但成交量僅為 20MA 的 {vol_ratio_20*100:.0f}%，追價力道跟進不足"
+        advice = "無量上漲易引發震盪回測，嚴禁追高，持股者宜提高警戒並緊盯支撐線"
+    elif chg < 0 and vol_ratio_20 >= 1.25:
+        status = "放量重挫（空方賣壓湧現）"
+        status_code = "BEAR_EXP"
+        score = -2
+        desc = f"股價下跌 {chg_pct:+.2f}% 且成交量放大至 20MA 的 {vol_ratio_20*100:.0f}%，空方帶量摜壓，恐慌性賣盤出籠"
+        advice = "帶量破線殺傷力大，短線跌勢恐未止，持股者嚴守停損，空手者切勿急於猜底接刀"
+    elif chg < 0 and vol_ratio_20 <= 0.75:
+        ma20_val = float(df["ma20"].iloc[-1]) if "ma20" in df else close_now
+        status = "價跌量縮（多頭良性拉回洗盤）" if close_now >= ma20_val else "陰跌量縮（買盤觀望人氣退潮）"
+        status_code = "BEAR_RET"
+        score = +1 if close_now >= ma20_val else -1
+        desc = f"股價拉回 {chg_pct:+.2f}% 且成交量萎縮至 20MA 的 {vol_ratio_20*100:.0f}%，無恐慌性失血賣壓"
+        advice = "拉回量縮代表籌碼相對安定，若守穩月線支撐可視為良性洗盤買點；反之若跌破均線則需防陰跌"
+    else:
+        status = "量價平穩（常態量能震盪）"
+        status_code = "NORMAL"
+        score = 0
+        desc = f"今日成交量為 20MA 的 {vol_ratio_20*100:.0f}%，量能與價格變動處於常態合理區間"
+        advice = "量能無失控或突變跡象，維持既有技術面支撐壓力紀律操作"
+
+    if bull_div:
+        desc += " ｜ 【技術指標底背離】跌勢趨緩醞釀反彈"
+    if bear_div:
+        desc += " ｜ 【技術指標頂背離】漲勢趨疲提防獲利了結"
+
+    return {
+        "status": status,
+        "status_code": status_code,
+        "score": score,
+        "vol_now": vol_now,
+        "vol_ma20": vol_ma20,
+        "vol_ma5": vol_ma5,
+        "vol_ratio_20": vol_ratio_20,
+        "vol_ratio_5": vol_ratio_5,
+        "desc": desc,
+        "advice": advice,
+        "is_breakout": is_breakout,
+        "is_dryup": is_dryup,
+        "is_churn": is_churn,
+        "is_pullback": is_pullback,
+        "bull_div": bull_div,
+        "bear_div": bear_div
+    }
+
+def evaluate_professional_trend(df, inst_df, bpa_res, vol_eval=None):
     score = 0
     factors = []
     
@@ -422,6 +534,11 @@ def evaluate_professional_trend(df, inst_df, bpa_res):
         factors.append(f"【法人籌碼】{c_score:+d}分 | {c_desc}")
     else:
         factors.append("【法人籌碼】 0分 | 上櫃/無即時法人數據")
+
+    # 6. 量價結構與動能評估 (Wyckoff & VPA)
+    if vol_eval is not None:
+        score += vol_eval["score"]
+        factors.append(f"【量價表現】{vol_eval['score']:+d}分 | {vol_eval['status']}：{vol_eval['desc']}")
 
     return score, stage, factors
 
@@ -721,8 +838,9 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         else:
             print("[WARN] 無法取得三大法人資料（OTC 股票或資料不可用）")
 
+    vol_eval = evaluate_volume_price(df)
     bpa_res = evaluate_brooks_price_action(df)
-    trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df, bpa_res)
+    trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df, bpa_res, vol_eval)
     rating_badge = get_rating_badge(trend_score)
 
     close_now = df["close"].iloc[-1]
@@ -940,6 +1058,12 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         print(f"  震盪指標  ：RSI(14)={df['rsi'].iloc[-1]:.1f} ｜ KD(9,3,3) K={df['kd_k'].iloc[-1]:.1f} / D={df['kd_d'].iloc[-1]:.1f}")
         print(f"  成交量能  ：今日={df['volume'].iloc[-1]:,.0f} 張 ｜ 20日均量={df['vol_ma'].iloc[-1]:,.0f} 張")
 
+        print(f"\n  ── 📊 量價關係與動能深度評估 ──────────────────────────")
+        print(f"  量價狀態  ：{vol_eval['status']}（評分 {vol_eval['score']:+d}分）")
+        print(f"  成交量能  ：今日={vol_eval['vol_now']:,.0f} 張 ｜ 20MA均量={vol_eval['vol_ma20']:,.0f} 張（量比 {vol_eval['vol_ratio_20']*100:.1f}%） ｜ 5MA均量={vol_eval['vol_ma5']:,.0f} 張")
+        print(f"  量價診斷  ：{vol_eval['desc']}")
+        print(f"  操盤建議  ：{vol_eval['advice']}")
+
         if not inst_df.empty:
             print(f"\n  ── 🏛️ 近 5 日三大法人籌碼分佈（張）───────────────────")
             for _, r in inst_df.tail(5).iterrows():
@@ -973,7 +1097,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
             print(f"  • 等距測量目標 (MM 1R / 2R) ：目標一 {bpa_res['target_short_1r']:.2f} 元 ｜ 目標二 {bpa_res['target_short_2r']:.2f} 元")
         else:
             print(f"  區間震盪策略 (TR)    ：【80% 法則】80% 的區間突破會失敗！嚴禁盲目追高殺低")
-            print(f"  • 操作準則 (BLSHS)   ：Buy Low, Sell High, Scalp（低買高賣短沖，接近 S1/S2 買，接近 R1/R2 賣）")
+            print(f"  • 操作準則 (BLSHS)   ：Buy Low, Sell High, Scalp（低買高賣短沖，接近 S1/S2（{s1:.2f} / {s2:.2f} 元）買，接近 R1/R2（{r1:.2f} / {r2:.2f} 元）賣）")
             if bpa_res['is_ttr']:
                 print(f"  • 鐵絲網警示 (Barbwire)：目前處於密集重疊區，多空雙巴機率極高，強烈建議空手觀望！")
 
@@ -991,15 +1115,16 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
             print(f"  • {f_item}")
 
         print(f"\n  ── 💡 操盤行動指引 ─────────────────────────────────────")
+        ma60_val = df['ma60'].iloc[-1]
         if trend_score >= 3:
-            print("  【持股者】趨勢偏多，多頭結構穩健，建議續抱並以 S1 作為移動停利點。")
-            print("  【空手者】逢拉回量縮測試 S1 守穩時可分批建立部位，突破 R1 加碼。")
+            print(f"  【持股者】趨勢偏多，多頭結構穩健，建議續抱並以 S1（{s1:.2f} 元，月線）作為移動停利點。")
+            print(f"  【空手者】逢拉回量縮測試 S1（{s1:.2f} 元）守穩時可分批建立部位，突破 R1（{r1:.2f} 元）放量加碼。")
         elif trend_score <= -3:
-            print("  【持股者】趨勢偏空且空方動能增強，反彈遇 R1/MA60 宜逢高減碼，跌破防守線務必停損。")
-            print("  【空手者】暫勿盲目猜底接刀，靜待打底完成或出現帶量底背離反轉再進場。")
+            print(f"  【持股者】趨勢偏空且空方動能增強，反彈遇 R1（{r1:.2f} 元）/ MA60季線（{ma60_val:.2f} 元）宜逢高減碼，跌破防守線（{stop_loss:.2f} 元）務必停損。")
+            print(f"  【空手者】暫勿盲目猜底接刀，靜待打底完成或出現帶量底背離反轉再進場。")
         else:
-            print("  【持股者】短線處於區間震盪打底，未跌破防守線前可暫時觀望，密切留意法人籌碼延續性。")
-            print("  【空手者】觀望為主，靜待帶量突破 R1 壓力或回測 S2 底部確認再行佈局。")
+            print(f"  【持股者】短線處於區間震盪打底，未跌破防守線（{stop_loss:.2f} 元）前可暫時觀望，密切留意法人籌碼延續性。")
+            print(f"  【空手者】觀望為主，靜待帶量突破 R1（{r1:.2f} 元）壓力或回測 S2（{s2:.2f} 元）底部確認再行佈局。")
         print("="*70)
 
     return {
@@ -1008,6 +1133,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         "market": market,
         "df": df,
         "inst_df": inst_df,
+        "vol_eval": vol_eval,
         "fig": fig,
         "close_now": close_now,
         "cost": cost,

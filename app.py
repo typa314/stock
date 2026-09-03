@@ -58,6 +58,65 @@ st.markdown("""
         padding: 14px;
         margin: 10px 0;
     }
+    /* 專業圖卡通用樣式（三大法人與量價圖卡） */
+    .dashboard-card {
+        background: #1e293b;
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+        border: 1px solid #334155;
+    }
+    .card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .card-title {
+        font-size: 0.98rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .pill-badge {
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-weight: 600;
+    }
+    .grid-4 {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+    @media (max-width: 640px) {
+        .grid-4 {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    .grid-cell {
+        background: rgba(15, 23, 42, 0.65);
+        padding: 8px 6px;
+        border-radius: 6px;
+        text-align: center;
+        border: 1px solid rgba(255,255,255,0.04);
+    }
+    .cell-label {
+        font-size: 0.72rem;
+        color: #94a3b8;
+        margin-bottom: 2px;
+    }
+    .cell-val {
+        font-size: 1.02rem;
+        font-weight: 700;
+    }
+    .cell-sub {
+        font-size: 0.68rem;
+        color: #64748b;
+        margin-top: 2px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -112,6 +171,8 @@ stock_name = res["stock_name"]
 market_txt = "上市 (TSE)" if res["market"] == "tse" else "上櫃 (OTC)"
 close_now  = res["close_now"]
 df         = res["df"]
+inst_df    = res.get("inst_df", pd.DataFrame())
+vol_eval   = res.get("vol_eval", {})
 bpa_res    = res["bpa_res"]
 sr         = res["sr_levels"]
 trend_score= res["trend_score"]
@@ -179,7 +240,155 @@ with k4:
     </div>
     """, unsafe_allow_html=True)
 
-# ── 4.2 Al Brooks 操盤掛單與風控指引 ─────────────────────────
+# ── 4.2 三大法人籌碼與量價結構圖卡 ─────────────────────────
+col_inst, col_vol = st.columns(2)
+
+with col_inst:
+    if not inst_df.empty:
+        last_inst = inst_df.iloc[-1]
+        fini_val = int(last_inst["fini"])
+        trust_val = int(last_inst["trust"])
+        dealer_val = int(last_inst["dealer"])
+        total_val = int(last_inst["total"])
+        inst_date = last_inst["date"].strftime("%m/%d")
+
+        fini_5d = int(inst_df.tail(5)["fini"].sum())
+        trust_5d = int(inst_df.tail(5)["trust"].sum())
+        dealer_5d = int(inst_df.tail(5)["dealer"].sum())
+        total_5d = int(inst_df.tail(5)["total"].sum())
+
+        if fini_val > 0 and trust_val > 0:
+            inst_tag = "🟢 土洋聯手買超"
+            tag_bg = "rgba(34, 197, 94, 0.2)"
+            tag_color = "#4ade80"
+        elif fini_val < 0 and trust_val < 0:
+            inst_tag = "🔴 土洋聯手賣超"
+            tag_bg = "rgba(239, 68, 68, 0.2)"
+            tag_color = "#f87171"
+        elif fini_val > 0:
+            inst_tag = "🔵 外資獨買/投信調節"
+            tag_bg = "rgba(59, 130, 246, 0.2)"
+            tag_color = "#60a5fa"
+        elif trust_val > 0:
+            inst_tag = "🟣 投信作多/外資調節"
+            tag_bg = "rgba(168, 85, 247, 0.2)"
+            tag_color = "#c084fc"
+        else:
+            inst_tag = "🟡 法人偏空/動向分歧"
+            tag_bg = "rgba(245, 158, 11, 0.2)"
+            tag_color = "#fbbf24"
+
+        # 台股慣例：買超為正（紅字）、賣超為負（綠字）
+        def fmt_inst_html(val):
+            color = "#ef4444" if val > 0 else ("#22c55e" if val < 0 else "#94a3b8")
+            sign = "+" if val > 0 else ""
+            return f'<span style="color: {color}; font-weight: 700;">{sign}{val:,}</span>'
+
+        st.markdown(f"""
+        <div class="dashboard-card">
+            <div class="card-header">
+                <span class="card-title">🏛️ 三大法人籌碼圖卡 <span style="font-size: 0.8rem; color: #94a3b8; font-weight: normal;">({inst_date} 最新)</span></span>
+                <span class="pill-badge" style="background: {tag_bg}; color: {tag_color};">{inst_tag}</span>
+            </div>
+            <div class="grid-4">
+                <div class="grid-cell">
+                    <div class="cell-label">外資單日</div>
+                    <div class="cell-val">{fmt_inst_html(fini_val)}</div>
+                    <div class="cell-sub">5日 {fmt_inst_html(fini_5d)}</div>
+                </div>
+                <div class="grid-cell">
+                    <div class="cell-label">投信單日</div>
+                    <div class="cell-val">{fmt_inst_html(trust_val)}</div>
+                    <div class="cell-sub">5日 {fmt_inst_html(trust_5d)}</div>
+                </div>
+                <div class="grid-cell">
+                    <div class="cell-label">自營商單日</div>
+                    <div class="cell-val">{fmt_inst_html(dealer_val)}</div>
+                    <div class="cell-sub">5日 {fmt_inst_html(dealer_5d)}</div>
+                </div>
+                <div class="grid-cell">
+                    <div class="cell-label">三大合計</div>
+                    <div class="cell-val">{fmt_inst_html(total_val)}</div>
+                    <div class="cell-sub">5日 {fmt_inst_html(total_5d)}</div>
+                </div>
+            </div>
+            <div style="font-size: 0.8rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 10px; border-radius: 6px; margin-top: 6px;">
+                <b>近 5 日三大法人合計：</b> {fmt_inst_html(total_5d)} 張 ｜ 佔量集中度 <b>{abs(total_val) / (df['volume'].iloc[-1] + 1e-9) * 100:.1f}%</b>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="dashboard-card">
+            <div class="card-header">
+                <span class="card-title">🏛️ 三大法人籌碼圖卡</span>
+                <span class="pill-badge" style="background: rgba(148, 163, 184, 0.2); color: #cbd5e1;">上櫃 / 暫無數據</span>
+            </div>
+            <div style="font-size: 0.85rem; color: #94a3b8; padding: 16px 8px; text-align: center;">
+                ℹ️ 該個股為上櫃 (OTC) 股票或目前無即時三大法人資料。<br>
+                TWSE 官方 API 僅提供上市 (TSE) 買賣超數據，技術面與量價指標皆維持完整研判。
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+with col_vol:
+    v_now = float(vol_eval.get("vol_now", df["volume"].iloc[-1]))
+    v_ma20 = float(vol_eval.get("vol_ma20", df["vol_ma"].iloc[-1]))
+    v_ma5 = float(vol_eval.get("vol_ma5", df["volume"].rolling(5, min_periods=1).mean().iloc[-1]))
+    v_ratio_20 = float(vol_eval.get("vol_ratio_20", v_now / (v_ma20 + 1e-9)))
+    v_status = vol_eval.get("status", "量價常態")
+    v_desc = vol_eval.get("desc", "今日量價結構平穩")
+    v_advice = vol_eval.get("advice", "維持紀律操作")
+    v_score = vol_eval.get("score", 0)
+
+    if v_score > 0:
+        vol_badge_bg = "rgba(34, 197, 94, 0.2)"
+        vol_badge_color = "#4ade80"
+    elif v_score < 0:
+        vol_badge_bg = "rgba(239, 68, 68, 0.2)"
+        vol_badge_color = "#f87171"
+    else:
+        vol_badge_bg = "rgba(245, 158, 11, 0.2)"
+        vol_badge_color = "#fbbf24"
+
+    ratio_color = "#ef4444" if v_ratio_20 >= 1.25 else ("#22c55e" if v_ratio_20 <= 0.75 else "#f8fafc")
+
+    st.markdown(f"""
+    <div class="dashboard-card">
+        <div class="card-header">
+            <span class="card-title">📊 量價結構與動能圖卡</span>
+            <span class="pill-badge" style="background: {vol_badge_bg}; color: {vol_badge_color};">{v_status.split('（')[0]}</span>
+        </div>
+        <div class="grid-4">
+            <div class="grid-cell">
+                <div class="cell-label">今日成交量</div>
+                <div class="cell-val" style="color: #f8fafc;">{v_now:,.0f} <span style="font-size: 0.72rem; font-weight: normal; color: #94a3b8;">張</span></div>
+                <div class="cell-sub">最新交易日</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">20MA 均量</div>
+                <div class="cell-val" style="color: #cbd5e1;">{v_ma20:,.0f} <span style="font-size: 0.72rem; font-weight: normal; color: #94a3b8;">張</span></div>
+                <div class="cell-sub">月均量基準</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">量能比率</div>
+                <div class="cell-val" style="color: {ratio_color};">{v_ratio_20*100:.1f}%</div>
+                <div class="cell-sub">{v_ratio_20:.2f} 倍 20MA</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">5MA 均量</div>
+                <div class="cell-val" style="color: #cbd5e1;">{v_ma5:,.0f} <span style="font-size: 0.72rem; font-weight: normal; color: #94a3b8;">張</span></div>
+                <div class="cell-sub">週均量水準</div>
+            </div>
+        </div>
+        <div style="font-size: 0.8rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 10px; border-radius: 6px; margin-top: 6px;">
+            <b>量價診斷：</b>{v_desc}<br>
+            <b>操盤應對：</b><span style="color: {vol_badge_color};">{v_advice}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ── 4.3 Al Brooks 操盤掛單與風控指引 ─────────────────────────
 st.markdown("#### 🎯 Brooks 操盤訂單與停損指引")
 if bpa_res['always_in_code'] == 'AIL':
     strat_title = "偏多操作策略 (AIL) ── 多頭主控"
@@ -191,7 +400,7 @@ elif bpa_res['always_in_code'] == 'AIS':
     strat_color = "#ef4444"
 else:
     strat_title = "區間震盪策略 (TR) ── 80% 突破失敗法則"
-    strat_desc = "遵守 BLSHS（低買高賣短沖），嚴禁於箱型中間盲目追價，防範鐵絲網多空雙巴"
+    strat_desc = f"遵守 BLSHS（低買高賣短沖）：接近支撐 S1/S2（{sr['s1']:.2f} / {sr['s2']:.2f} 元）低接，接近壓力 R1/R2（{sr['r1']:.2f} / {sr['r2']:.2f} 元）調節，嚴禁於箱型中間盲目追價，防範鐵絲網多空雙巴"
     strat_color = "#f59e0b"
 
 st.markdown(f"""
@@ -210,7 +419,7 @@ st.markdown(f"""
 if bpa_res["signals"]:
     st.info("💡 **近期觸發之 BPA 關鍵設定：** " + " ｜ ".join(bpa_res["signals"]))
 
-# ── 4.3 核心分析分頁（支撐壓力 / 趨勢與BPA細項 / 操盤行動指引） ────────
+# ── 4.4 核心分析分頁（支撐壓力 / 趨勢與BPA細項 / 操盤行動指引） ────────
 tab1, tab2, tab3 = st.tabs(["🎯 支撐壓力矩陣", "🧭 趨勢與 BPA 評估明細", "💡 操盤行動指引"])
 
 with tab1:
@@ -228,21 +437,26 @@ with tab1:
 
 with tab2:
     st.write(f"**綜合評級：** `{badge}` ｜ **總得分：** `{trend_score:+d} 分`")
-    # 過濾只保留純價格行為、趨勢與均線位階相關因子
-    clean_factors = [f for f in res["trend_factors"] if "法人" not in f and "MACD" not in f and "量" not in f]
-    for factor in clean_factors:
+    for factor in res["trend_factors"]:
         st.markdown(f"- {factor}")
 
 with tab3:
+    s1_p = sr['s1']
+    s2_p = sr['s2']
+    r1_p = sr['r1']
+    r2_p = sr['r2']
+    sl_p = sr['stop_loss']
+    ma60_p = df['ma60'].iloc[-1]
+
     if trend_score >= 3:
-        st.success("🟢 **【持股者】** 趨勢偏多，多頭結構穩健，建議續抱並以 S1（月線）作為移動停利點。\n\n"
-                   "🟢 **【空手者】** 逢拉回量縮測試 S1 守穩時可分批建立部位，突破 R1 放量加碼。")
+        st.success(f"🟢 **【持股者】** 趨勢偏多，多頭結構穩健，建議續抱並以 **S1（{s1_p:.2f} 元，月線）** 作為移動停利點。\n\n"
+                   f"🟢 **【空手者】** 逢拉回量縮測試 **S1（{s1_p:.2f} 元）** 守穩時可分批建立部位，突破 **R1（{r1_p:.2f} 元）** 放量加碼。")
     elif trend_score <= -3:
-        st.error("🔴 **【持股者】** 趨勢偏空且空方動能增強，反彈遇 R1/MA60 宜逢高減碼，跌破防守線務必停損。\n\n"
-                 "🔴 **【空手者】** 暫勿盲目猜底接刀，靜待打底完成或出現帶量底背離反轉再進場。")
+        st.error(f"🔴 **【持股者】** 趨勢偏空且空方動能增強，反彈遇 **R1（{r1_p:.2f} 元）** 或 **季線MA60（{ma60_p:.2f} 元）** 宜逢高減碼，跌破**防守停損線（{sl_p:.2f} 元）**務必停損。\n\n"
+                 f"🔴 **【空手者】** 暫勿盲目猜底接刀，靜待打底完成或出現帶量底背離反轉再進場。")
     else:
-        st.warning("🟡 **【持股者】** 短線處於區間震盪打底，未跌破防守線前可暫時觀望，密切留意多空延續性。\n\n"
-                   "🟡 **【空手者】** 觀望為主，靜待帶量突破 R1 壓力或回測 S2 底部確認再行佈局。")
+        st.warning(f"🟡 **【持股者】** 短線處於區間震盪打底，未跌破**防守停損線（{sl_p:.2f} 元）**前可暫時觀望，密切留意多空延續性。\n\n"
+                   f"🟡 **【空手者】** 觀望為主，靜待帶量突破 **R1（{r1_p:.2f} 元）** 壓力或回測 **S2（{s2_p:.2f} 元）** 底部確認再行佈局。")
 
 # ── 5. iPhone 主畫面捷徑說明 ─────────────────────────────────
 with st.expander("📱 如何在 iPhone 上將此頁面變成原生 App？", expanded=False):
