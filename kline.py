@@ -283,8 +283,8 @@ def fetch_institutional(ticker, market, days=5):
 
     return pd.DataFrame()
 
-# ── 4.1 基本面與財報獲利數據（FinMind CDN 極速接口，涵蓋上市櫃） ──
-def fetch_fundamentals(ticker):
+# ── 4.1 基本面與財報獲利數據（FinMind CDN + Yahoo 雙軌極速備援） ──
+def fetch_fundamentals(ticker, market="tse"):
     """取得台股個股基本面數據（近四季 EPS、本益比、殖利率、淨值比、雙率與月營收 YoY）"""
     now = datetime.now()
     start_1y = (now - relativedelta(years=1, months=6)).strftime("%Y-%m-%d")
@@ -377,6 +377,35 @@ def fetch_fundamentals(ticker):
         res["latest_revenue_val"] = round(latest_r["revenue"] / 1e8, 1)
         res["revenue_date"] = f"{latest_r['revenue_year']}/{latest_r['revenue_month']}"
         res["has_data"] = True
+
+    # 4. 備援軌道：若 FinMind 因雲端 IP 頻率限制 (429) 或無資料，啟動 Yahoo Finance 備援
+    if not res["has_data"] or res["eps_ttm"] is None:
+        try:
+            sym = f"{ticker}.TW" if market == "tse" else f"{ticker}.TWO"
+            t_obj = yf.Ticker(sym)
+            info = t_obj.info
+            if not info or not info.get("trailingEps"):
+                sym_alt = f"{ticker}.TWO" if market == "tse" else f"{ticker}.TW"
+                info = yf.Ticker(sym_alt).info
+            if info and (info.get("trailingEps") is not None or info.get("trailingPE") is not None):
+                if res["eps_ttm"] is None and info.get("trailingEps") is not None:
+                    res["eps_ttm"] = round(float(info["trailingEps"]), 2)
+                    res["latest_quarter"] = "近四季"
+                if res["per"] is None and info.get("trailingPE") is not None:
+                    res["per"] = round(float(info["trailingPE"]), 2)
+                if res["pbr"] is None and info.get("priceToBook") is not None:
+                    res["pbr"] = round(float(info["priceToBook"]), 2)
+                if res["dividend_yield"] is None and info.get("dividendYield") is not None:
+                    res["dividend_yield"] = round(float(info["dividendYield"]) * 100, 2)
+                if res["gross_margin"] is None and info.get("grossMargins") is not None:
+                    res["gross_margin"] = round(float(info["grossMargins"]) * 100, 1)
+                if res["operating_margin"] is None and info.get("operatingMargins") is not None:
+                    res["operating_margin"] = round(float(info["operatingMargins"]) * 100, 1)
+                if res["revenue_yoy"] is None and info.get("revenueGrowth") is not None:
+                    res["revenue_yoy"] = round(float(info["revenueGrowth"]) * 100, 2)
+                res["has_data"] = True
+        except Exception:
+            pass
 
     return res
 
@@ -1279,7 +1308,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
 
     vol_eval = evaluate_volume_price(df)
     bpa_res = evaluate_brooks_price_action(df)
-    fundamentals = fetch_fundamentals(ticker)
+    fundamentals = fetch_fundamentals(ticker, market=market)
     trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df, bpa_res, vol_eval)
     rating_badge = get_rating_badge(trend_score)
     composite_rating = evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market)

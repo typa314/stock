@@ -144,7 +144,7 @@ def _get_cache_ttl():
     return 300
 
 @st.cache_data(ttl=_get_cache_ttl(), show_spinner=False)
-def get_cached_analysis(ticker, months, cost):
+def get_cached_analysis(ticker, months, cost, version=__version__):
     return analyze_stock(ticker=ticker, months=months, cost=cost, generate_html=False, print_report=False)
 
 # ── 3. 頂部導覽與股票選擇區 ──────────────────────────────────
@@ -197,7 +197,7 @@ current_ticker = st.session_state["ticker_input"]
 # ── 4. 執行研判與展示 ──────────────────────────────────────
 try:
     with st.spinner(f"正在分析 {current_ticker} BPA 價格行為與位階..."):
-        res = get_cached_analysis(current_ticker, months_opt, cost_val)
+        res = get_cached_analysis(current_ticker, months_opt, cost_val, version=__version__)
 except Exception as e:
     st.error(f"⚠️ 無法取得股票代號【{current_ticker}】的資料：{e}")
     st.stop()
