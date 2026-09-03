@@ -1017,16 +1017,11 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
     stop_loss = round(s2 * 0.985, 2)
 
     # ── 8. Plotly 互動圖表繪製 ──────────────────────────────────
-    n_inst = 1 if not inst_df.empty else 0
-    n_rows = 4 + n_inst
-    if n_inst:
-        row_heights = [0.38, 0.12, 0.18, 0.18, 0.14]
-        subplot_titles = ["K 線 + 20 EMA(BPA) + 均線 + 布林帶", "三大法人（張）", "MACD(12,26,9)", "RSI(14)", "成交量（張）"]
-    else:
-        row_heights = [0.42, 0.22, 0.22, 0.14]
-        subplot_titles = ["K 線 + 20 EMA(BPA) + 均線 + 布林帶", "MACD(12,26,9)", "RSI(14)", "成交量（張）"]
+    # ── 8. Plotly 互動圖表繪製（專注價格行為、均線、動能與量能，法人數據由專屬圖卡呈現） ──────
+    row_heights = [0.46, 0.20, 0.18, 0.16]
+    subplot_titles = ["K 線 + 20 EMA(BPA) + 均線 + 布林帶", "MACD(12,26,9)", "RSI(14)", "成交量（張）"]
 
-    fig = make_subplots(rows=n_rows, cols=1, shared_xaxes=True,
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
                         row_heights=row_heights, vertical_spacing=0.025,
                         subplot_titles=subplot_titles)
 
@@ -1099,25 +1094,8 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
             showarrow=True, arrowhead=2, ax=0, ay=-35,
             bgcolor="#fed7aa", font=dict(size=10, color="#9a3412"), row=1, col=1)
 
-    # Row 2（選）：三大法人
-    if not inst_df.empty:
-        inst_row = 2
-        fig.add_trace(go.Bar(
-            x=inst_df["date"], y=inst_df["fini"],
-            marker_color=np.where(inst_df["fini"] >= 0, "#3b82f6", "#f87171"),
-            name="外資", opacity=0.85), row=inst_row, col=1)
-        fig.add_trace(go.Bar(
-            x=inst_df["date"], y=inst_df["trust"],
-            marker_color=np.where(inst_df["trust"] >= 0, "#22c55e", "#f87171"),
-            name="投信", opacity=0.85), row=inst_row, col=1)
-        fig.add_trace(go.Bar(
-            x=inst_df["date"], y=inst_df["dealer"],
-            marker_color=np.where(inst_df["dealer"] >= 0, "#f59e0b", "#f87171"),
-            name="自營商", opacity=0.85), row=inst_row, col=1)
-        fig.update_layout(barmode="group")
-
-    # MACD 子圖
-    macd_row = 2 + n_inst
+    # Row 2：MACD 子圖
+    macd_row = 2
     hist_colors = np.where(df["macd_hist"].values >= 0, "#ef4444", "#22c55e")
     fig.add_trace(go.Bar(x=df["date"], y=df["macd_hist"],
         marker_color=hist_colors, name="MACD 柱", showlegend=False, opacity=0.7), row=macd_row, col=1)
@@ -1127,8 +1105,8 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         mode="lines", line=dict(color="#a78bfa", width=1.5), name="Signal"), row=macd_row, col=1)
     fig.add_hline(y=0, line=dict(color="rgba(255,255,255,0.2)", width=1), row=macd_row, col=1)
 
-    # RSI 子圖
-    rsi_row = 3 + n_inst
+    # Row 3：RSI 子圖
+    rsi_row = 3
     fig.add_trace(go.Scatter(x=df["date"], y=df["rsi"],
         mode="lines", line=dict(color="#38bdf8", width=1.5), name="RSI(14)"), row=rsi_row, col=1)
     fig.add_hline(y=70, line=dict(color="#f87171", width=1, dash="dash"),
@@ -1138,8 +1116,8 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
     fig.add_hline(y=50, line=dict(color="rgba(255,255,255,0.15)", width=1), row=rsi_row, col=1)
     fig.update_yaxes(range=[0, 100], row=rsi_row, col=1)
 
-    # 成交量子圖
-    vol_row = 4 + n_inst
+    # Row 4：成交量子圖
+    vol_row = 4
     vol_colors = np.where(df["close"].values >= df["open"].values, "#ef4444", "#22c55e")
     fig.add_trace(go.Bar(x=df["date"], y=df["volume"], marker_color=vol_colors,
         name="成交量", showlegend=False), row=vol_row, col=1)
@@ -1192,7 +1170,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         xaxis_rangeslider_visible=False,
         yaxis_title="股價（元）",
         legend=dict(orientation="h", y=1.02, x=1, xanchor="right"),
-        height=950 if n_inst else 850,
+        height=820,
         template="plotly_dark",
         margin=dict(t=70, b=40, l=60, r=20)
     )
