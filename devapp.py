@@ -422,7 +422,20 @@ with col_vol:
     </div>
     """, unsafe_allow_html=True)
 
-# ── 4.3 Al Brooks 操盤掛單與風控指引 ─────────────────────────
+# ── 4.3 完整互動 K 線圖表（下拉折疊選單，電腦端方便檢視，手機端預設收合保持清爽） ────
+if "fig" in res and res["fig"] is not None:
+    with st.expander("📈 展開完整互動 K 線圖表（含 BPA 支撐壓力線、EMA20、三大法人與指標）", expanded=False):
+        st.plotly_chart(
+            res["fig"],
+            use_container_width=True,
+            config={
+                "scrollZoom": True,
+                "displaylogo": False,
+                "modeBarButtonsToRemove": ["lasso2d", "select2d"]
+            }
+        )
+
+# ── 4.4 Al Brooks 操盤掛單與風控指引 ─────────────────────────
 st.markdown("#### 🎯 Brooks 操盤訂單與停損指引")
 if bpa_res['always_in_code'] == 'AIL':
     strat_title = "偏多操作策略 (AIL) ── 多頭主控"
