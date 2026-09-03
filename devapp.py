@@ -269,6 +269,10 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
         </div>
         """, unsafe_allow_html=True)
 
+    pct_1r_5m = abs(res5['target_1r'] - res5['close_now']) / res5['close_now'] * 100
+    pct_2r_5m = abs(res5['target_2r'] - res5['close_now']) / res5['close_now'] * 100
+    pct_stop_5m = abs(res5['close_now'] - res5['stop_loss']) / res5['close_now'] * 100
+
     # 5m 專屬風控掛單指引卡
     st.markdown(f"""
     <div class="dashboard-card" style="border-left: 4px solid {res5['bpa_status_color']};">
@@ -281,24 +285,24 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
         </div>
         <div class="grid-4">
             <div class="grid-cell">
-                <div class="cell-label">突破買進 (Buy Stop)</div>
+                <div class="cell-label">突破進場價位 (Buy Stop)</div>
                 <div class="cell-val" style="color: #ef4444;">{res5['buy_stop']:.2f} 元</div>
-                <div class="cell-sub">前棒高點 +1 Tick</div>
+                <div class="cell-sub">跌破放空價: {res5['sell_stop']:.2f} 元</div>
             </div>
             <div class="grid-cell">
-                <div class="cell-label">跌破放空 (Sell Stop)</div>
-                <div class="cell-val" style="color: #22c55e;">{res5['sell_stop']:.2f} 元</div>
-                <div class="cell-sub">前棒低點 -1 Tick</div>
-            </div>
-            <div class="grid-cell">
-                <div class="cell-label">順勢防守停損 (Stop)</div>
+                <div class="cell-label">防守停損價位 (Stop Loss)</div>
                 <div class="cell-val" style="color: #f59e0b;">{res5['stop_loss']:.2f} 元</div>
-                <div class="cell-sub">單筆風險 R: {res5['r_val']:.2f} 元</div>
+                <div class="cell-sub">停損風險: {res5['r_val']:.2f} 元 (-{pct_stop_5m:.1f}%)</div>
             </div>
             <div class="grid-cell">
-                <div class="cell-label">等距目標 (1R / 2R)</div>
-                <div class="cell-val" style="color: #38bdf8;">{res5['target_1r']:.2f} / {res5['target_2r']:.2f}</div>
-                <div class="cell-sub">勝率期望值達標位</div>
+                <div class="cell-label">目標一價位 (1R 等距達標)</div>
+                <div class="cell-val" style="color: #38bdf8;">{res5['target_1r']:.2f} 元</div>
+                <div class="cell-sub">預期幅: +{pct_1r_5m:.1f}% (達標可設保本)</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">目標二價位 (2R 擴展獲利)</div>
+                <div class="cell-val" style="color: #4ade80;">{res5['target_2r']:.2f} 元</div>
+                <div class="cell-sub">預期幅: +{pct_2r_5m:.1f}% (波段獲利滿足)</div>
             </div>
         </div>
         <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px; border-left: 3px solid {res5.get('whale_color', '#94a3b8')};">
@@ -759,32 +763,42 @@ if bpa_res['always_in_code'] == 'AIL':
     strat_desc = "順應 20 EMA 多頭架構，拉回尋找 H1/H2 買點，或以突破掛單進場"
     strat_color = "#10b981"
     entry_lbl = f"突破買進 {bpa_res['buy_stop']:.2f} 元"
-    stop_lbl = f"跌破停損 {bpa_res['sell_stop']:.2f} 元"
-    target_lbl = f"{bpa_res['target_long_1r']:.2f} 元"
+    stop_lbl = f"跌破停損 {bpa_res['sell_stop']:.2f} 元 (風險 {bpa_res['risk_long']:.2f} 元)"
+    t1_val = bpa_res['target_long_1r']
+    t2_val = bpa_res['target_long_2r']
+    t1_lbl = f"{t1_val:.2f} 元 (預期 +{(t1_val - close_now) / close_now * 100:+.1f}%)"
+    t2_lbl = f"{t2_val:.2f} 元 (預期 +{(t2_val - close_now) / close_now * 100:+.1f}%)"
 elif bpa_res['always_in_code'] == 'AIS':
     strat_title = "空方主導策略 ── 順勢偏空操作"
     strat_desc = "反彈尋找 L1/L2 空點，持股者逢高調節，空方設跌破放空單順勢佈局"
     strat_color = "#ef4444"
     entry_lbl = f"跌破放空 {bpa_res['sell_stop']:.2f} 元"
-    stop_lbl = f"突破停損 {bpa_res['buy_stop']:.2f} 元"
-    target_lbl = f"{bpa_res['target_short_1r']:.2f} 元"
+    stop_lbl = f"突破停損 {bpa_res['buy_stop']:.2f} 元 (風險 {bpa_res['risk_short']:.2f} 元)"
+    t1_val = bpa_res['target_short_1r']
+    t2_val = bpa_res['target_short_2r']
+    t1_lbl = f"{t1_val:.2f} 元 (預期 {(t1_val - close_now) / close_now * 100:+.1f}%)"
+    t2_lbl = f"{t2_val:.2f} 元 (預期 {(t2_val - close_now) / close_now * 100:+.1f}%)"
 else:
     strat_title = "區間震盪策略 ── 80% 突破失敗法則"
     strat_desc = f"遵守低買高賣短沖原則：接近支撐 S1/S2（{sr['s1']:.2f} / {sr['s2']:.2f} 元）低接，接近壓力 R1/R2（{sr['r1']:.2f} / {sr['r2']:.2f} 元）調節，嚴禁於箱型中間盲目追價，防範鐵絲網多空雙巴"
     strat_color = "#f59e0b"
     entry_lbl = f"支撐區逢低買進 {sr['s1']:.2f} 元"
     stop_lbl = f"跌破防守停損 {sr['stop_loss']:.2f} 元"
-    target_lbl = f"{sr['r1']:.2f} 元"
+    t1_val = (sr['r1'] + sr['s1']) / 2
+    t2_val = sr['r1']
+    t1_lbl = f"{t1_val:.2f} 元 (箱型中軸)"
+    t2_lbl = f"{t2_val:.2f} 元 (箱型壓力)"
 
 st.markdown(f"""
 <div class="order-box" style="border-left-color: {strat_color};">
     <div style="font-weight: 700; color: {strat_color}; margin-bottom: 4px;">{strat_title}</div>
     <div style="font-size: 0.88rem; color: #cbd5e1; margin-bottom: 8px;">{strat_desc}</div>
-    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; font-size: 0.82rem; background: rgba(0,0,0,0.25); padding: 8px; border-radius: 6px;">
-        <div><b>訊號棒極值：</b>高 {bpa_res['sig_high']:.2f} / 低 {bpa_res['sig_low']:.2f}</div>
-        <div><b>進場參考價：</b>{entry_lbl}</div>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; font-size: 0.82rem; background: rgba(0,0,0,0.25); padding: 10px; border-radius: 6px;">
+        <div><b>訊號棒區間：</b>高 {bpa_res['sig_high']:.2f} / 低 {bpa_res['sig_low']:.2f}</div>
+        <div><b>進場掛單價：</b>{entry_lbl}</div>
         <div><b>防守停損價：</b>{stop_lbl}</div>
-        <div><b>等距目標價：</b>{target_lbl}</div>
+        <div><b>目標一價位 (1R等距)：</b><span style="color: #38bdf8; font-weight: 700;">{t1_lbl}</span></div>
+        <div><b>目標二價位 (2R擴展)：</b><span style="color: #4ade80; font-weight: 700;">{t2_lbl}</span></div>
     </div>
 </div>
 """, unsafe_allow_html=True)
