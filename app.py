@@ -18,7 +18,7 @@ import numpy as np
 from datetime import datetime
 
 try:
-    from kline import analyze_stock, get_info, __version__
+    from kline import analyze_stock, analyze_stock_5m, get_info, __version__
 except Exception as e:
     import streamlit as st
     st.error(f"❌ 模組載入錯誤 (Import Error): {e}")
@@ -147,6 +147,10 @@ def _get_cache_ttl():
 def get_cached_analysis(ticker, months, cost, version=__version__):
     return analyze_stock(ticker=ticker, months=months, cost=cost, generate_html=False, print_report=False)
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_5m(ticker, days=3, version=__version__):
+    return analyze_stock_5m(ticker=ticker, days=days)
+
 # ── 3. 頂部導覽與股票選擇區 ──────────────────────────────────
 st.markdown(f"### ⚡ 台股 Al Brooks BPA 價格行為研判 <span style='font-size: 0.8rem; color: #94a3b8; font-weight: normal;'>v{__version__}</span>", unsafe_allow_html=True)
 
@@ -188,7 +192,128 @@ with st.expander("⚙️ 搜尋股票與自訂參數", expanded=False):
 
 current_ticker = st.session_state["ticker_input"]
 
-# ── 4. 執行研判與展示 ──────────────────────────────────────
+# 時間週期切換膠囊
+timeframe_mode = st.radio(
+    "時間週期選擇",
+    options=["📅 日K（波段多維體質與趨勢）", "⚡ 5分K（日內當沖與轉折點位）"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
+    # ── 4. 5分K 日內價格行為分析 ──────────────────────────────
+    try:
+        with st.spinner(f"正在分析 {current_ticker} 5 分鐘 K 線與 BPA 日內轉折..."):
+            res5 = get_cached_5m(current_ticker, days=3, version=__version__)
+    except Exception as e:
+        st.error(f"⚠️ 無法取得股票代號【{current_ticker}】的 5 分鐘 K 線資料：{e}")
+        st.stop()
+
+    stock_name_5m = res5["stock_name"]
+    market_txt_5m = "上市 (TSE)" if res5["market"] == "tse" else "上櫃 (OTC)"
+
+    st.markdown(f"""
+    <div style="background: rgba(99, 102, 241, 0.12); border: 1px solid rgba(99, 102, 241, 0.3); color: #a5b4fc; padding: 7px 14px; border-radius: 6px; font-size: 0.82rem; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+        <span>⚡ <b>5 分鐘 K 線 Al Brooks 日內價格行為研判</b>（{stock_name_5m} {current_ticker} | {market_txt_5m}）</span>
+        <span style="font-size: 0.74rem; color: #cbd5e1; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">資料時間：{res5['data_time_str']}（盤中延遲約15分）</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 4 關鍵 5分K 指標橫幅
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">5m BPA 市場狀態</div>
+            <div class="metric-value" style="color: {res5['bpa_status_color']}; font-size: 1.02rem;">{res5['bpa_status'].split('（')[0]}</div>
+            <div class="metric-sub">{res5['bpa_status'].split('（')[1].replace('）','')}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with k2:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">5m 20 EMA 基準</div>
+            <div class="metric-value">{res5['ema_now']:.2f} 元</div>
+            <div class="metric-sub">乖離 {res5['ema_bias']:+.2f} ({res5['ema_bias_pct']:+.1f}%)</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with k3:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">今日高低振幅</div>
+            <div class="metric-value">{res5['range_today']:.2f} 元</div>
+            <div class="metric-sub">高 {res5['high_today']:.1f} / 低 {res5['low_today']:.1f}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with k4:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-title">當前 5分K 結構</div>
+            <div class="metric-value" style="font-size: 0.98rem;">{res5['last_bar_type'].split('(')[0].strip()}</div>
+            <div class="metric-sub">現價 {res5['close_now']:.2f} 元</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 5m 專屬風控掛單指引卡
+    st.markdown(f"""
+    <div class="dashboard-card" style="border-left: 4px solid {res5['bpa_status_color']};">
+        <div class="card-header">
+            <span class="card-title">⚡ Al Brooks 5 分 K 日內風控與掛單指引 (Intraday Order Box)</span>
+            <span class="pill-badge" style="background: {res5['bpa_bg']}; color: {res5['bpa_status_color']};">{res5['bpa_status'].split('（')[0]}</span>
+        </div>
+        <div class="grid-4">
+            <div class="grid-cell">
+                <div class="cell-label">突破買進 (Buy Stop)</div>
+                <div class="cell-val" style="color: #ef4444;">{res5['buy_stop']:.2f} 元</div>
+                <div class="cell-sub">前棒高點 +1 Tick</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">跌破放空 (Sell Stop)</div>
+                <div class="cell-val" style="color: #22c55e;">{res5['sell_stop']:.2f} 元</div>
+                <div class="cell-sub">前棒低點 -1 Tick</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">順勢防守停損 (Stop)</div>
+                <div class="cell-val" style="color: #f59e0b;">{res5['stop_loss']:.2f} 元</div>
+                <div class="cell-sub">單筆風險 R: {res5['r_val']:.2f} 元</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">等距目標 (1R / 2R)</div>
+                <div class="cell-val" style="color: #38bdf8;">{res5['target_1r']:.2f} / {res5['target_2r']:.2f}</div>
+                <div class="cell-sub">勝率期望值達標位</div>
+            </div>
+        </div>
+        <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px;">
+            <b>🎯 日內操盤指引：</b>{res5['bpa_guide']}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # 5m 互動圖表
+    with st.expander("📈 展開 5 分鐘 K 線互動圖表（含 20 EMA、今日開盤價與高低點）", expanded=True):
+        st.plotly_chart(res5["fig"], use_container_width=True)
+
+    # 日內 3 大 BPA 紀律提醒
+    st.markdown("""
+    <div style="font-size: 0.78rem; color: #94a3b8; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); padding: 10px 14px; border-radius: 6px; margin-top: 10px; line-height: 1.6;">
+        💡 <b>Al Brooks 5分K 實戰心法：</b><br>
+        1. <b>早盤定調（09:00~10:30）</b>：觀察開盤前 18 根 K 線是否形成單邊強趨勢或寬幅震盪，確認 Always-In 多空主控權。<br>
+        2. <b>順勢回測（M2B / M2S）</b>：強趨勢中首次回踩 20 EMA 出現反轉棒，為賺賠比極佳之順勢切入點，嚴禁逆勢摸頂猜底。<br>
+        3. <b>Tick 級硬停損</b>：停損嚴設於信號棒外 1 個 Tick，觸及即嚴格停損離場，虧損嚴格鎖定於 1R，絕不扛單。
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div style="text-align: center; color: #64748b; font-size: 0.76rem; margin-top: 2rem; padding: 14px 0; border-top: 1px solid rgba(255,255,255,0.06);">
+        台股 BPA 價格行為量化研判系統 <b>v{__version__}</b> ｜ 遵循 SemVer 語意化版本管理規範 ｜ Git Tag 發布管理
+    </div>
+    """, unsafe_allow_html=True)
+    st.stop()
+
+# ── 4. 日K 執行研判與展示（原既有邏輯） ────────────────────
 try:
     with st.spinner(f"正在分析 {current_ticker} BPA 價格行為與位階..."):
         res = get_cached_analysis(current_ticker, months_opt, cost_val, version=__version__)
