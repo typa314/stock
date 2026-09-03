@@ -1764,11 +1764,59 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         action_sub_5m = "日內箱型均線糾結，高出低進或暫不開倉"
         action_color_5m = "#fbbf24"
 
+    # 5m 20MA 成交量均線與主力爆量異動檢測
+    df["vol_ma20"] = df["volume"].rolling(20, min_periods=1).mean()
+    vol_now = float(df["volume"].iloc[-1])
+    vol_ma20_5m = float(df["vol_ma20"].iloc[-1])
+    vol_ratio_5m = round(vol_now / (vol_ma20_5m + 1e-9), 1)
+
+    is_above_ema = close_now > ema_now
+    is_bull_bar = bar_c > bar_o
+    lower_sh = min(bar_c, bar_o) - bar_l
+    upper_sh = bar_h - max(bar_c, bar_o)
+
+    if vol_ratio_5m >= 1.8:
+        if is_above_ema and slope > 0 and is_bull_bar and body / rng >= 0.5:
+            whale_tag = "⚡ 主力放量推升"
+            whale_color = "#38bdf8"
+            whale_bg = "rgba(56, 189, 248, 0.16)"
+            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍（大單點火推升）。衝刺動能強勁但切忌盲目追高，靜待拉回 20 EMA 守穩再行介入。"
+        elif not is_above_ema and is_bull_bar and body / rng >= 0.5:
+            whale_tag = "⚠️ 空方反彈誘多"
+            whale_color = "#fbbf24"
+            whale_bg = "rgba(245, 158, 11, 0.16)"
+            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍，但受制於 5m 20 EMA 反壓。統計上 70% 易受阻回落，嚴防假突破，切勿盲目搶反彈。"
+        elif not is_above_ema and not is_bull_bar and body / rng >= 0.5:
+            whale_tag = "🚨 主力爆量摜壓"
+            whale_color = "#ef4444"
+            whale_bg = "rgba(239, 68, 68, 0.16)"
+            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍且長黑破線。大單出貨或停損殺盤出籠，跌破均線防守，嚴格落實風控停損。"
+        elif (lower_sh / rng >= 0.45) and (abs(bar_l - ema_now) / (ema_now + 1e-9) < 0.008 or (not df_today.empty and bar_l <= df_today["low"].min())):
+            whale_tag = "🔨 主力爆量護盤"
+            whale_color = "#22c55e"
+            whale_bg = "rgba(34, 197, 94, 0.16)"
+            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍，回踩支撐留下顯著長下影線，顯示主力在低檔積極承接，守穩可留意反彈。"
+        elif upper_sh / rng >= 0.4 or body / rng <= 0.25:
+            whale_tag = "⚠️ 爆量高檔滯漲"
+            whale_color = "#f59e0b"
+            whale_bg = "rgba(245, 158, 11, 0.16)"
+            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍，但衝高受阻留下長上影線或窄實體，顯示主力高檔逢高調節，短線提防換手拉回。"
+        else:
+            whale_tag = f"⚡ 主力爆量異動 ({vol_ratio_5m}倍量)"
+            whale_color = "#a855f7"
+            whale_bg = "rgba(168, 85, 247, 0.16)"
+            whale_advice = f"當前 5 分K 爆出 5m 均量的 {vol_ratio_5m} 倍巨量，多空交火劇烈，密切關注能否守穩 20 EMA。"
+    else:
+        whale_tag = "⚪ 常態量能流動"
+        whale_color = "#94a3b8"
+        whale_bg = "rgba(148, 163, 184, 0.12)"
+        whale_advice = f"當前 5 分K 成交量為 5m 均量的 {vol_ratio_5m} 倍，量能處於常態合理區間，無失控或突發大單異動。"
+
     # 繪製 Plotly 5 分K 互動圖表
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True,
         row_heights=[0.75, 0.25], vertical_spacing=0.03,
-        subplot_titles=[f"{stock_name} ({ticker}) 5 分鐘 K 線 + 20 EMA", "5 分鐘成交量（張）"]
+        subplot_titles=[f"{stock_name} ({ticker}) 5 分鐘 K 線 + 20 EMA", "5 分鐘成交量與主力爆量標記（張）"]
     )
 
     fig.add_trace(go.Candlestick(
@@ -1794,11 +1842,27 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         fig.add_hline(y=low_today, line_dash="dot", line_color="#22c55e", row=1, col=1,
                       annotation_text=f"今日最低 {low_today}", annotation_position="bottom right", annotation_font_size=10)
 
-    # 成交量
-    vol_colors = ["#ef4444" if df["close"].iloc[i] >= df["open"].iloc[i] else "#22c55e" for i in range(len(df))]
+    # 成交量副圖（爆量 >= 1.8x 特殊高亮標記）
+    vol_colors = []
+    for i in range(len(df)):
+        v = df["volume"].iloc[i]
+        v_ma = df["vol_ma20"].iloc[i]
+        c_i = df["close"].iloc[i]
+        o_i = df["open"].iloc[i]
+        if v >= 1.8 * v_ma:
+            vol_colors.append("#38bdf8" if c_i >= o_i else "#f43f5e") # 爆量高亮 (藍色/桃紅)
+        else:
+            vol_colors.append("#ef4444" if c_i >= o_i else "#22c55e")
+
     fig.add_trace(go.Bar(
         x=df["date"], y=df["volume"],
         marker_color=vol_colors, name="成交量"
+    ), row=2, col=1)
+
+    fig.add_trace(go.Scatter(
+        x=df["date"], y=df["vol_ma20"],
+        line=dict(color="#f59e0b", width=1.5),
+        name="20均量"
     ), row=2, col=1)
 
     fig.update_layout(
@@ -1846,6 +1910,13 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         "action_tag": action_tag_5m,
         "action_sub": action_sub_5m,
         "action_color": action_color_5m,
+        "whale_tag": whale_tag,
+        "whale_color": whale_color,
+        "whale_bg": whale_bg,
+        "whale_advice": whale_advice,
+        "vol_now": vol_now,
+        "vol_ma20_5m": vol_ma20_5m,
+        "vol_ratio_5m": vol_ratio_5m,
         "data_time_str": data_time_str
     }
 
