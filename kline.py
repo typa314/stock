@@ -200,51 +200,86 @@ def fetch_realtime_bar(ticker, market):
 
     return None
 
-# ── 4. 三大法人資料（近5個交易日，僅上市TSE） ──────────────────
+# ── 4. 三大法人資料（近5個交易日，支援上市TSE與上櫃OTC） ───────────
+def fetch_inst_finmind(ticker, days=5):
+    """自 FinMind 取得近 N 日三大法人買賣超（支援上市 TSE 與上櫃 OTC，免 Token，防機房 IP 阻擋）"""
+    start = (datetime.now() - relativedelta(days=days * 3)).strftime("%Y-%m-%d")
+    url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={ticker}&start_date={start}"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=6)
+        if r.status_code == 200:
+            data = r.json().get("data", [])
+            if data:
+                df = pd.DataFrame(data)
+                df["net"] = (df["buy"] - df["sell"]) / 1000.0
+                pivot = df.pivot_table(index="date", columns="name", values="net", aggfunc="sum").fillna(0)
+                fini = pivot.get("Foreign_Investor", 0)
+                if "Foreign_Dealer_Self" in pivot.columns:
+                    fini = fini + pivot["Foreign_Dealer_Self"]
+                trust = pivot.get("Investment_Trust", 0)
+                dealer = pd.Series(0.0, index=pivot.index)
+                if "Dealer_self" in pivot.columns:
+                    dealer = dealer + pivot["Dealer_self"]
+                if "Dealer_Hedging" in pivot.columns:
+                    dealer = dealer + pivot["Dealer_Hedging"]
+                total = fini + trust + dealer
+                res_df = pd.DataFrame({
+                    "date": pd.to_datetime(pivot.index.values),
+                    "fini": fini.round().astype(int).values,
+                    "trust": trust.round().astype(int).values,
+                    "dealer": dealer.round().astype(int).values,
+                    "total": total.round().astype(int).values
+                }).sort_values("date").tail(days).reset_index(drop=True)
+                return res_df
+    except Exception:
+        pass
+    return pd.DataFrame()
+
 def fetch_institutional(ticker, market, days=5):
-    if market != "tse":
-        return pd.DataFrame()
+    # ── 第一軌：FinMind 快速接口（涵蓋上市 TSE 與上櫃 OTC，免 Token，防機房阻擋，0.3秒極速） ──
+    df_fm = fetch_inst_finmind(ticker, days=days)
+    if not df_fm.empty:
+        return df_fm
 
-    records = []
-    d = datetime.now()
-    # 證交所三大法人買賣超 (T86) 於每日收盤後（約 14:30~15:00）才進行統計結算公告。
-    # 盤中交易時段（< 15:00）無當日法人資料，直接自前一交易日開始抓取，避免發出無效請求降低延遲
-    if d.hour < 15:
-        d -= relativedelta(days=1)
-
-    fetched = 0
-    attempts = 0
-    while fetched < days and attempts < days * 2:
-        attempts += 1
-        if d.weekday() >= 5:
+    # ── 第二軌：TWSE 官方 T86 備援（僅上市 TSE） ──
+    if market == "tse":
+        records = []
+        d = datetime.now()
+        if d.hour < 15:
             d -= relativedelta(days=1)
-            continue
-        date_str = d.strftime("%Y%m%d")
-        try:
-            r = requests.get("https://www.twse.com.tw/rwd/zh/fund/T86",
-                params={"date": date_str, "response": "json", "selectType": "ALL"},
-                headers=HEADERS, timeout=10)
-            data = r.json()
-            for row in data.get("data", []):
-                if row[0].strip() == ticker:
-                    records.append({
-                        "date":   pd.to_datetime(date_str, format="%Y%m%d"),
-                        "fini":   int(row[4].replace(",",""))  // 1000,
-                        "trust":  int(row[10].replace(",","")) // 1000,
-                        "dealer": int(row[11].replace(",","")) // 1000,
-                        "total":  int(row[18].replace(",","")) // 1000,
-                    })
-                    fetched += 1
-                    break
-        except Exception:
-            pass
-        time.sleep(0.3)
-        d -= relativedelta(days=1)
+        fetched = 0
+        attempts = 0
+        while fetched < days and attempts < days * 2:
+            attempts += 1
+            if d.weekday() >= 5:
+                d -= relativedelta(days=1)
+                continue
+            date_str = d.strftime("%Y%m%d")
+            try:
+                r = requests.get("https://www.twse.com.tw/rwd/zh/fund/T86",
+                    params={"date": date_str, "response": "json", "selectType": "ALL"},
+                    headers=HEADERS, timeout=8)
+                data = r.json()
+                for row in data.get("data", []):
+                    if row[0].strip() == ticker:
+                        records.append({
+                            "date":   pd.to_datetime(date_str, format="%Y%m%d"),
+                            "fini":   int(round(float(row[4].replace(",","")) / 1000)),
+                            "trust":  int(round(float(row[10].replace(",","")) / 1000)),
+                            "dealer": int(round(float(row[11].replace(",","")) / 1000)),
+                            "total":  int(round(float(row[18].replace(",","")) / 1000)),
+                        })
+                        fetched += 1
+                        break
+            except Exception:
+                pass
+            time.sleep(0.3)
+            d -= relativedelta(days=1)
 
-    if not records:
-        return pd.DataFrame()
-    inst = pd.DataFrame(records).sort_values("date").reset_index(drop=True)
-    return inst
+        if records:
+            return pd.DataFrame(records).sort_values("date").reset_index(drop=True)
+
+    return pd.DataFrame()
 
 # ── 5. Al Brooks 價格行為學（BPA）核心與多維量化 ──────────────
 def get_tw_tick(price):
