@@ -195,7 +195,7 @@ def test_static_code_quality():
     from pyflakes.api import checkPath
     from pyflakes.reporter import Reporter
 
-    checked_files = ["app.py", "kline.py", "test_kline_logic.py"]
+    checked_files = ["app.py", "devapp.py", "kline.py", "test_kline_logic.py"]
     for filename in checked_files:
         stdout = io.StringIO()
         stderr = io.StringIO()

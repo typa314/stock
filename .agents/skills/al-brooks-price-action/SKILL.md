@@ -176,3 +176,7 @@ $$\text{Tick}(P) = \begin{cases}
      python -X utf8 test_kline_logic.py
      ```
    - 必須確認第 6 項測試 `Static Code Quality & Zero-Undefined-Variable Validation` 為 `[PASS]` 始可提交。
+5. **雙軌環境隔離與上線審核流程（Dev-to-Prod Workflow）**：
+   - **`devapp.py`（開發與驗證環境）**：所有新 UI 功能、圖卡調整、實驗性指標研發與版面改動，一律優先在 `devapp.py` 進行開發與測試。
+   - **確認無誤始得推產**：與使用者共同確認 `devapp.py` 運行正常且零錯誤、無 UI 崩潰後，方可將穩定代碼同步晉級覆蓋至正式版 `app.py`。
+   - **杜絕影響線上正式使用者**：Streamlit Cloud 生產環境僅追蹤穩定的 `app.py`，未經驗證的半成品或實驗中代碼嚴禁直接寫入 `app.py`。
