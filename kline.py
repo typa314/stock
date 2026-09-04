@@ -491,48 +491,80 @@ def evaluate_brooks_price_action(df):
     # 7.2.1 多方設定（僅在 AIL 多頭環境 或 TR 區間下半部守穩時採納）
     if always_in_code == "AIL" or (always_in_code == "TR" and c <= mid_bb):
         if df["bpa_h2"].tail(3).any():
-            recent_signals.append("觸發 High 2 (H2) 雙重推動回踩買點🔥（Al Brooks 最推崇順勢高勝率設定）")
+            idx_list = df.index[df["bpa_h2"]].tolist()
+            last_idx = idx_list[-1] if idx_list else len(df) - 1
+            prev_h = float(df["high"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["high"].iloc[last_idx])
+            tick_val = get_tw_tick(float(df["close"].iloc[last_idx - 1])) if last_idx >= 1 else 0.5
+            trig_p = prev_h + tick_val
+            recent_signals.append(f"觸發 High 2 (H2) 雙重推動買點🔥（突破價位: {trig_p:.2f} 元，前高: {prev_h:.2f} 元）")
             bpa_extra_score += 2
         elif df["bpa_h1"].tail(3).any():
-            recent_signals.append("觸發 High 1 (H1) 初次推動過前高（順勢多方初探）")
+            idx_list = df.index[df["bpa_h1"]].tolist()
+            last_idx = idx_list[-1] if idx_list else len(df) - 1
+            prev_h = float(df["high"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["high"].iloc[last_idx])
+            tick_val = get_tw_tick(float(df["close"].iloc[last_idx - 1])) if last_idx >= 1 else 0.5
+            trig_p = prev_h + tick_val
+            recent_signals.append(f"觸發 High 1 (H1) 初次推動過前高（突破價位: {trig_p:.2f} 元，前高: {prev_h:.2f} 元）")
             bpa_extra_score += 1
         elif df["bpa_h3"].tail(3).any():
-            recent_signals.append("觸發 High 3 (H3 / 楔形多頭旗形 Wedge Bull Flag)")
+            idx_list = df.index[df["bpa_h3"]].tolist()
+            last_idx = idx_list[-1] if idx_list else len(df) - 1
+            prev_h = float(df["high"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["high"].iloc[last_idx])
+            tick_val = get_tw_tick(float(df["close"].iloc[last_idx - 1])) if last_idx >= 1 else 0.5
+            trig_p = prev_h + tick_val
+            recent_signals.append(f"觸發 High 3 (H3) 楔形多頭旗形突破（突破價位: {trig_p:.2f} 元）")
             bpa_extra_score += 1
             
         if df["bpa_ema_pb"].tail(2).any():
-            recent_signals.append("20 EMA 動態支撐回測確認（20 EMA Pullback 順勢買點）")
+            recent_signals.append(f"20 EMA 動態支撐回測確認（支撐價: {ema_v:.2f} 元，順勢買點）")
             bpa_extra_score += 1
             
         if df["bpa_bull_gap"].tail(2).any():
-            recent_signals.append("出現多頭 20 EMA 乖離缺口棒（Bull Gap Bar：通常引發終極測頂，但也是趨勢老化/MTR反轉警訊）⚠️")
+            recent_signals.append(f"出現多頭 20 EMA 乖離缺口棒（當前乖離率: +{(c-ema_v)/ema_v*100:.1f}%，留意高檔測頂反轉）⚠️")
             bpa_extra_score += 1
             
     # 7.2.2 空方設定（僅在 AIS 空頭環境 或 TR 區間上半部受阻時採納）
     if always_in_code == "AIS" or (always_in_code == "TR" and c >= mid_bb):
         if df["bpa_l2"].tail(3).any():
-            recent_signals.append("觸發 Low 2 (L2) 雙重反彈逢高空點⚠️（Al Brooks 經典空方高勝率設定）")
+            idx_list = df.index[df["bpa_l2"]].tolist()
+            last_idx = idx_list[-1] if idx_list else len(df) - 1
+            prev_l = float(df["low"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["low"].iloc[last_idx])
+            tick_val = get_tw_tick(float(df["close"].iloc[last_idx - 1])) if last_idx >= 1 else 0.5
+            trig_p = prev_l - tick_val
+            recent_signals.append(f"觸發 Low 2 (L2) 雙重反彈逢高空點⚠️（跌破價位: {trig_p:.2f} 元，前低: {prev_l:.2f} 元）")
             bpa_extra_score -= 2
         elif df["bpa_l1"].tail(3).any():
-            recent_signals.append("觸發 Low 1 (L1) 初次反彈破前低（空方重新摜壓）")
+            idx_list = df.index[df["bpa_l1"]].tolist()
+            last_idx = idx_list[-1] if idx_list else len(df) - 1
+            prev_l = float(df["low"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["low"].iloc[last_idx])
+            tick_val = get_tw_tick(float(df["close"].iloc[last_idx - 1])) if last_idx >= 1 else 0.5
+            trig_p = prev_l - tick_val
+            recent_signals.append(f"觸發 Low 1 (L1) 初次反彈破前低（跌破價位: {trig_p:.2f} 元，前低: {prev_l:.2f} 元）")
             bpa_extra_score -= 1
         elif df["bpa_l3"].tail(3).any():
-            recent_signals.append("觸發 Low 3 (L3 / 楔形空頭旗形 Wedge Bear Flag)")
+            idx_list = df.index[df["bpa_l3"]].tolist()
+            last_idx = idx_list[-1] if idx_list else len(df) - 1
+            prev_l = float(df["low"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["low"].iloc[last_idx])
+            tick_val = get_tw_tick(float(df["close"].iloc[last_idx - 1])) if last_idx >= 1 else 0.5
+            trig_p = prev_l - tick_val
+            recent_signals.append(f"觸發 Low 3 (L3) 楔形空頭旗形跌破（跌破價位: {trig_p:.2f} 元）")
             bpa_extra_score -= 1
             
         if df["bpa_ema_pb"].tail(2).any() and always_in_code == "AIS":
-            recent_signals.append("20 EMA 動態壓力回測確認（20 EMA Pullback 順勢空點）")
+            recent_signals.append(f"20 EMA 動態壓力回測確認（反壓價: {ema_v:.2f} 元，順勢放空點）")
             bpa_extra_score -= 1
             
         if df["bpa_bear_gap"].tail(2).any():
-            recent_signals.append("出現空頭 20 EMA 乖離缺口棒（Bear Gap Bar：通常引發終極測底，但也是空方動能耗竭警訊）⚠️")
+            recent_signals.append(f"出現空頭 20 EMA 乖離缺口棒（當前負乖離: {(c-ema_v)/ema_v*100:.1f}%，留意動能竭盡反彈）⚠️")
             bpa_extra_score -= 1
 
     # 7.2.3 中性結構（形態壓縮與混亂區）
     if df["double_inside"].tail(2).any():
-        recent_signals.append("出現雙重孕線（ii Breakout Mode，動能極度壓縮即將變盤噴發）⚑")
+        recent_signals.append(f"出現雙重孕線（ii 壓縮區間: {df['low'].iloc[-1]:.2f} ~ {df['high'].iloc[-1]:.2f} 元，變盤在即）⚑")
     if is_ttr:
-        recent_signals.append("陷入 TTR 鐵絲網窄幅交疊（多空雙巴，80% 突破失敗率，嚴禁追價）⛔")
+        ttr_l = df['low'].tail(5).min()
+        ttr_h = df['high'].tail(5).max()
+        recent_signals.append(f"陷入 TTR 窄幅震盪整理（區間: {ttr_l:.2f} ~ {ttr_h:.2f} 元，突破易失敗，嚴禁追價）⛔")
         bpa_extra_score -= 1
         
     # 7.3 最新訊號棒（Signal Bar）與掛單風控價位
@@ -947,22 +979,22 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         badge = "⭐⭐⭐⭐⭐ 頂級飆股體質（Stage 2 主升）"
         b_color = "#4ade80"
         b_bg = "rgba(34, 197, 94, 0.2)"
-        summary_advice = "長中短均線呈多頭排列，基本面盈餘與營收高成長，順應 20 EMA 拉回守穩皆為絕佳順勢佈局點。"
+        summary_advice = "多頭排列且基本面強勁，順應 20 EMA 拉回守穩順勢佈局。"
     elif total_score >= 65:
         badge = "⭐⭐⭐⭐ 優質多頭（穩健推升中）"
         b_color = "#60a5fa"
         b_bg = "rgba(59, 130, 246, 0.2)"
-        summary_advice = "中期架構偏多且守穩關鍵支撐，基本面具支撐力道，持股者續抱，空手者尋找量縮回踩點分批佈局。"
+        summary_advice = "中期架構偏多且守穩支撐，持股續抱，空手者待回測守穩分批佈局。"
     elif total_score >= 45:
         badge = "⭐⭐⭐ 區間震盪（待動能表態）"
         b_color = "#fbbf24"
         b_bg = "rgba(245, 158, 11, 0.2)"
-        summary_advice = "短線處於箱型整理或均線糾結階段，突破前切忌追價，嚴格遵守低買高賣或靜待帶量表態。"
+        summary_advice = "箱型整理均線糾結，突破前暫勿追價，低買高賣或靜待帶量表態。"
     else:
         badge = "⚠️ 空頭承壓（弱勢修正中）"
         b_color = "#f87171"
         b_bg = "rgba(239, 68, 68, 0.2)"
-        summary_advice = "跌破中長期均線或基本面動能放緩，空方主導格局，嚴禁盲目猜底接刀，持股者逢反彈宜嚴格風控。"
+        summary_advice = "跌破中長期均線，空方主導，持股逢反彈嚴格風控，嚴禁盲目猜底。"
 
     # 5. 核心操盤動作決策（建議買入 / 建議持有 / 建議觀望 / 建議賣出）
     if total_score >= 75 and ("多" in bpa_zh or "主升" in badge):
@@ -971,28 +1003,28 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         action_color = "#22c55e"
         action_bg = "rgba(34, 197, 94, 0.18)"
         action_border = "#22c55e"
-        action_sub = "強烈主升動能，逢 20 EMA 支撐拉回或放量突破為高勝率買點"
+        action_sub = "主升動能強勁，逢 20 EMA 拉回守穩或放量突破順勢買進"
     elif total_score >= 60 and "空" not in bpa_zh:
         action_tag = "🟡 建議持有"
         action_type = "HOLD"
         action_color = "#38bdf8"
         action_bg = "rgba(56, 189, 248, 0.18)"
         action_border = "#38bdf8"
-        action_sub = "多頭架構穩健守穩支撐，持股續抱享受利潤；空手者尋找回踩點分批佈局"
+        action_sub = "多頭結構穩健，持股續抱；空手者待回測 20 EMA 分批佈局"
     elif total_score >= 45:
         action_tag = "🟡 建議觀望"
         action_type = "WAIT"
         action_color = "#fbbf24"
         action_bg = "rgba(245, 158, 11, 0.18)"
         action_border = "#fbbf24"
-        action_sub = "處於箱型震盪或打底整理階段，多空不明，空手者切忌追高，靜待帶量表態"
+        action_sub = "箱型震盪打底，多空未明，暫勿追價，靜待帶量表態"
     else:
         action_tag = "🔴 建議賣出"
         action_type = "SELL"
         action_color = "#ef4444"
         action_bg = "rgba(239, 68, 68, 0.18)"
         action_border = "#ef4444"
-        action_sub = "跌破關鍵均線或防守停損線，空方主導，持股者逢反彈宜嚴格減碼，切勿盲目接刀"
+        action_sub = "跌破關鍵防守線，空方主控，持股逢反彈減碼，嚴禁接刀"
 
     return {
         "score": total_score,
@@ -1734,21 +1766,43 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
     else:
         bar_type = "⚪ 普通震盪棒 (Trading Bar)"
 
-    # 台股 Tick 級風控與掛單建議
+    # 台股 Tick 級風控與掛單建議（結合真實波幅與防噪音緩衝）
     tick = get_tw_tick(close_now)
     buy_stop = round(bar_h + tick, 2)
     sell_stop = round(bar_l - tick, 2)
+    
+    # 計算防隨機雜訊掃停損的最小合理緩衝（至少 2 個 Tick 或 0.5%）
+    min_buffer = max(2 * tick, round(close_now * 0.005, 2))
 
     if "多" in bpa_status:
-        stop_loss = round(bar_l - tick, 2)
-        r_val = round(max(tick, close_now - stop_loss), 2)
+        # 多方防守停損：設於信號棒低點下方，並確保至少有防洗盤緩衝
+        raw_stop = bar_l - tick
+        stop_loss = round(min(raw_stop, close_now - min_buffer), 2)
+        r_val = round(max(min_buffer, close_now - stop_loss), 2)
         target_1r = round(close_now + r_val, 2)
         target_2r = round(close_now + 2 * r_val, 2)
-    else:
-        stop_loss = round(bar_h + tick, 2)
-        r_val = round(max(tick, stop_loss - close_now), 2)
+        stop_type = "做多防守停損 (跌破下方認賠)"
+        stop_direction = "-"
+        entry_type = "突破買進價位 (Buy Stop)"
+    elif "空" in bpa_status:
+        # 空方防守停損：設於信號棒高點上方，並確保至少有防洗盤緩衝
+        raw_stop = bar_h + tick
+        stop_loss = round(max(raw_stop, close_now + min_buffer), 2)
+        r_val = round(max(min_buffer, stop_loss - close_now), 2)
         target_1r = round(close_now - r_val, 2)
         target_2r = round(close_now - 2 * r_val, 2)
+        stop_type = "放空防守停損 (突破上方停損)"
+        stop_direction = "+"
+        entry_type = "跌破放空價位 (Sell Stop)"
+    else:
+        # 震盪整理：以今日低點或前棒低點防守
+        stop_loss = round(close_now - min_buffer, 2)
+        r_val = round(min_buffer, 2)
+        target_1r = round(close_now + r_val, 2)
+        target_2r = round(close_now + 2 * r_val, 2)
+        stop_type = "區間防守停損 (跌破下緣停損)"
+        stop_direction = "-"
+        entry_type = "區間高出低進價位"
 
     # 5m 當沖動作決策
     if "多" in bpa_status:
@@ -1780,37 +1834,37 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
             whale_tag = "⚡ 主力放量推升"
             whale_color = "#38bdf8"
             whale_bg = "rgba(56, 189, 248, 0.16)"
-            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍（大單點火推升）。衝刺動能強勁但切忌盲目追高，靜待拉回 20 EMA 守穩再行介入。"
+            whale_advice = "大單推升動能強勁，切忌追高，靜待回踩 20 EMA 守穩再行介入。"
         elif not is_above_ema and is_bull_bar and body / rng >= 0.5:
             whale_tag = "⚠️ 空方反彈誘多"
             whale_color = "#fbbf24"
             whale_bg = "rgba(245, 158, 11, 0.16)"
-            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍，但受制於 5m 20 EMA 反壓。統計上 70% 易受阻回落，嚴防假突破，切勿盲目搶反彈。"
+            whale_advice = "放量強彈但受制 20 EMA 反壓（承壓率 70%），嚴防假突破，切勿搶反彈。"
         elif not is_above_ema and not is_bull_bar and body / rng >= 0.5:
             whale_tag = "🚨 主力爆量摜壓"
             whale_color = "#ef4444"
             whale_bg = "rgba(239, 68, 68, 0.16)"
-            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍且長黑破線。大單出貨或停損殺盤出籠，跌破均線防守，嚴格落實風控停損。"
+            whale_advice = "大單摜壓長黑破線，空方動能強烈，嚴格落實風控停損。"
         elif (lower_sh / rng >= 0.45) and (abs(bar_l - ema_now) / (ema_now + 1e-9) < 0.008 or (not df_today.empty and bar_l <= df_today["low"].min())):
             whale_tag = "🔨 主力爆量護盤"
             whale_color = "#22c55e"
             whale_bg = "rgba(34, 197, 94, 0.16)"
-            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍，回踩支撐留下顯著長下影線，顯示主力在低檔積極承接，守穩可留意反彈。"
+            whale_advice = "回踩支撐放量收長下影線，主力低檔承接，守穩留意反彈。"
         elif upper_sh / rng >= 0.4 or body / rng <= 0.25:
             whale_tag = "⚠️ 爆量高檔滯漲"
             whale_color = "#f59e0b"
             whale_bg = "rgba(245, 158, 11, 0.16)"
-            whale_advice = f"當前 5 分K 成交量達 5m 均量的 {vol_ratio_5m} 倍，但衝高受阻留下長上影線或窄實體，顯示主力高檔逢高調節，短線提防換手拉回。"
+            whale_advice = "衝高受阻留下長上影線，主力逢高調節分歧，提防換手拉回。"
         else:
             whale_tag = f"⚡ 主力爆量異動 ({vol_ratio_5m}倍量)"
             whale_color = "#a855f7"
             whale_bg = "rgba(168, 85, 247, 0.16)"
-            whale_advice = f"當前 5 分K 爆出 5m 均量的 {vol_ratio_5m} 倍巨量，多空交火劇烈，密切關注能否守穩 20 EMA。"
+            whale_advice = f"爆出 5m 均量 {vol_ratio_5m} 倍巨量，多空劇烈分歧，密切關注 20 EMA 支撐。"
     else:
         whale_tag = "⚪ 常態量能流動"
         whale_color = "#94a3b8"
         whale_bg = "rgba(148, 163, 184, 0.12)"
-        whale_advice = f"當前 5 分K 成交量為 5m 均量的 {vol_ratio_5m} 倍，量能處於常態合理區間，無失控或突發大單異動。"
+        whale_advice = "量能處於常態合理區間，無失控或突發大單異動。"
 
     # 繪製 Plotly 5 分K 互動圖表
     fig = make_subplots(
@@ -1904,6 +1958,9 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         "buy_stop": buy_stop,
         "sell_stop": sell_stop,
         "stop_loss": stop_loss,
+        "stop_type": stop_type,
+        "stop_direction": stop_direction,
+        "entry_type": entry_type,
         "r_val": r_val,
         "target_1r": target_1r,
         "target_2r": target_2r,

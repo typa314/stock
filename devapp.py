@@ -18,7 +18,7 @@ import numpy as np
 from datetime import datetime
 
 try:
-    from kline import analyze_stock, analyze_stock_5m, get_info, __version__
+    from kline import analyze_stock, analyze_stock_5m, get_info, get_tw_tick, __version__
 except Exception as e:
     import streamlit as st
     st.error(f"❌ 模組載入錯誤 (Import Error): {e}")
@@ -151,6 +151,77 @@ def get_cached_analysis(ticker, months, cost, version=__version__):
 def get_cached_5m(ticker, days=3, version=__version__):
     return analyze_stock_5m(ticker=ticker, days=days)
 
+def render_cost_stop_loss_card(cost_price, current_price):
+    """現貨強制停損與持股風控監控卡（依據 O'Neil / Minervini -7%~-8% 資本保護鐵律）"""
+    if not cost_price or cost_price <= 0:
+        return
+    c_p = float(cost_price)
+    diff = current_price - c_p
+    pnl_pct = (diff / c_p) * 100
+    pnl_1k = diff * 1000
+    stop_7 = round(c_p * 0.93, 2)
+    stop_8 = round(c_p * 0.92, 2)
+    buf_7 = current_price - stop_7
+
+    if current_price <= stop_8:
+        tag = "🚨 觸發極限強制停損"
+        card_color = "#ef4444"
+        card_bg = "rgba(239, 68, 68, 0.2)"
+        pnl_color = "#ef4444"
+        advice = "虧損已達 -8% 極限保命線，觸發 Minervini 資本保護鐵律，強烈建議無條件市價全出，嚴防虧損失控！"
+    elif current_price <= stop_7:
+        tag = "⚠️ 觸發強制停損警戒"
+        card_color = "#f59e0b"
+        card_bg = "rgba(245, 158, 11, 0.2)"
+        pnl_color = "#f59e0b"
+        advice = "虧損已觸及 -7% 警戒線，建議立即分批減碼或預掛停損單，切勿凹單加碼。"
+    elif diff < 0:
+        tag = "🟡 浮動虧損防守中"
+        card_color = "#fbbf24"
+        card_bg = "rgba(245, 158, 11, 0.15)"
+        pnl_color = "#fbbf24"
+        advice = f"距 -7% 強制停損尚有 {buf_7:.2f} 元緩衝，緊盯技術防守位，未觸及前按紀律持有。"
+    else:
+        tag = "🟢 獲利持有中"
+        card_color = "#22c55e"
+        card_bg = "rgba(34, 197, 94, 0.15)"
+        pnl_color = "#22c55e"
+        advice = "部位處於獲利狀態，建議以買進成本價（保本線）或月線作為移動停利基準，鎖定獲利。"
+
+    st.markdown(f"""
+    <div class="dashboard-card" style="border-left: 4px solid {card_color}; margin-bottom: 12px;">
+        <div class="card-header">
+            <span class="card-title">🎯 現貨持股風控與強制停損監控</span>
+            <span class="pill-badge" style="background: {card_bg}; color: {card_color}; font-weight: 700;">{tag}</span>
+        </div>
+        <div class="grid-4">
+            <div class="grid-cell">
+                <div class="cell-label">持股成本 ➔ 現價</div>
+                <div class="cell-val" style="color: #f8fafc;">{c_p:.2f} ➔ {current_price:.2f}</div>
+                <div class="cell-sub">每張損益 {pnl_1k:+,.0f} 元</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">浮動損益幅度</div>
+                <div class="cell-val" style="color: {pnl_color};">{pnl_pct:+.2f}%</div>
+                <div class="cell-sub">{"獲利鎖定中" if diff >= 0 else f"距停損剩 {buf_7:.2f} 元"}</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">強制停損 (-7% 警戒)</div>
+                <div class="cell-val" style="color: #f59e0b;">{stop_7:.2f} 元</div>
+                <div class="cell-sub">觸及啟動減碼</div>
+            </div>
+            <div class="grid-cell">
+                <div class="cell-label">極限保命 (-8% 斷頭)</div>
+                <div class="cell-val" style="color: #ef4444;">{stop_8:.2f} 元</div>
+                <div class="cell-sub">無條件市價全出</div>
+            </div>
+        </div>
+        <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px; border-left: 3px solid {card_color};">
+            <b>🛡️ 風控指引：</b>{advice}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 # ── 3. 頂部導覽與股票選擇區 ──────────────────────────────────
 st.markdown(f"""
 <div style="background: rgba(234, 179, 8, 0.12); border: 1px solid #eab308; color: #facc15; padding: 6px 12px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
@@ -201,12 +272,12 @@ current_ticker = st.session_state["ticker_input"]
 # 時間週期切換膠囊
 timeframe_mode = st.radio(
     "時間週期選擇",
-    options=["📅 日K（波段多維體質與趨勢）", "⚡ 5分K（日內當沖與轉折點位）"],
+    options=["📅 日K（波段趨勢）", "⚡ 5分K（日內當沖）"],
     horizontal=True,
     label_visibility="collapsed"
 )
 
-if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
+if timeframe_mode == "⚡ 5分K（日內當沖）":
     # ── 4. 5分K 日內價格行為分析 ──────────────────────────────
     try:
         with st.spinner(f"正在分析 {current_ticker} 5 分鐘 K 線與 BPA 日內轉折..."):
@@ -230,6 +301,9 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # 現貨強制停損與持股風控監控卡（當使用者有輸入持有成本時顯示）
+    render_cost_stop_loss_card(cost_val, res5["close_now"])
 
     # 4 關鍵 5分K 指標橫幅
     k1, k2, k3, k4 = st.columns(4)
@@ -272,12 +346,13 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
     pct_1r_5m = abs(res5['target_1r'] - res5['close_now']) / res5['close_now'] * 100
     pct_2r_5m = abs(res5['target_2r'] - res5['close_now']) / res5['close_now'] * 100
     pct_stop_5m = abs(res5['close_now'] - res5['stop_loss']) / res5['close_now'] * 100
+    stop_dir = res5.get('stop_direction', '-')
 
     # 5m 專屬風控掛單指引卡
     st.markdown(f"""
     <div class="dashboard-card" style="border-left: 4px solid {res5['bpa_status_color']};">
         <div class="card-header">
-            <span class="card-title">⚡ Al Brooks 5 分 K 日內風控與掛單指引 (Intraday Order Box)</span>
+            <span class="card-title">⚡ 5 分 K 日內風控與掛單指引</span>
             <div style="display: flex; gap: 6px; align-items: center;">
                 <span class="pill-badge" style="background: {res5.get('whale_bg', 'rgba(0,0,0,0.2)')}; color: {res5.get('whale_color', '#94a3b8')}; border: 1px solid {res5.get('whale_color', '#94a3b8')}; font-weight: 700;">{res5.get('whale_tag', '')}</span>
                 <span class="pill-badge" style="background: {res5['bpa_bg']}; color: {res5['bpa_status_color']};">{res5['bpa_status'].split('（')[0]}</span>
@@ -285,31 +360,31 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
         </div>
         <div class="grid-4">
             <div class="grid-cell">
-                <div class="cell-label">突破進場價位 (Buy Stop)</div>
-                <div class="cell-val" style="color: #ef4444;">{res5['buy_stop']:.2f} 元</div>
-                <div class="cell-sub">跌破放空價: {res5['sell_stop']:.2f} 元</div>
+                <div class="cell-label">{res5.get('entry_type', '突破進場價位')}</div>
+                <div class="cell-val" style="color: #ef4444;">{res5['buy_stop'] if '多' in res5['bpa_status'] else res5['sell_stop']:.2f} 元</div>
+                <div class="cell-sub">{"跌破防守: " + f"{res5['sell_stop']:.2f} 元" if '多' in res5['bpa_status'] else "突破反轉: " + f"{res5['buy_stop']:.2f} 元"}</div>
             </div>
             <div class="grid-cell">
-                <div class="cell-label">防守停損價位 (Stop Loss)</div>
+                <div class="cell-label">{res5.get('stop_type', '防守停損價位')}</div>
                 <div class="cell-val" style="color: #f59e0b;">{res5['stop_loss']:.2f} 元</div>
-                <div class="cell-sub">停損風險: {res5['r_val']:.2f} 元 (-{pct_stop_5m:.1f}%)</div>
+                <div class="cell-sub">單筆風險: {stop_dir}{res5['r_val']:.2f} 元 ({stop_dir}{pct_stop_5m:.1f}%)</div>
             </div>
             <div class="grid-cell">
                 <div class="cell-label">目標一價位 (1R 等距達標)</div>
                 <div class="cell-val" style="color: #38bdf8;">{res5['target_1r']:.2f} 元</div>
-                <div class="cell-sub">預期幅: +{pct_1r_5m:.1f}% (達標可設保本)</div>
+                <div class="cell-sub">預期獲利: {pct_1r_5m:+.1f}% ｜ 達標可保本</div>
             </div>
             <div class="grid-cell">
                 <div class="cell-label">目標二價位 (2R 擴展獲利)</div>
                 <div class="cell-val" style="color: #4ade80;">{res5['target_2r']:.2f} 元</div>
-                <div class="cell-sub">預期幅: +{pct_2r_5m:.1f}% (波段獲利滿足)</div>
+                <div class="cell-sub">預期獲利: {pct_2r_5m:+.1f}% ｜ 波段滿足點</div>
             </div>
         </div>
         <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px; border-left: 3px solid {res5.get('whale_color', '#94a3b8')};">
-            <b>⚡ 主力量能診斷：</b><span style="color: {res5.get('whale_color', '#94a3b8')}; font-weight: 700;">{res5.get('whale_tag', '')}</span> ｜ {res5.get('whale_advice', '')}
+            <b>⚡ 主力量能：</b><span style="color: {res5.get('whale_color', '#94a3b8')}; font-weight: 700;">{res5.get('whale_tag', '')}</span> ｜ {res5.get('whale_advice', '')}
         </div>
         <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px;">
-            <b>🎯 日內操盤指引：</b>{res5['bpa_guide']}
+            <b>🎯 當沖指引：</b>{res5['bpa_guide']}
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -319,12 +394,13 @@ if timeframe_mode == "⚡ 5分K（日內當沖與轉折點位）":
         st.plotly_chart(res5["fig"], use_container_width=True)
 
     # 日內 3 大 BPA 紀律提醒
-    st.markdown("""
+    current_tick = get_tw_tick(res5['close_now'])
+    st.markdown(f"""
     <div style="font-size: 0.78rem; color: #94a3b8; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); padding: 10px 14px; border-radius: 6px; margin-top: 10px; line-height: 1.6;">
-        💡 <b>Al Brooks 5分K 實戰心法：</b><br>
-        1. <b>早盤定調（09:00~10:30）</b>：觀察開盤前 18 根 K 線是否形成單邊強趨勢或寬幅震盪，確認 Always-In 多空主控權。<br>
-        2. <b>順勢回測（M2B / M2S）</b>：強趨勢中首次回踩 20 EMA 出現反轉棒，為賺賠比極佳之順勢切入點，嚴禁逆勢摸頂猜底。<br>
-        3. <b>Tick 級硬停損</b>：停損嚴設於信號棒外 1 個 Tick，觸及即嚴格停損離場，虧損嚴格鎖定於 1R，絕不扛單。
+        💡 <b>5分K 日內風控心法（{stock_name_5m} 現價 {res5['close_now']:.2f} 元）：</b><br>
+        1. <b>早盤定調（09:00~10:30）</b>：觀察開盤前 18 根 K 線確認單邊趨勢或寬幅震盪，確立 Always-In 多空主控權。<br>
+        2. <b>順勢回測（M2B / M2S）</b>：順應大趨勢，耐心等待拉回 20 EMA 守穩並出現反轉棒再進場；切忌未見止跌訊號盲目接刀猜底，亦切忌強推升時隨意摸頂放空。<br>
+        3. <b>硬停損</b>：{res5.get('stop_type', '防守停損')} <b>{res5['stop_loss']:.2f} 元</b>，單筆虧損嚴格鎖定在 <b>{stop_dir}{res5['r_val']:.2f} 元 ({stop_dir}{pct_stop_5m:.1f}%)</b>，觸及即嚴格停損離場，絕不扛單。
     </div>
     """, unsafe_allow_html=True)
 
@@ -404,6 +480,9 @@ st.markdown(f"""
     </div>
 </div>
 """, unsafe_allow_html=True)
+
+# 現貨強制停損與持股風控監控卡（當使用者有輸入持有成本時顯示）
+render_cost_stop_loss_card(cost_val, close_now)
 
 # ── 4.1 四大關鍵指標橫幅卡片 ─────────────────────────────────
 k1, k2, k3, k4 = st.columns(4)
@@ -763,7 +842,7 @@ if bpa_res['always_in_code'] == 'AIL':
     strat_desc = "順應 20 EMA 多頭架構，拉回尋找 H1/H2 買點，或以突破掛單進場"
     strat_color = "#10b981"
     entry_lbl = f"突破買進 {bpa_res['buy_stop']:.2f} 元"
-    stop_lbl = f"跌破停損 {bpa_res['sell_stop']:.2f} 元 (風險 {bpa_res['risk_long']:.2f} 元)"
+    stop_lbl = f"做多防守停損 {bpa_res['sell_stop']:.2f} 元 (跌破下方認賠，風險 {bpa_res['risk_long']:.2f} 元)"
     t1_val = bpa_res['target_long_1r']
     t2_val = bpa_res['target_long_2r']
     t1_lbl = f"{t1_val:.2f} 元 (預期 +{(t1_val - close_now) / close_now * 100:+.1f}%)"
@@ -773,14 +852,14 @@ elif bpa_res['always_in_code'] == 'AIS':
     strat_desc = "反彈尋找 L1/L2 空點，持股者逢高調節，空方設跌破放空單順勢佈局"
     strat_color = "#ef4444"
     entry_lbl = f"跌破放空 {bpa_res['sell_stop']:.2f} 元"
-    stop_lbl = f"突破停損 {bpa_res['buy_stop']:.2f} 元 (風險 {bpa_res['risk_short']:.2f} 元)"
+    stop_lbl = f"放空防守停損 {bpa_res['buy_stop']:.2f} 元 (突破上方停損，風險 {bpa_res['risk_short']:.2f} 元)"
     t1_val = bpa_res['target_short_1r']
     t2_val = bpa_res['target_short_2r']
     t1_lbl = f"{t1_val:.2f} 元 (預期 {(t1_val - close_now) / close_now * 100:+.1f}%)"
     t2_lbl = f"{t2_val:.2f} 元 (預期 {(t2_val - close_now) / close_now * 100:+.1f}%)"
 else:
     strat_title = "區間震盪策略 ── 80% 突破失敗法則"
-    strat_desc = f"遵守低買高賣短沖原則：接近支撐 S1/S2（{sr['s1']:.2f} / {sr['s2']:.2f} 元）低接，接近壓力 R1/R2（{sr['r1']:.2f} / {sr['r2']:.2f} 元）調節，嚴禁於箱型中間盲目追價，防範鐵絲網多空雙巴"
+    strat_desc = f"箱型區間高出低進：接近支撐 S1/S2（{sr['s1']:.2f} / {sr['s2']:.2f} 元）低接，接近壓力 R1/R2（{sr['r1']:.2f} / {sr['r2']:.2f} 元）調節，嚴禁在箱型中間追價，防範來回侵蝕本金"
     strat_color = "#f59e0b"
     entry_lbl = f"支撐區逢低買進 {sr['s1']:.2f} 元"
     stop_lbl = f"跌破防守停損 {sr['stop_loss']:.2f} 元"
@@ -804,7 +883,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 if bpa_res["signals"]:
-    st.info("💡 **近期觸發之 BPA 關鍵設定：** " + " ｜ ".join(bpa_res["signals"]))
+    st.info("💡 **近期觸發之關鍵訊號：** " + " ｜ ".join(bpa_res["signals"]))
 
 # ── 4.4 核心分析分頁（支撐壓力 / 趨勢與BPA細項 / 操盤行動指引） ────────
 tab1, tab2, tab3 = st.tabs(["🎯 支撐壓力矩陣", "🧭 趨勢與 BPA 評估明細", "💡 操盤行動指引"])
@@ -812,15 +891,15 @@ tab1, tab2, tab3 = st.tabs(["🎯 支撐壓力矩陣", "🧭 趨勢與 BPA 評�
 with tab1:
     s_col1, s_col2 = st.columns(2)
     with s_col1:
-        st.write("##### 🔺 壓力位階 (Resistance)")
+        st.write("##### 🔺 壓力位階")
         st.markdown(f"- **R2（布林上軌/波段頂）**：`{sr['r2']:.2f} 元`")
         st.markdown(f"- **R1（近20日高點）**：`{sr['r1']:.2f} 元`")
         st.markdown(f"- **當前收盤現價**：`{close_now:.2f} 元`")
     with s_col2:
-        st.write("##### 🔻 支撐位階 (Support)")
+        st.write("##### 🔻 支撐位階")
         st.markdown(f"- **S1（20MA 月線支撐）**：`{sr['s1']:.2f} 元`")
         st.markdown(f"- **S2（近20日低點）**：`{sr['s2']:.2f} 元`")
-        st.markdown(f"- **防守停損線 (Stop-Loss Pivot)**：`{sr['stop_loss']:.2f} 元`")
+        st.markdown(f"- **防守停損線**：`{sr['stop_loss']:.2f} 元`")
 
 with tab2:
     st.write(f"**綜合評級：** `{badge}` ｜ **總得分：** `{trend_score:+d} 分`")
