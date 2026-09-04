@@ -223,12 +223,6 @@ def render_cost_stop_loss_card(cost_price, current_price):
     """, unsafe_allow_html=True)
 
 # ── 3. 頂部導覽與股票選擇區 ──────────────────────────────────
-st.markdown(f"""
-<div style="background: rgba(234, 179, 8, 0.12); border: 1px solid #eab308; color: #facc15; padding: 6px 12px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
-    <span>🛠️ <b>DEV 開發驗證環境 (devapp.py)</b>：新功能與介面試驗中，驗證確認無誤後再同步推送到正式環境 (app.py)</span>
-    <span style="font-size: 0.72rem; color: #94a3b8; font-weight: normal; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">v{__version__}-dev</span>
-</div>
-""", unsafe_allow_html=True)
 st.markdown(f"### ⚡ 台股 Al Brooks BPA 價格行為研判 <span style='font-size: 0.8rem; color: #94a3b8; font-weight: normal;'>v{__version__}</span>", unsafe_allow_html=True)
 
 # 快捷熱門股按鈕
@@ -244,8 +238,24 @@ quick_tickers = [
 if "ticker_input" not in st.session_state:
     st.session_state["ticker_input"] = "2330"
 
+if "last_active_ticker" not in st.session_state:
+    st.session_state["last_active_ticker"] = st.session_state["ticker_input"]
+
+if "cost_input" not in st.session_state:
+    st.session_state["cost_input"] = 0.0
+
 def select_ticker(t):
-    st.session_state["ticker_input"] = str(t).strip()
+    new_t = str(t).strip()
+    st.session_state["ticker_input"] = new_t
+    if new_t != st.session_state.get("last_active_ticker"):
+        st.session_state["cost_input"] = 0.0
+        st.session_state["last_active_ticker"] = new_t
+
+def on_ticker_change():
+    new_t = st.session_state.get("ticker_input", "").strip()
+    if new_t != st.session_state.get("last_active_ticker"):
+        st.session_state["cost_input"] = 0.0
+        st.session_state["last_active_ticker"] = new_t
 
 cols_btn = st.columns(len(quick_tickers))
 for i, (qname, qtick) in enumerate(quick_tickers):
@@ -259,9 +269,16 @@ for i, (qname, qtick) in enumerate(quick_tickers):
 
 with st.expander("⚙️ 搜尋股票與自訂參數", expanded=False):
     c1, c2, c3 = st.columns([2, 1, 1])
-    input_ticker = c1.text_input("股票代號（上市/上櫃）", key="ticker_input").strip()
+    input_ticker = c1.text_input("股票代號（上市/上櫃）", key="ticker_input", on_change=on_ticker_change).strip()
     months_opt = c2.selectbox("歷史分析月數", options=[1, 2, 3, 6, 12], index=0)
-    cost_opt = c3.number_input("個人持有成本（選填）", value=0.0, step=0.5, format="%.2f")
+
+    # 確保切換股票時，成本輸入欄位即時歸零清除
+    curr_t = st.session_state.get("ticker_input", "").strip()
+    if curr_t != st.session_state.get("last_active_ticker"):
+        st.session_state["cost_input"] = 0.0
+        st.session_state["last_active_ticker"] = curr_t
+
+    cost_opt = c3.number_input("個人持有成本（選填）", min_value=0.0, step=0.5, format="%.2f", key="cost_input")
     cost_val = cost_opt if cost_opt > 0 else None
     if st.button("🔄 清除快取並強制重整最新數據", use_container_width=True):
         st.cache_data.clear()
