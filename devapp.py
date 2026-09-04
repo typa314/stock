@@ -399,7 +399,7 @@ if timeframe_mode == "⚡ 5分K（日內當沖）":
     <div style="font-size: 0.78rem; color: #94a3b8; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); padding: 10px 14px; border-radius: 6px; margin-top: 10px; line-height: 1.6;">
         💡 <b>5分K 日內風控心法（{stock_name_5m} 現價 {res5['close_now']:.2f} 元）：</b><br>
         1. <b>早盤定調（09:00~10:30）</b>：觀察開盤前 18 根 K 線確認單邊趨勢或寬幅震盪，確立 Always-In 多空主控權。<br>
-        2. <b>順勢回測（M2B / M2S）</b>：順應大趨勢，耐心等待拉回 20 EMA 守穩並出現反轉棒再進場；切忌未見止跌訊號盲目接刀猜底，亦切忌強推升時隨意摸頂放空。<br>
+        2. <b>順勢回測（M2B / M2S）</b>：順應大趨勢，耐心等待拉回 20 EMA（<b>{res5['ema_now']:.2f} 元</b>）守穩並出現反轉棒再進場；切忌未見止跌訊號盲目接刀猜底，亦切忌強推升時隨意摸頂放空。<br>
         3. <b>硬停損</b>：{res5.get('stop_type', '防守停損')} <b>{res5['stop_loss']:.2f} 元</b>，單筆虧損嚴格鎖定在 <b>{stop_dir}{res5['r_val']:.2f} 元 ({stop_dir}{pct_stop_5m:.1f}%)</b>，觸及即嚴格停損離場，絕不扛單。
     </div>
     """, unsafe_allow_html=True)
@@ -839,7 +839,7 @@ if "fig" in res and res["fig"] is not None:
 st.markdown("#### 🎯 Brooks 操盤訂單與停損指引")
 if bpa_res['always_in_code'] == 'AIL':
     strat_title = "多頭主控策略 ── 順勢偏多操作"
-    strat_desc = "順應 20 EMA 多頭架構，拉回尋找 H1/H2 買點，或以突破掛單進場"
+    strat_desc = f"順應 20 EMA（{df['ema20'].iloc[-1]:.2f} 元）多頭架構，拉回逢低佈局，或以突破買進價 {bpa_res['buy_stop']:.2f} 元掛單進場"
     strat_color = "#10b981"
     entry_lbl = f"突破買進 {bpa_res['buy_stop']:.2f} 元"
     stop_lbl = f"做多防守停損 {bpa_res['sell_stop']:.2f} 元 (跌破下方認賠，風險 {bpa_res['risk_long']:.2f} 元)"
@@ -849,7 +849,7 @@ if bpa_res['always_in_code'] == 'AIL':
     t2_lbl = f"{t2_val:.2f} 元 (預期 +{(t2_val - close_now) / close_now * 100:+.1f}%)"
 elif bpa_res['always_in_code'] == 'AIS':
     strat_title = "空方主導策略 ── 順勢偏空操作"
-    strat_desc = "反彈尋找 L1/L2 空點，持股者逢高調節，空方設跌破放空單順勢佈局"
+    strat_desc = f"受制 20 EMA（{df['ema20'].iloc[-1]:.2f} 元）反壓，持股者逢高調節，空方以跌破放空價 {bpa_res['sell_stop']:.2f} 元順勢佈局"
     strat_color = "#ef4444"
     entry_lbl = f"跌破放空 {bpa_res['sell_stop']:.2f} 元"
     stop_lbl = f"放空防守停損 {bpa_res['buy_stop']:.2f} 元 (突破上方停損，風險 {bpa_res['risk_short']:.2f} 元)"

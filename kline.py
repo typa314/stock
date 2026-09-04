@@ -22,7 +22,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-__version__ = "2.5.0"
+__version__ = "2.6.0"
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 MA_DAYS   = [5, 20, 60]
@@ -940,12 +940,13 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         c_color = "#f87171"
 
     # 3. BPA 價格行為
+    ema_val = float(df["ema20"].iloc[-1]) if "ema20" in df.columns else float(df["close"].ewm(span=20, adjust=False).mean().iloc[-1])
     bpa_zh = bpa_res.get("always_in_zh", "箱型震盪")
     if "多" in bpa_zh:
-        bpa_sub = "20 EMA 順勢多方"
+        bpa_sub = f"站穩 20 EMA ({ema_val:.2f}元)"
         bpa_color = "#4ade80"
     elif "空" in bpa_zh:
-        bpa_sub = "20 EMA 順勢空方"
+        bpa_sub = f"受制 20 EMA ({ema_val:.2f}元)"
         bpa_color = "#f87171"
     else:
         bpa_sub = "區間高出低進"
@@ -979,7 +980,7 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         badge = "⭐⭐⭐⭐⭐ 頂級飆股體質（Stage 2 主升）"
         b_color = "#4ade80"
         b_bg = "rgba(34, 197, 94, 0.2)"
-        summary_advice = "多頭排列且基本面強勁，順應 20 EMA 拉回守穩順勢佈局。"
+        summary_advice = f"多頭排列且基本面強勁，順應 20 EMA（{ema_val:.2f} 元）拉回守穩順勢佈局。"
     elif total_score >= 65:
         badge = "⭐⭐⭐⭐ 優質多頭（穩健推升中）"
         b_color = "#60a5fa"
@@ -1003,14 +1004,14 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         action_color = "#22c55e"
         action_bg = "rgba(34, 197, 94, 0.18)"
         action_border = "#22c55e"
-        action_sub = "主升動能強勁，逢 20 EMA 拉回守穩或放量突破順勢買進"
+        action_sub = f"主升動能強勁，逢 20 EMA（{ema_val:.2f} 元）拉回守穩或放量突破順勢買進"
     elif total_score >= 60 and "空" not in bpa_zh:
         action_tag = "🟡 建議持有"
         action_type = "HOLD"
         action_color = "#38bdf8"
         action_bg = "rgba(56, 189, 248, 0.18)"
         action_border = "#38bdf8"
-        action_sub = "多頭結構穩健，持股續抱；空手者待回測 20 EMA 分批佈局"
+        action_sub = f"多頭結構穩健，持股續抱；空手者待回測 20 EMA（{ema_val:.2f} 元）分批佈局"
     elif total_score >= 45:
         action_tag = "🟡 建議觀望"
         action_type = "WAIT"
@@ -1598,17 +1599,17 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
             for sig in bpa_res['signals']:
                 print(f"    • {sig}")
         else:
-            print(f"  BPA 關鍵型態與設定   ：近幾日無高勝率特殊設定，順應 20 EMA 趨勢動態運行")
+            print(f"  BPA 關鍵型態與設定   ：近幾日無高勝率特殊設定，順應 20 EMA（{df['ema20'].iloc[-1]:.2f} 元）趨勢動態運行")
 
         print(f"\n  ── 🎯 Brooks 操盤訂單與停損風控指引 ───────────────────────")
         if bpa_res['always_in_code'] == 'AIL':
-            print(f"  偏多操作策略 (AIL)   ：多頭主控，拉回逢支撐尋找 H1/H2 買點，或以 Signal Bar 突破進場")
+            print(f"  偏多操作策略 (AIL)   ：多頭主控，順應 20 EMA（{df['ema20'].iloc[-1]:.2f} 元）架構，拉回逢低佈局，或以突破買進價 {bpa_res['buy_stop']:.2f} 元進場")
             print(f"  • 訊號棒極值 (Signal Bar)   ：高 {bpa_res['sig_high']:.2f} ｜ 低 {bpa_res['sig_low']:.2f} ｜ 震幅 {bpa_res['sig_high']-bpa_res['sig_low']:.2f} 元")
             print(f"  • 多方突破進場 (Buy Stop)   ：{bpa_res['buy_stop']:.2f} 元（突破訊號棒高點啟動）")
             print(f"  • 多方防守停損 (Prot Stop)  ：{bpa_res['sell_stop']:.2f} 元（跌破訊號棒低點，風險 {bpa_res['risk_long']:.2f} 元）")
             print(f"  • 等距測量目標 (MM 1R / 2R) ：目標一 {bpa_res['target_long_1r']:.2f} 元 ｜ 目標二 {bpa_res['target_long_2r']:.2f} 元")
         elif bpa_res['always_in_code'] == 'AIS':
-            print(f"  偏空操作策略 (AIS)   ：空方主控，反彈尋找 L1/L2 空點，持股者逢高調節，空方設 Stop 單")
+            print(f"  偏空操作策略 (AIS)   ：空方主控，受制 20 EMA（{df['ema20'].iloc[-1]:.2f} 元）反壓，持股者逢高調節，空方以跌破放空價 {bpa_res['sell_stop']:.2f} 元順勢佈局")
             print(f"  • 訊號棒極值 (Signal Bar)   ：高 {bpa_res['sig_high']:.2f} ｜ 低 {bpa_res['sig_low']:.2f} ｜ 震幅 {bpa_res['sig_high']-bpa_res['sig_low']:.2f} 元")
             print(f"  • 空方跌破進場 (Sell Stop)  ：{bpa_res['sell_stop']:.2f} 元（跌破訊號棒低點啟動）")
             print(f"  • 空方防守停損 (Prot Stop)  ：{bpa_res['buy_stop']:.2f} 元（突破訊號棒高點，風險 {bpa_res['risk_short']:.2f} 元）")
@@ -1734,17 +1735,17 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         bpa_status = "多頭主控（拉回逢低做多）"
         bpa_status_color = "#4ade80"
         bpa_bg = "rgba(34, 197, 94, 0.2)"
-        bpa_guide = "目前 5 分K 處於順勢多方軌道，站在 20 EMA 之上，逢拉回回測 20 EMA 出現陽棒可順勢佈局。"
+        bpa_guide = f"目前 5 分K 處於順勢多方軌道，站穩 20 EMA（{ema_now:.2f} 元）之上，拉回守穩可順勢佈局。"
     elif c.iloc[-1] < ema.iloc[-1] and slope < -0.05:
         bpa_status = "空方主導（反彈逢高做空）"
         bpa_status_color = "#f87171"
         bpa_bg = "rgba(239, 68, 68, 0.2)"
-        bpa_guide = "目前 5 分K 受制於 20 EMA 反壓，空方主控，反彈無力突破均線前切忌急於搶反彈。"
+        bpa_guide = f"目前 5 分K 受制 20 EMA（{ema_now:.2f} 元）反壓，空方主控，反彈未突破均線前切忌急搶反彈。"
     else:
         bpa_status = "箱型震盪（區間高出低進）"
         bpa_status_color = "#fbbf24"
         bpa_bg = "rgba(245, 158, 11, 0.2)"
-        bpa_guide = "目前 5 分K 均線走平，穿梭於 20 EMA 兩側，屬於典型日內區間整理，嚴禁追高殺低。"
+        bpa_guide = f"目前 5 分K 圍繞 20 EMA（{ema_now:.2f} 元）兩側走平，屬區間整理，嚴禁追高殺低。"
 
     # 最新 5 分K 棒形態分析
     last_bar = df.iloc[-1]
@@ -1807,11 +1808,11 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
     # 5m 當沖動作決策
     if "多" in bpa_status:
         action_tag_5m = "🟢 建議偏多買進"
-        action_sub_5m = "順應 5m 20 EMA 支撐拉回逢低買進"
+        action_sub_5m = f"順應 5m 20 EMA（{ema_now:.2f} 元）支撐拉回逢低買進"
         action_color_5m = "#22c55e"
     elif "空" in bpa_status:
         action_tag_5m = "🔴 建議逢高做空"
-        action_sub_5m = "受制 5m 20 EMA 反壓，反彈逢高或破底順勢放空"
+        action_sub_5m = f"受制 5m 20 EMA（{ema_now:.2f} 元）反壓，反彈逢高或破底順勢放空"
         action_color_5m = "#ef4444"
     else:
         action_tag_5m = "🟡 建議觀望整理"
@@ -1834,12 +1835,12 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
             whale_tag = "⚡ 主力放量推升"
             whale_color = "#38bdf8"
             whale_bg = "rgba(56, 189, 248, 0.16)"
-            whale_advice = "大單推升動能強勁，切忌追高，靜待回踩 20 EMA 守穩再行介入。"
+            whale_advice = f"大單推升動能強勁，切忌追高，靜待回踩 20 EMA（{ema_now:.2f} 元）守穩再行介入。"
         elif not is_above_ema and is_bull_bar and body / rng >= 0.5:
             whale_tag = "⚠️ 空方反彈誘多"
             whale_color = "#fbbf24"
             whale_bg = "rgba(245, 158, 11, 0.16)"
-            whale_advice = "放量強彈但受制 20 EMA 反壓（承壓率 70%），嚴防假突破，切勿搶反彈。"
+            whale_advice = f"放量強彈但受制 20 EMA（{ema_now:.2f} 元）反壓（承壓率 70%），嚴防假突破，切勿搶反彈。"
         elif not is_above_ema and not is_bull_bar and body / rng >= 0.5:
             whale_tag = "🚨 主力爆量摜壓"
             whale_color = "#ef4444"
@@ -1859,7 +1860,7 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
             whale_tag = f"⚡ 主力爆量異動 ({vol_ratio_5m}倍量)"
             whale_color = "#a855f7"
             whale_bg = "rgba(168, 85, 247, 0.16)"
-            whale_advice = f"爆出 5m 均量 {vol_ratio_5m} 倍巨量，多空劇烈分歧，密切關注 20 EMA 支撐。"
+            whale_advice = f"爆出 5m 均量 {vol_ratio_5m} 倍巨量，多空劇烈分歧，密切關注 20 EMA（{ema_now:.2f} 元）支撐。"
     else:
         whale_tag = "⚪ 常態量能流動"
         whale_color = "#94a3b8"
