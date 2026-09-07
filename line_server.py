@@ -122,8 +122,11 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     # 1. 買進 / 建倉
     if action in ["買", "買進", "進場", "add", "buy"]:
         if len(tokens) < 3:
-            return "⚠️ 格式錯誤！請輸入：\n買 [股票代號] [成本價] [股數(選填)]\n範例：買 2330 980 或 買 2330 980 1000"
-        ticker = tokens[1].strip()
+            return "⚠️ 格式錯誤！請輸入：\n買 [股票代號] [成本價] [股數(選填)]\n範例：買 2330 980 或 買 00708L 81.2 1000"
+        raw_t = tokens[1].strip()
+        cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
+        ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
+        ticker = ticker_match.group().upper() if ticker_match else cleaned_t
         try:
             cost_p = float(tokens[2])
             shares = int(tokens[3]) if len(tokens) >= 4 else 1000
@@ -151,8 +154,11 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     # 2. 賣出 / 平倉
     elif action in ["賣", "賣出", "平倉", "del", "sell"]:
         if len(tokens) < 2:
-            return "⚠️ 格式錯誤！請輸入：\n賣 [股票代號]\n範例：賣 2330"
-        ticker = tokens[1].strip()
+            return "⚠️ 格式錯誤！請輸入：\n賣 [股票代號]\n範例：賣 2330 或 賣 00708L"
+        raw_t = tokens[1].strip()
+        cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
+        ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
+        ticker = ticker_match.group().upper() if ticker_match else cleaned_t
         ok = bot_db.close_position(user_id, ticker)
         if ok:
             return f"✅ 已成功將【{ticker}】結案平倉，並已移出盤中風控巡邏監控！"
@@ -232,16 +238,18 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
         flex_dict = bot_flex.build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct)
         return flex_dict
 
-    # 4. 單檔股票代號查詢 (支援純代號 2330, 查 2330, 診斷 2330, 2330.TW 等)
+    # 4. 單檔股票代號查詢 (支援純代號 2330, 00708L, 查 2330, 診斷 00708L, 2330.TW 等)
     elif (
-        re.match(r"^\d{4,6}(\.(tw|two))?$", action)
-        or (action in ["查", "查詢", "診斷", "分析", "看", "k", "bpa", "stock"] and len(tokens) >= 2)
-        or (len(tokens) == 1 and re.search(r"\d{4,6}", action))
+        re.match(r"^\d{4,6}[a-zA-Z]?(\.(tw|two))?$", action, re.IGNORECASE)
+        or (action in ["查", "查詢", "診斷", "分析", "看", "k", "bpa", "stock", "個股"] and len(tokens) >= 2)
+        or (len(tokens) == 1 and re.search(r"\d{4,6}[a-zA-Z]?", action, re.IGNORECASE))
+        or re.search(r"\d{4,6}[a-zA-Z]?", cmd, re.IGNORECASE)
     ):
-        ticker_match = re.search(r"\b\d{4,6}\b", cmd) or re.search(r"\d{4,6}", cmd)
+        cleaned_cmd = re.sub(r"\.(tw|two)\b", "", cmd, flags=re.IGNORECASE)
+        ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_cmd, re.IGNORECASE)
         if not ticker_match:
-            return "⚠️ 請提供欲查詢的股票代號，例如「2330」或「查 2330」"
-        ticker = ticker_match.group()
+            return "⚠️ 請提供欲查詢的股票代號，例如「2330」或「00708L」"
+        ticker = ticker_match.group().upper()
 
         try:
             import math

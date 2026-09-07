@@ -145,10 +145,20 @@ class TestLineBotCore(unittest.TestCase):
         res_sell = line_server.handle_user_command(self.user_id, "賣 2330")
         self.assertIn("已成功將【2330】結案平倉", res_sell)
 
-        # 測試 單檔股票 BPA 診斷查詢 (如 2330)
+        # 測試 單檔股票 BPA 診斷查詢 (如 2330 與 00708L / 00708l)
         res_single = line_server.handle_user_command(self.user_id, "2330")
         self.assertIsInstance(res_single, dict)
         self.assertEqual(res_single.get("type"), "bubble")
+
+        # 測試 槓桿/反向 ETF 與英數字後綴代號 (如 00708L)
+        res_etf = line_server.handle_user_command(self.user_id, "00708L")
+        self.assertIsInstance(res_etf, dict)
+        self.assertEqual(res_etf.get("type"), "bubble")
+
+        # 測試小寫代號輸入 (如 00708l) 自動轉大寫處理
+        res_etf_lower = line_server.handle_user_command(self.user_id, "00708l")
+        self.assertIsInstance(res_etf_lower, dict)
+        self.assertEqual(res_etf_lower.get("type"), "bubble")
 
         # 測試 持倉 / 庫存 指令
         res_pos_empty = line_server.handle_user_command(self.user_id, "持倉")
