@@ -1,6 +1,7 @@
 ﻿# =====================================================================
 # start_local_tunnel.ps1 - 本地電腦極速備援一鍵啟動腳本
 # 啟動本機 LINE Webhook (Port 8080) 與 Cloudflare Tunnel 內網穿透
+# 支援 Cloudflare API 全自動無感同步 (解法 A)
 # =====================================================================
 
 Write-Host "`n==========================================================" -ForegroundColor Cyan
@@ -10,8 +11,27 @@ Write-Host "==========================================================" -Foregro
 $CurrentDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $CurrentDir
 
+# 輔助函式：解析 .env 檔案
+function Get-EnvMap {
+    param([string]$FilePath)
+    $map = @{}
+    if (Test-Path $FilePath) {
+        Get-Content $FilePath -Encoding UTF8 | ForEach-Object {
+            $line = $_.Trim()
+            if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
+                $parts = $line.Split("=", 2)
+                $key = $parts[0].Trim()
+                $val = $parts[1].Trim().Trim('"').Trim("'")
+                $map[$key] = $val
+            }
+        }
+    }
+    return $map
+}
+
 # 1. 檢查並載入環境變數
-if (Test-Path "$CurrentDir\.env") {
+$envMap = Get-EnvMap "$CurrentDir\.env"
+if ($envMap.Count -gt 0) {
     Write-Host "✅ 已載入本地 .env 金鑰設定檔" -ForegroundColor Green
 } else {
     Write-Host "⚠️ 未偵測到 .env，請確認已設定 LINE 金鑰" -ForegroundColor Yellow
@@ -78,18 +98,49 @@ if ($DetectedUrl) {
 
     Write-Host "`n🎉 【本地穿透通道已成功建立！】" -ForegroundColor Green
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Gray
-    Write-Host "  👉 您的本地專屬公網網址：" -ForegroundColor Yellow
-    Write-Host "     $DetectedUrl" -ForegroundColor Cyan
+    Write-Host "  👉 本地公網網址: $DetectedUrl" -ForegroundColor Cyan
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Gray
-    Write-Host "📋 網址已「自動複製到您的剪貼簿」！可以直接去貼上！" -ForegroundColor Green
-    Write-Host "`n💡 只要最後一步：" -ForegroundColor Yellow
-    Write-Host "   前往 Cloudflare Dashboard ➔ Worker (tw-stock-bpa-router)" -ForegroundColor White
-    Write-Host "   ➔ Settings ➔ Variables ➔ 加入變數：" -ForegroundColor White
-    Write-Host "     Key  : LOCAL_BACKEND_URL" -ForegroundColor Cyan
-    Write-Host "     Value: $DetectedUrl" -ForegroundColor Cyan
-    Write-Host "   ➔ 點擊 Save and deploy！" -ForegroundColor White
-    Write-Host "`n⚡ 完成後，LINE 訊息將優先由您的電腦 CPU 滿血秒回！" -ForegroundColor Green
-    Write-Host "🛑 如需結束本地備援，請隨時在此視窗按 Ctrl + C 或關閉本視窗即可。" -ForegroundColor Gray
+
+    # 5. 嘗試透過 Cloudflare API 全自動無感同步
+    $CfAccountId = $envMap["CF_ACCOUNT_ID"]
+    $CfApiToken = $envMap["CF_API_TOKEN"]
+    $CfWorkerName = if ($envMap["CF_WORKER_NAME"]) { $envMap["CF_WORKER_NAME"] } else { "tw-stock-bpa-router" }
+
+    $Synced = $false
+    if ($CfAccountId -and $CfApiToken) {
+        Write-Host "🔄 偵測到 Cloudflare API 憑證，正在自動同步 Worker 路由..." -ForegroundColor Cyan
+        $Headers = @{
+            "Authorization" = "Bearer $CfApiToken"
+            "Content-Type"  = "application/json"
+        }
+        $Body = @{
+            "name" = "LOCAL_BACKEND_URL"
+            "text" = $DetectedUrl
+            "type" = "secret_text"
+        } | ConvertTo-Json
+
+        $ApiUrl = "https://api.cloudflare.com/client/v4/accounts/$CfAccountId/workers/scripts/$CfWorkerName/secrets"
+        try {
+            $Resp = Invoke-RestMethod -Uri $ApiUrl -Method Put -Headers $Headers -Body $Body -TimeoutSec 10
+            if ($Resp.success) {
+                $Synced = $true
+                Write-Host "✨ 【全自動同步成功！】已將最新網址無感推送至 Cloudflare Worker！" -ForegroundColor Green
+                Write-Host "⚡ 恭喜！現在 LINE 訊息已自動切換至您本機的強大 CPU 運算！" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "⚠️ 自動推送至 Cloudflare 失敗: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    if (-not $Synced) {
+        Write-Host "📋 網址已「自動複製到您的剪貼簿」！可以直接前往貼上：" -ForegroundColor Yellow
+        Write-Host "   Cloudflare Dashboard ➔ Worker ($CfWorkerName) ➔ Settings ➔ Variables" -ForegroundColor Gray
+        Write-Host "   將 LOCAL_BACKEND_URL 更新為: $DetectedUrl" -ForegroundColor Cyan
+        Write-Host "`n💡 【升級 100% 開機全自動免手動】" -ForegroundColor White
+        Write-Host "   只需在 .env 填入 CF_ACCOUNT_ID 與 CF_API_TOKEN，下次開機將全自動同步！" -ForegroundColor Gray
+    }
+
+    Write-Host "`n🛑 如需結束本地備援，請按 Ctrl + C 或直接關閉本視窗即可。" -ForegroundColor Gray
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`n" -ForegroundColor Gray
 
     # 保持穿透執行，並監聽關閉事件
