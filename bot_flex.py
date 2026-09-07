@@ -294,7 +294,7 @@ def build_single_stock_flex(stock_name, ticker, close_now, chg_val, chg_pct, ema
 
     flex_bubble = {
         "type": "bubble",
-        "size": "mega",
+        "size": "giga",
         "header": {
             "type": "box",
             "layout": "vertical",
@@ -961,7 +961,7 @@ def build_watchlist_flex(user_name, items):
 
     flex_bubble = {
         "type": "bubble",
-        "size": "mega",
+        "size": "giga",
         "header": {
             "type": "box",
             "layout": "vertical",
@@ -1056,7 +1056,7 @@ def build_buy_signal_alert_flex(
     """
     flex_bubble = {
         "type": "bubble",
-        "size": "mega",
+        "size": "giga",
         "header": {
             "type": "box",
             "layout": "vertical",
@@ -1268,7 +1268,7 @@ def build_5m_stock_flex(res5: dict) -> dict:
 
     flex_bubble = {
         "type": "bubble",
-        "size": "mega",
+        "size": "giga",
         "header": {
             "type": "box",
             "layout": "vertical",
