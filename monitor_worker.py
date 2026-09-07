@@ -22,7 +22,7 @@ load_dotenv(os.path.join(current_dir, ".env"))
 
 import bot_db
 import bot_flex
-from kline import get_info, fetch_realtime_bar
+from kline import get_info, fetch_realtime_bar, analyze_stock
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("monitor_worker")
@@ -114,16 +114,200 @@ def run_patrol_cycle(force_test=False):
 
     return alerts_triggered
 
+def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
+    """
+    評估股票是否觸發 BPA 高勝率底部回測確認買點：
+    1. High 2 (H2) 雙重底推動確認（ABC 兩段回檔結束）
+    2. 20 EMA 動態支撐回測守穩 (20 EMA Pullback)
+    3. S1 (月線/前低) 關鍵支撐回測多頭反轉棒 (Bull Reversal)
+    4. 價跌量縮良性洗盤守穩 (Wyckoff / VPA)
+    """
+    try:
+        res = analysis_res or analyze_stock(ticker, months=1, generate_html=False, print_report=False)
+        df = res.get("df")
+        bpa_res = res.get("bpa_res", {})
+        sr = res.get("sr_levels", {})
+        close_now = float(res.get("close_now", 0.0))
+        sname = res.get("stock_name", ticker)
+
+        if df is None or df.empty or close_now <= 0:
+            return {"triggered": False}
+
+        always_code = bpa_res.get("always_in_code", "TR")
+        signals = bpa_res.get("signals", [])
+        ema20_val = float(df["ema20"].iloc[-1]) if ("ema20" in df.columns and not df.empty) else close_now
+        last_bar = bpa_res.get("last_bar_type", "")
+
+        # 1. High 2 (H2) 雙重底推動確認
+        is_h2 = any("High 2" in s or "H2" in s for s in signals) or (
+            "bpa_h2" in df.columns and bool(df["bpa_h2"].tail(2).any()) and always_code in ["AIL", "TR"]
+        )
+        if is_h2:
+            return {
+                "triggered": True,
+                "signal_name": "🔥 High 2 (H2) 雙重底回踩買點",
+                "signal_desc": "波段回檔 ABC 兩段修正結束，空方兩度向下試探無力跌破，多頭重啟順勢推升！",
+                "buy_stop": bpa_res.get("buy_stop", round(close_now * 1.01, 2)),
+                "sell_stop": bpa_res.get("sell_stop", round(close_now * 0.98, 2)),
+                "target_1r": bpa_res.get("target_long_1r", round(close_now * 1.03, 2)),
+                "target_2r": bpa_res.get("target_long_2r", round(close_now * 1.06, 2)),
+                "close_now": close_now,
+                "stock_name": sname,
+                "market": market
+            }
+
+        # 2. 20 EMA 動態支撐回測守穩
+        is_ema_pb = any("20 EMA 動態支撐回測" in s for s in signals) or (
+            "bpa_ema_pb" in df.columns and bool(df["bpa_ema_pb"].tail(2).any()) and always_code == "AIL" and close_now >= ema20_val * 0.99
+        )
+        if is_ema_pb:
+            return {
+                "triggered": True,
+                "signal_name": "🛡️ 20 EMA 動態支撐回踩守穩",
+                "signal_desc": f"多頭強勢主升段回踩 20 EMA（{ema20_val:.2f} 元）動態支撐，洗盤沉澱完畢，獲利了結賣壓耗竭！",
+                "buy_stop": bpa_res.get("buy_stop", round(close_now * 1.01, 2)),
+                "sell_stop": bpa_res.get("sell_stop", round(close_now * 0.98, 2)),
+                "target_1r": bpa_res.get("target_long_1r", round(close_now * 1.03, 2)),
+                "target_2r": bpa_res.get("target_long_2r", round(close_now * 1.06, 2)),
+                "close_now": close_now,
+                "stock_name": sname,
+                "market": market
+            }
+
+        # 3. S1 關鍵支撐多頭反轉棒 (Bull Reversal at S1)
+        s1 = float(sr.get("s1", 0.0))
+        today_low = float(df["low"].iloc[-1])
+        if s1 > 0 and today_low <= s1 * 1.015 and close_now >= s1 * 0.995:
+            if "多頭反轉棒" in last_bar or "多頭趨勢棒" in last_bar or "High 1" in " ".join(signals):
+                return {
+                    "triggered": True,
+                    "signal_name": "🔨 S1 關鍵支撐回測多頭反轉",
+                    "signal_desc": f"股價精確回測 S1（{s1:.2f} 元）重要防守位，浮現顯著下影線拒絕破底，多頭強力承接守穩！",
+                    "buy_stop": bpa_res.get("buy_stop", round(close_now * 1.01, 2)),
+                    "sell_stop": bpa_res.get("sell_stop", round(close_now * 0.98, 2)),
+                    "target_1r": bpa_res.get("target_long_1r", round(close_now * 1.03, 2)),
+                    "target_2r": bpa_res.get("target_long_2r", round(close_now * 1.06, 2)),
+                    "close_now": close_now,
+                    "stock_name": sname,
+                    "market": market
+                }
+
+        # 4. 價跌量縮良性洗盤守穩 (Wyckoff / VPA)
+        if len(df) >= 2 and "vol_ma" in df.columns:
+            cur_vol = float(df["volume"].iloc[-1])
+            vol_ma = float(df["vol_ma"].iloc[-1])
+            prev_c = float(df["close"].iloc[-2])
+            chg_p = (close_now - prev_c) / prev_c * 100
+            if -2.5 <= chg_p < 0 and vol_ma > 0 and cur_vol <= 0.65 * vol_ma and close_now >= ema20_val * 0.99 and always_code in ["AIL", "TR"]:
+                return {
+                    "triggered": True,
+                    "signal_name": "💤 價跌量縮良性洗盤守穩",
+                    "signal_desc": f"回測月線呈現典型窒息量洗盤，量能僅 20MA 的 {(cur_vol/vol_ma)*100:.0f}%，主力惜售無拋壓，守穩關鍵均線！",
+                    "buy_stop": bpa_res.get("buy_stop", round(close_now * 1.01, 2)),
+                    "sell_stop": bpa_res.get("sell_stop", round(close_now * 0.98, 2)),
+                    "target_1r": bpa_res.get("target_long_1r", round(close_now * 1.03, 2)),
+                    "target_2r": bpa_res.get("target_long_2r", round(close_now * 1.06, 2)),
+                    "close_now": close_now,
+                    "stock_name": sname,
+                    "market": market
+                }
+    except Exception as e:
+        logger.error(f"檢查標的 {ticker} 回測買點信號異常: {e}")
+
+    return {"triggered": False}
+
+def run_watchlist_patrol_cycle(force_test=False):
+    """
+    執行觀察名單 BPA 高勝率底部回測買點掃描
+    僅對當日尚未推播過 BPA_BUY_SETUP 的用戶與標的進行判定
+    """
+    active_items = bot_db.get_all_active_watchlist()
+    if not active_items:
+        logger.debug("目前無活躍自選觀察名單需求。")
+        return 0
+
+    alerts_triggered = 0
+    # 依 ticker 分組待檢查用戶，避免重複運算同一檔股票
+    ticker_users_map = {}
+    for item in active_items:
+        t = item["ticker"]
+        uid = item["user_id"]
+        # 檢查今日是否已發送過買點通知（單日單股冷卻去重）
+        if bot_db.should_send_alert(uid, t, "BPA_BUY_SETUP") or force_test:
+            if t not in ticker_users_map:
+                ticker_users_map[t] = []
+            ticker_users_map[t].append(item)
+
+    if not ticker_users_map:
+        return 0
+
+    # 針對有推播需求的標的進行信號判定
+    for t, user_items in ticker_users_map.items():
+        market, _ = get_info(t)
+        sig = check_bottom_confirmation_signals(t, market=market)
+
+        if sig.get("triggered"):
+            sname = sig.get("stock_name", t)
+            close_now = sig.get("close_now", 0.0)
+            sig_name = sig.get("signal_name", "BPA 高勝率買點")
+            sig_desc = sig.get("signal_desc", "")
+            buy_stop = sig.get("buy_stop", close_now)
+            sell_stop = sig.get("sell_stop", close_now)
+            t1 = sig.get("target_1r", close_now)
+            t2 = sig.get("target_2r", close_now)
+
+            logger.info(f"🎯 標的 {t} 觸發回測確認買點：{sig_name}！")
+
+            alert_flex = bot_flex.build_buy_signal_alert_flex(
+                sname, t, sig_name, sig_desc, close_now,
+                buy_stop, sell_stop, t1, t2
+            )
+
+            for u in user_items:
+                uid = u["user_id"]
+                l_uid = u["line_user_id"]
+
+                if bot_db.should_send_alert(uid, t, "BPA_BUY_SETUP") or force_test:
+                    if line_bot_api:
+                        try:
+                            msg = FlexSendMessage(
+                                alt_text=f"🎯【BPA買點通知】{sname} ({t}) 觸發 {sig_name}",
+                                contents=alert_flex
+                            )
+                            line_bot_api.push_message(l_uid, msg)
+                            logger.info(f"已發送買點推播至 LINE 用戶 {l_uid} 標的 {t}")
+                        except Exception as e:
+                            logger.error(f"發送買點 LINE Push 失敗: {e}")
+                    else:
+                        logger.info(f"[模擬推播] 發送買點通知卡至用戶 {l_uid} 標的 {t}")
+
+                    bot_db.record_alert_log(uid, t, "BPA_BUY_SETUP", close_now)
+                    alerts_triggered += 1
+
+    return alerts_triggered
+
 def start_worker_loop(interval_sec=60, force_test=False):
-    """巡邏循環主函數"""
+    """巡邏循環主函數：整合持股停損巡邏與觀察名單買點巡邏"""
     logger.info(f"盤中風控巡邏 Worker 啟動！巡邏間隔: {interval_sec} 秒 (測試模式: {force_test})")
+    last_watchlist_patrol_ts = 0
+    WATCHLIST_INTERVAL_SEC = 900  # 觀察名單每 15 分鐘（900秒）掃描一次
+
     while True:
         try:
             if is_market_open(force_test=force_test):
                 logger.info("執行盤中風控巡邏比對...")
-                triggered = run_patrol_cycle(force_test=force_test)
-                if triggered > 0:
-                    logger.info(f"本次巡邏發出 {triggered} 則停損告警。")
+                triggered_stop = run_patrol_cycle(force_test=force_test)
+                if triggered_stop > 0:
+                    logger.info(f"本次巡邏發出 {triggered_stop} 則停損告警。")
+
+                # 檢查是否達到觀察名單掃描週期
+                now_ts = time.time()
+                if (now_ts - last_watchlist_patrol_ts >= WATCHLIST_INTERVAL_SEC) or force_test:
+                    logger.info("執行觀察名單 BPA 回測買點巡邏比對...")
+                    triggered_buy = run_watchlist_patrol_cycle(force_test=force_test)
+                    if triggered_buy > 0:
+                        logger.info(f"本次觀察名單巡邏發出 {triggered_buy} 則買點通知。")
+                    last_watchlist_patrol_ts = now_ts
             else:
                 logger.debug("目前非盤中交易時段，休眠中...")
         except Exception as e:
@@ -134,3 +318,5 @@ def start_worker_loop(interval_sec=60, force_test=False):
 if __name__ == "__main__":
     # 若直接執行預設為強制測試 1 次
     run_patrol_cycle(force_test=True)
+    run_watchlist_patrol_cycle(force_test=True)
+

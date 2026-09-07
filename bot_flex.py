@@ -830,3 +830,369 @@ def build_dashboard_stock_flex(
     }
     return flex_bubble
 
+def build_watchlist_flex(user_name, items):
+    """
+    建立用戶自選觀察清單 Flex Bubble
+    items: list of dict(ticker, stock_name, current_price, chg_val, chg_pct, bpa_zh, bpa_color, ema20_dist, dist_desc)
+    """
+    body_contents = []
+
+    if not items:
+        body_contents.append({
+            "type": "text",
+            "text": "目前尚無觀察股票。\n請輸入「關注 2330」或「追蹤 00708L」將標的加入觀察清單！",
+            "wrap": True,
+            "color": "#94a3b8",
+            "size": "sm",
+            "margin": "md"
+        })
+    else:
+        for idx, item in enumerate(items):
+            if idx > 0:
+                body_contents.append({
+                    "type": "separator",
+                    "margin": "lg",
+                    "color": "#334155"
+                })
+
+            chg_val = item.get("chg_val", 0.0)
+            chg_pct = item.get("chg_pct", 0.0)
+            chg_color = get_tw_pnl_color(chg_val)
+            chg_sign = "+" if chg_val > 0 else ""
+
+            body_contents.append({
+                "type": "box",
+                "layout": "vertical",
+                "margin": "md",
+                "contents": [
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "contents": [
+                            {
+                                "type": "text",
+                                "text": f"{item['stock_name']} ({item['ticker']})",
+                                "weight": "bold",
+                                "size": "md",
+                                "color": "#f8fafc",
+                                "flex": 3
+                            },
+                            {
+                                "type": "text",
+                                "text": f"{item['current_price']:.2f}",
+                                "weight": "bold",
+                                "size": "md",
+                                "color": chg_color,
+                                "align": "end",
+                                "flex": 2
+                            }
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "margin": "xs",
+                        "contents": [
+                            {
+                                "type": "text",
+                                "text": item.get("bpa_zh", "常態運行"),
+                                "size": "xs",
+                                "color": item.get("bpa_color", "#fbbf24"),
+                                "flex": 2
+                            },
+                            {
+                                "type": "text",
+                                "text": f"{chg_sign}{chg_val:.2f} ({chg_sign}{chg_pct:.2f}%) ｜ {item.get('dist_desc', '')}",
+                                "size": "xs",
+                                "color": "#94a3b8",
+                                "align": "end",
+                                "flex": 3
+                            }
+                        ]
+                    },
+                    {
+                        "type": "box",
+                        "layout": "horizontal",
+                        "margin": "sm",
+                        "spacing": "xs",
+                        "contents": [
+                            {
+                                "type": "button",
+                                "style": "secondary",
+                                "color": "#1e293b",
+                                "height": "sm",
+                                "flex": 1,
+                                "action": {
+                                    "type": "message",
+                                    "label": f"4合1診斷",
+                                    "text": item['ticker']
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "style": "primary",
+                                "color": "#0284c7",
+                                "height": "sm",
+                                "flex": 1,
+                                "action": {
+                                    "type": "message",
+                                    "label": f"買 {item['ticker']}",
+                                    "text": f"買 {item['ticker']} {item['current_price']:.2f}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            })
+
+    flex_bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#0f172a",
+            "paddingAll": "16px",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "📋 自選觀察清單",
+                            "weight": "bold",
+                            "size": "lg",
+                            "color": "#f8fafc",
+                            "flex": 3
+                        },
+                        {
+                            "type": "text",
+                            "text": f"{len(items)} 檔追蹤中",
+                            "size": "xs",
+                            "color": "#38bdf8",
+                            "align": "end",
+                            "flex": 2
+                        }
+                    ]
+                },
+                {
+                    "type": "text",
+                    "text": "⚡ 盤中自動偵測回測 20 EMA / H2 雙重底確認買點",
+                    "size": "xs",
+                    "color": "#94a3b8",
+                    "margin": "xs"
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1e293b",
+            "paddingAll": "16px",
+            "contents": body_contents
+        },
+        "footer": {
+            "type": "box",
+            "layout": "horizontal",
+            "backgroundColor": "#0f172a",
+            "paddingAll": "12px",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "color": "#334155",
+                    "height": "sm",
+                    "action": {
+                        "type": "message",
+                        "label": "查看持倉庫存",
+                        "text": "持倉"
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "color": "#334155",
+                    "height": "sm",
+                    "action": {
+                        "type": "message",
+                        "label": "指令說明",
+                        "text": "說明"
+                    }
+                }
+            ]
+        }
+    }
+    return flex_bubble
+
+def build_buy_signal_alert_flex(
+    stock_name: str,
+    ticker: str,
+    signal_name: str,
+    signal_desc: str,
+    close_now: float,
+    buy_stop: float,
+    sell_stop: float,
+    target_1r: float,
+    target_2r: float
+):
+    """
+    建立觀察名單觸發 BPA 高勝率底部回測確認買點的專屬綠色推播 Flex Bubble
+    """
+    flex_bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#064e3b",
+            "paddingAll": "16px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "🎯 BPA 高勝率買點觸發！",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": "#6ee7b7"
+                },
+                {
+                    "type": "text",
+                    "text": "觀察標的回測底部確認，順勢高盈虧比進場機會！",
+                    "size": "xs",
+                    "color": "#a7f3d0",
+                    "margin": "xs"
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1e293b",
+            "paddingAll": "16px",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"{stock_name} ({ticker})",
+                            "weight": "bold",
+                            "size": "xl",
+                            "color": "#ffffff",
+                            "flex": 3
+                        },
+                        {
+                            "type": "text",
+                            "text": f"{close_now:.2f} 元",
+                            "weight": "bold",
+                            "size": "xl",
+                            "color": "#34d399",
+                            "align": "end",
+                            "flex": 2
+                        }
+                    ]
+                },
+                {
+                    "type": "separator",
+                    "margin": "md",
+                    "color": "#334155"
+                },
+                # 訊號名稱與形態解析
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#022c22",
+                    "cornerRadius": "6px",
+                    "paddingAll": "10px",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": signal_name,
+                            "weight": "bold",
+                            "size": "sm",
+                            "color": "#34d399"
+                        },
+                        {
+                            "type": "text",
+                            "text": signal_desc,
+                            "size": "xs",
+                            "color": "#cbd5e1",
+                            "margin": "xs",
+                            "wrap": True
+                        }
+                    ]
+                },
+                # 風控掛單指標
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {"type": "text", "text": "建議突破買進 (Buy Stop)", "size": "xs", "color": "#94a3b8", "flex": 3},
+                                {"type": "text", "text": f"{buy_stop:.2f} 元", "size": "xs", "color": "#38bdf8", "weight": "bold", "align": "end", "flex": 2}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "margin": "xs",
+                            "contents": [
+                                {"type": "text", "text": "防守停損線 (Stop Loss)", "size": "xs", "color": "#94a3b8", "flex": 3},
+                                {"type": "text", "text": f"{sell_stop:.2f} 元", "size": "xs", "color": "#f87171", "weight": "bold", "align": "end", "flex": 2}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "margin": "xs",
+                            "contents": [
+                                {"type": "text", "text": "等距獲利目標 (1R / 2R)", "size": "xs", "color": "#94a3b8", "flex": 3},
+                                {"type": "text", "text": f"{target_1r:.2f} / {target_2r:.2f} 元", "size": "xs", "color": "#fbbf24", "weight": "bold", "align": "end", "flex": 2}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "horizontal",
+            "backgroundColor": "#0f172a",
+            "paddingAll": "12px",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#059669",
+                    "height": "sm",
+                    "action": {
+                        "type": "message",
+                        "label": f"買 {ticker}",
+                        "text": f"買 {ticker} {close_now:.2f}"
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "color": "#334155",
+                    "height": "sm",
+                    "action": {
+                        "type": "message",
+                        "label": "4合1 診斷",
+                        "text": ticker
+                    }
+                }
+            ]
+        }
+    }
+    return flex_bubble
+
+

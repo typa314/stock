@@ -62,6 +62,22 @@ def init_db(db_path=None):
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )
         """)
+
+        # 4. 觀察清單表（追蹤回測買點）
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            ticker TEXT NOT NULL,
+            stock_name TEXT,
+            note TEXT,
+            active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(user_id, ticker)
+        )
+        """)
         conn.commit()
 
 def get_or_create_user(line_user_id, display_name=None, db_path=None):
@@ -170,3 +186,77 @@ def record_alert_log(user_id, ticker, alert_type, trigger_price, alert_date=None
         VALUES (?, ?, ?, ?, ?)
         """, (user_id, str(ticker).strip(), alert_type, float(trigger_price), today_str))
         conn.commit()
+
+# ── 觀察名單 (Watchlist) 管理 ──────────────────────────────
+def add_to_watchlist(line_user_id, ticker, stock_name=None, note=None, max_limit=10, db_path=None):
+    """
+    將股票加入用戶的觀察名單，受 max_limit 額度保護
+    回傳: (ok: bool, message: str)
+    """
+    user = get_or_create_user(line_user_id, db_path=db_path)
+    user_id = user["id"]
+    t = str(ticker).strip().upper()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        # 檢查該用戶當前已啟用之觀察股數量
+        cursor.execute(
+            "SELECT COUNT(*) as cnt FROM watchlist WHERE user_id = ? AND active = 1 AND ticker != ?",
+            (user_id, t)
+        )
+        row = cursor.fetchone()
+        current_cnt = row["cnt"] if row else 0
+        if current_cnt >= max_limit:
+            return False, f"⚠️ 您的觀察名單已達上限（{max_limit} 檔）！\n請先輸入「取消關注 [代號]」移出舊標的。"
+
+        cursor.execute("""
+        INSERT INTO watchlist (user_id, ticker, stock_name, note, active, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?)
+        ON CONFLICT(user_id, ticker) DO UPDATE SET
+            stock_name = COALESCE(excluded.stock_name, watchlist.stock_name),
+            note = COALESCE(excluded.note, watchlist.note),
+            active = 1,
+            updated_at = excluded.updated_at
+        """, (user_id, t, stock_name, note, now_str))
+        conn.commit()
+        return True, f"✅ 已成功將【{stock_name or t} ({t})】加入自選觀察名單！"
+
+def remove_from_watchlist(line_user_id, ticker, db_path=None):
+    """將股票自用戶觀察名單移除（標記 active=0）"""
+    user = get_or_create_user(line_user_id, db_path=db_path)
+    user_id = user["id"]
+    t = str(ticker).strip().upper()
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE watchlist SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND ticker = ? AND active = 1",
+            (user_id, t)
+        )
+        affected = cursor.rowcount
+        conn.commit()
+        return affected > 0
+
+def get_user_watchlist(line_user_id, db_path=None):
+    """取得指定用戶的所有有效觀察名單"""
+    user = get_or_create_user(line_user_id, db_path=db_path)
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM watchlist WHERE user_id = ? AND active = 1 ORDER BY updated_at DESC",
+            (user["id"],)
+        )
+        return [dict(r) for r in cursor.fetchall()]
+
+def get_all_active_watchlist(db_path=None):
+    """供盤中巡邏 Worker 批次查詢所有開啟推播用戶的觀察名單標的"""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+        SELECT w.*, u.line_user_id, u.display_name, u.alert_enabled
+        FROM watchlist w
+        JOIN users u ON w.user_id = u.id
+        WHERE w.active = 1 AND u.alert_enabled = 1
+        """)
+        return [dict(r) for r in cursor.fetchall()]

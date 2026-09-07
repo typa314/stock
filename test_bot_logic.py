@@ -67,6 +67,32 @@ class TestLineBotCore(unittest.TestCase):
         self.assertEqual(len(positions_remaining), 1)
         self.assertEqual(positions_remaining[0]["ticker"], "3042")
 
+        # ── 測試自選觀察名單 (Watchlist) CRUD ──
+        # 加入 2330 到觀察名單
+        ok_w, msg_w = bot_db.add_to_watchlist(self.user_id, "2330", "台積電", max_limit=2, db_path=self.test_db)
+        self.assertTrue(ok_w)
+        self.assertIn("台積電", msg_w)
+
+        # 加入 00708L
+        ok_w2, _ = bot_db.add_to_watchlist(self.user_id, "00708L", "期元大S&P黃金正2", max_limit=2, db_path=self.test_db)
+        self.assertTrue(ok_w2)
+
+        # 嘗試加入第 3 檔（應觸發上限保護 max_limit=2）
+        ok_w3, msg_w3 = bot_db.add_to_watchlist(self.user_id, "2603", "長榮", max_limit=2, db_path=self.test_db)
+        self.assertFalse(ok_w3)
+        self.assertIn("已達上限", msg_w3)
+
+        # 查詢名單
+        wl = bot_db.get_user_watchlist(self.user_id, db_path=self.test_db)
+        self.assertEqual(len(wl), 2)
+
+        # 移除 2330
+        rm_ok = bot_db.remove_from_watchlist(self.user_id, "2330", db_path=self.test_db)
+        self.assertTrue(rm_ok)
+        wl_after = bot_db.get_user_watchlist(self.user_id, db_path=self.test_db)
+        self.assertEqual(len(wl_after), 1)
+        self.assertEqual(wl_after[0]["ticker"], "00708L")
+
     def test_02_alert_throttle_deduplication(self):
         """測試單日單股告警去重冷卻機制"""
         user = bot_db.get_or_create_user(self.user_id, db_path=self.test_db)
@@ -130,6 +156,28 @@ class TestLineBotCore(unittest.TestCase):
         self.assertEqual(dash_flex["size"], "giga")
         self.assertIn("台積電", dash_flex["header"]["contents"][0]["contents"][0]["contents"][0]["text"])
 
+        # 測試 自選觀察清單 Flex
+        wl_flex = bot_flex.build_watchlist_flex("小明", [{
+            "ticker": "2330",
+            "stock_name": "台積電",
+            "current_price": 1020.0,
+            "chg_val": 15.0,
+            "chg_pct": 1.49,
+            "bpa_zh": "AIL 多頭主控",
+            "bpa_color": "#4ade80",
+            "dist_desc": "回踩月線有守"
+        }])
+        self.assertEqual(wl_flex["type"], "bubble")
+        self.assertIn("自選觀察清單", wl_flex["header"]["contents"][0]["contents"][0]["text"])
+
+        # 測試 BPA 高勝率買點觸發推播 Flex
+        sig_flex = bot_flex.build_buy_signal_alert_flex(
+            "台積電", "2330", "🔥 High 2 (H2) 雙重底回踩買點",
+            "波段回檔 ABC 修正結束，空方無力跌破！", 1020.0, 1025.0, 1000.0, 1050.0, 1075.0
+        )
+        self.assertEqual(sig_flex["type"], "bubble")
+        self.assertIn("BPA 高勝率買點觸發", sig_flex["header"]["contents"][0]["text"])
+
     def test_04_command_parser_integration(self):
         """測試自然語言指令解析與相應回覆"""
         # 測試 說明 指令
@@ -164,12 +212,24 @@ class TestLineBotCore(unittest.TestCase):
         res_pos_empty = line_server.handle_user_command(self.user_id, "持倉")
         self.assertIn("尚無任何持倉記錄", res_pos_empty)
 
+        # 測試 關注 / 追蹤 指令
+        res_watch = line_server.handle_user_command(self.user_id, "關注 2330")
+        self.assertIn("成功將【台積電 (2330)】加入自選觀察名單", res_watch)
+
+        # 測試 自選 / 清單 指令 (回傳 Flex 卡片)
+        res_wl = line_server.handle_user_command(self.user_id, "自選")
+        self.assertIsInstance(res_wl, dict)
+        self.assertEqual(res_wl.get("type"), "bubble")
+
+        # 測試 取消關注 指令
+        res_unwatch = line_server.handle_user_command(self.user_id, "取消關注 2330")
+        self.assertIn("成功將【2330】移出觀察清單", res_unwatch)
+
     def test_05_patrol_worker_simulation(self):
         """測試盤中巡邏 Worker 跌破停損比對與冷卻去重"""
         import monitor_worker
         from unittest.mock import patch
 
-        # 設定測試資料庫路徑給預設模組
         old_db = bot_db.DEFAULT_DB_PATH
         try:
             bot_db.DEFAULT_DB_PATH = self.test_db
@@ -186,6 +246,42 @@ class TestLineBotCore(unittest.TestCase):
                 # 第二次巡邏：當日已告警過，應啟動冷卻去重 (0 則)
                 triggered_second = monitor_worker.run_patrol_cycle(force_test=True)
                 self.assertEqual(triggered_second, 0)
+        finally:
+            bot_db.DEFAULT_DB_PATH = old_db
+
+    def test_06_watchlist_patrol_simulation(self):
+        """測試觀察名單巡邏 Worker 回測買點比對與冷卻去重"""
+        import monitor_worker
+        from unittest.mock import patch
+
+        old_db = bot_db.DEFAULT_DB_PATH
+        try:
+            bot_db.DEFAULT_DB_PATH = self.test_db
+            # 加入觀察名單
+            bot_db.add_to_watchlist(self.user_id, "2330", "台積電")
+
+            # 模擬觸發 High 2 買點信號
+            mock_signal = {
+                "triggered": True,
+                "signal_name": "🔥 High 2 (H2) 雙重底回踩買點",
+                "signal_desc": "波段回檔 ABC 修正結束，空方無力跌破！",
+                "buy_stop": 1025.0,
+                "sell_stop": 1000.0,
+                "target_1r": 1050.0,
+                "target_2r": 1075.0,
+                "close_now": 1020.0,
+                "stock_name": "台積電",
+                "market": "tse"
+            }
+
+            with patch("monitor_worker.check_bottom_confirmation_signals", return_value=mock_signal):
+                # 第一次巡邏：應發出 1 則買點通知
+                triggered_buy1 = monitor_worker.run_watchlist_patrol_cycle(force_test=True)
+                self.assertEqual(triggered_buy1, 1)
+
+                # 第二次巡邏：當日已推播過，應啟動單日冷卻去重 (0 則)
+                triggered_buy2 = monitor_worker.run_watchlist_patrol_cycle(force_test=False)
+                self.assertEqual(triggered_buy2, 0)
         finally:
             bot_db.DEFAULT_DB_PATH = old_db
 

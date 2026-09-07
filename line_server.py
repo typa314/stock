@@ -238,6 +238,121 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
         flex_dict = bot_flex.build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct)
         return flex_dict
 
+    # 3.1 加入自選觀察清單 (追蹤回測底部買點)
+    elif action in ["關注", "追蹤", "自選+", "+", "watch", "w"]:
+        if len(tokens) < 2:
+            return "⚠️ 格式錯誤！請輸入：\n關注 [股票代號]\n範例：關注 2330 或 關注 00708L"
+        raw_t = tokens[1].strip()
+        cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
+        ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
+        ticker = ticker_match.group().upper() if ticker_match else cleaned_t
+
+        market, sname = get_info(ticker)
+        ok, msg = bot_db.add_to_watchlist(user_id, ticker, stock_name=sname, max_limit=10)
+        if not ok:
+            return msg
+
+        # 取得最新現價做為即時回饋
+        rt = fetch_realtime_bar(ticker, market)
+        cur_p_str = f"{rt['close']:.2f} 元" if (rt and rt.get("close")) else "連線撮合中"
+
+        reply = (
+            f"⭐ 已成功將【{sname} ({ticker})】加入自選觀察名單！\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"• 目前現價：{cur_p_str}\n"
+            f"• 監控模式：BPA 回測底部確認雷達\n"
+            f"• 觸發條件：High 2 雙重底 / 20 EMA 支撐回踩 / S1 反轉\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🛡️ 盤中一旦確認高勝率買點，系統將主動推播通知！\n"
+            f"隨時輸入「自選」或「清單」即可查看追蹤列表。"
+        )
+        return reply
+
+    # 3.2 取消關注 / 移出觀察名單
+    elif action in ["取消關注", "取消追蹤", "退訂", "自選-", "-", "unwatch", "uw"]:
+        if len(tokens) < 2:
+            return "⚠️ 格式錯誤！請輸入：\n取消關注 [股票代號]\n範例：取消關注 2330"
+        raw_t = tokens[1].strip()
+        cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
+        ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
+        ticker = ticker_match.group().upper() if ticker_match else cleaned_t
+
+        ok = bot_db.remove_from_watchlist(user_id, ticker)
+        if ok:
+            return f"✅ 已成功將【{ticker}】移出觀察清單，停止盤中買點推播！"
+        else:
+            return f"⚠️ 您的觀察名單中目前沒有【{ticker}】。"
+
+    # 3.3 查詢自選觀察清單
+    elif action in ["自選", "自選股", "觀察名單", "清單", "watchlist", "wl"]:
+        watch_items = bot_db.get_user_watchlist(user_id)
+        if not watch_items:
+            return (
+                "📋 您的自選觀察名單目前是空的。\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "💡 加入方式：輸入「關注 2330」或「追蹤 00708L」\n"
+                "盤中一旦偵測到 20 EMA 支撐回測或 High 2 底部確認，系統將主動震動通知您！"
+            )
+
+        items = []
+        for w in watch_items:
+            t = w["ticker"]
+            market, sname = get_info(t)
+            sname = sname or w.get("stock_name", t)
+
+            # 抓取即時行情撮合
+            rt = fetch_realtime_bar(t, market)
+            if rt and rt.get("close") and rt["close"] > 0:
+                cur_p = float(rt["close"])
+                chg_val = cur_p - float(rt["open"]) if rt.get("open") else 0.0
+                chg_pct = (chg_val / float(rt["open"])) * 100 if rt.get("open") else 0.0
+            else:
+                try:
+                    res_alt = get_cached_stock_analysis(t, months=1)
+                    cur_p = float(res_alt["close_now"]) if res_alt and "close_now" in res_alt else 0.0
+                    df_alt = res_alt.get("df")
+                    prev_c = float(df_alt["close"].iloc[-2]) if (df_alt is not None and len(df_alt) >= 2) else cur_p
+                    chg_val = cur_p - prev_c
+                    chg_pct = (chg_val / prev_c) * 100 if prev_c > 0 else 0.0
+                except Exception:
+                    cur_p = 0.0
+                    chg_val = 0.0
+                    chg_pct = 0.0
+
+            # 取得 BPA 狀態與 20 EMA 距離
+            try:
+                res_alt = get_cached_stock_analysis(t, months=1)
+                bpa_res = res_alt.get("bpa_res", {})
+                bpa_zh = bpa_res.get("always_in_zh", "箱型震盪")
+                bpa_color = "#4ade80" if "多" in bpa_zh else ("#f87171" if "空" in bpa_zh else "#fbbf24")
+                df_alt = res_alt.get("df")
+                ema_v = float(df_alt["ema20"].iloc[-1]) if (df_alt is not None and "ema20" in df_alt.columns) else cur_p
+                dist_pct = ((cur_p - ema_v) / ema_v * 100) if ema_v > 0 else 0.0
+                if abs(dist_pct) <= 1.0:
+                    dist_desc = "回踩月線有守"
+                elif dist_pct > 0:
+                    dist_desc = f"距月線 +{dist_pct:.1f}%"
+                else:
+                    dist_desc = f"距月線 {dist_pct:.1f}%"
+            except Exception:
+                bpa_zh = "常態整理"
+                bpa_color = "#94a3b8"
+                dist_desc = "觀察中"
+
+            items.append({
+                "ticker": t,
+                "stock_name": sname,
+                "current_price": cur_p,
+                "chg_val": chg_val,
+                "chg_pct": chg_pct,
+                "bpa_zh": bpa_zh,
+                "bpa_color": bpa_color,
+                "dist_desc": dist_desc
+            })
+
+        flex_dict = bot_flex.build_watchlist_flex(user_name, items)
+        return flex_dict
+
     # 4. 單檔股票代號查詢 (支援純代號 2330, 00708L, 查 2330, 診斷 00708L, 2330.TW 等)
     elif (
         re.match(r"^\d{4,6}[a-zA-Z]?(\.(tw|two))?$", action, re.IGNORECASE)
@@ -296,10 +411,14 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             "   賣 2330\n\n"
             "📌 查詢持倉與損益：\n"
             "   輸入「持倉」或「庫存」\n\n"
-            "📌 單股 BPA 研判：\n"
-            "   直接輸入代號，如「2330」\n"
+            "📌 自選觀察與買點雷達：\n"
+            "   關注 2330 (加入追蹤)\n"
+            "   取消關注 2330 (移出清單)\n"
+            "   自選 或 清單 (查觀察名單)\n\n"
+            "📌 單股 BPA 4合1 旗艦研判：\n"
+            "   直接輸入代號，如「2330」或「00708L」\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "🛡️ 盤中跌破 -7% 強制停損時將主動震動通知！"
+            "🛡️ 盤中跌破 -7% 停損或觸發高勝率買點時主動通知！"
         )
 
     else:
