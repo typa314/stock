@@ -288,7 +288,7 @@ def build_stop_loss_alert_flex(stock_name, ticker, current_price, cost_price, st
     return flex_bubble
 
 def build_single_stock_flex(stock_name, ticker, close_now, chg_val, chg_pct, ema20_val, action_tag, action_sub, s1, r1):
-    """建立單檔個股 BPA 即時診斷 Flex Bubble"""
+    """建立單檔個股 BPA 即時診斷 Flex Bubble（輕量版相容接口）"""
     chg_color = get_tw_pnl_color(chg_val)
     chg_sign = "+" if chg_val > 0 else ""
 
@@ -407,3 +407,426 @@ def build_single_stock_flex(stock_name, ticker, close_now, chg_val, chg_pct, ema
         }
     }
     return flex_bubble
+
+def build_dashboard_stock_flex(
+    stock_name: str,
+    ticker: str,
+    market: str,
+    close_now: float,
+    chg_val: float,
+    chg_pct: float,
+    realtime_info: dict,
+    df,
+    bpa_res: dict,
+    trend_score: int,
+    trend_stage: str,
+    rating_badge: str,
+    comp: dict,
+    sr: dict
+):
+    """
+    建立 1:1 復刻 Web 儀表板的旗艦級 4合1 多維綜合評鑑 Flex Bubble
+    包含：
+    1. 頂部行情 + 盤中撮合標籤 + 漲跌幅
+    2. 行動指引橫幅 (綜合評分 / 星級評等 / 操盤建議)
+    3. 4 大核心量化指標 (BPA市場狀態 / 20 EMA位階 / 多維量化評級 / 當前K線結構)
+    4. 巨星多維綜合評級 (Minervini趨勢樣板 / CANSLIM成長動能 / BPA價格行為 / 量能籌碼法人)
+    5. 操盤方針指引與支撐壓力 S1/R1
+    6. 一鍵下單買進與持倉查詢按鈕
+    """
+    m_label = "上市 (TSE)" if str(market).lower() == "tse" else "上櫃 (OTC)"
+    is_rt = bool(realtime_info and realtime_info.get("is_realtime"))
+    rt_time = realtime_info.get("time", "") if realtime_info else ""
+    rt_text = f"⚡ 盤中即時 {rt_time}" if is_rt else "📅 盤後定盤"
+    rt_bg = "#064e3b" if is_rt else "#1e293b"
+    rt_color = "#34d399" if is_rt else "#94a3b8"
+
+    chg_color = get_tw_pnl_color(chg_val)
+    chg_sign = "+" if chg_val > 0 else ""
+
+    # 行動指引與綜合評鑑
+    comp = comp or {}
+    action_tag = comp.get("action_tag", "🟡 建議觀望")
+    action_advice = comp.get("action_sub", "順應 20 EMA 趨勢動態運行")
+    score_val = comp.get("score", 70)
+    badge_text = comp.get("badge", "⭐⭐⭐⭐ 優質多頭")
+
+    if "買" in action_tag:
+        act_bg = "#052e16"
+        act_border = "#22c55e"
+        act_color = "#4ade80"
+    elif "空" in action_tag or "賣" in action_tag or "減" in action_tag:
+        act_bg = "#450a0a"
+        act_border = "#ef4444"
+        act_color = "#f87171"
+    elif "持" in action_tag:
+        act_bg = "#082f49"
+        act_border = "#38bdf8"
+        act_color = "#38bdf8"
+    else:
+        act_bg = "#422006"
+        act_border = "#f59e0b"
+        act_color = "#fbbf24"
+
+    # 4 大量化指標
+    bpa_res = bpa_res or {}
+    ai_zh = bpa_res.get("always_in_zh", "箱型震盪")
+    ai_desc = bpa_res.get("always_in_desc", "區間高出低進 (突破易失敗)")
+    ai_color = "#4ade80" if "多" in ai_zh else ("#f87171" if "空" in ai_zh else "#fbbf24")
+
+    ema_val = float(df["ema20"].iloc[-1]) if (df is not None and hasattr(df, "columns") and "ema20" in df.columns and not df.empty) else close_now
+    bias_ema = bpa_res.get("bias_ema20", 0.0)
+    slope_ema = bpa_res.get("ema_slope", 0.0)
+
+    last_bar = bpa_res.get("last_bar_type", "普通K線").split("/")[0].strip()
+    stage_text = trend_stage.split("（")[0] if trend_stage else "常態整理"
+    rating_short = rating_badge.split("（")[0] if rating_badge else "量化平穩"
+
+    # 巨星多維 4 格
+    m_passed = comp.get("minervini_passed", 5)
+    m_status = comp.get("minervini_status", "符合樣板")
+    m_color = comp.get("minervini_color", "#4ade80")
+
+    c_grade = comp.get("canslim_grade", "A+ 卓越")
+    c_sub = comp.get("canslim_sub", "動能穩健")
+    c_color = comp.get("canslim_color", "#4ade80")
+
+    b_zh = comp.get("bpa_zh", ai_zh)
+    b_sub = comp.get("bpa_sub", "區間運行")
+    b_color = comp.get("bpa_color", ai_color)
+
+    chip_zh = comp.get("chip_zh", "籌碼常態")
+    chip_sub = comp.get("chip_sub", "動向中性")
+    chip_color = comp.get("chip_color", "#94a3b8")
+
+    summary_advice = comp.get("summary_advice", "中期架構穩健，順應 20 EMA 支撐防守操作。")
+
+    s1 = float(sr.get("s1", close_now * 0.98)) if sr else close_now * 0.98
+    r1 = float(sr.get("r1", close_now * 1.02)) if sr else close_now * 1.02
+
+    flex_bubble = {
+        "type": "bubble",
+        "size": "giga",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#0b1120",
+            "paddingAll": "16px",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "flex": 3,
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": f"{stock_name} {ticker}",
+                                    "weight": "bold",
+                                    "size": "xl",
+                                    "color": "#f8fafc"
+                                },
+                                {
+                                    "type": "box",
+                                    "layout": "horizontal",
+                                    "margin": "xs",
+                                    "spacing": "xs",
+                                    "contents": [
+                                        {
+                                            "type": "box",
+                                            "layout": "vertical",
+                                            "backgroundColor": "#1e293b",
+                                            "cornerRadius": "4px",
+                                            "paddingAll": "2px",
+                                            "contents": [
+                                                {"type": "text", "text": f" {m_label} ", "size": "xxs", "color": "#94a3b8"}
+                                            ]
+                                        },
+                                        {
+                                            "type": "box",
+                                            "layout": "vertical",
+                                            "backgroundColor": rt_bg,
+                                            "cornerRadius": "4px",
+                                            "paddingAll": "2px",
+                                            "contents": [
+                                                {"type": "text", "text": f" {rt_text} ", "size": "xxs", "color": rt_color, "weight": "bold"}
+                                            ]
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "flex": 2,
+                            "contents": [
+                                {"type": "text", "text": f"{close_now:.2f}", "weight": "bold", "size": "xl", "color": chg_color, "align": "end"},
+                                {"type": "text", "text": f"{chg_sign}{chg_val:.2f} ({chg_sign}{chg_pct:.2f}%)", "weight": "bold", "size": "xs", "color": chg_color, "align": "end"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#0f172a",
+            "paddingAll": "14px",
+            "contents": [
+                # 行動指引橫幅
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": act_bg,
+                    "cornerRadius": "8px",
+                    "paddingAll": "10px",
+                    "borderWidth": "1px",
+                    "borderColor": act_border,
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": action_tag,
+                                    "weight": "bold",
+                                    "size": "xs",
+                                    "color": act_color,
+                                    "flex": 2
+                                },
+                                {
+                                    "type": "text",
+                                    "text": f"評分: {score_val}/100 ｜ {badge_text}",
+                                    "size": "xxs",
+                                    "color": "#94a3b8",
+                                    "align": "end",
+                                    "flex": 3
+                                }
+                            ]
+                        },
+                        {
+                            "type": "text",
+                            "text": action_advice,
+                            "size": "xs",
+                            "color": "#f1f5f9",
+                            "wrap": True,
+                            "margin": "xs"
+                        }
+                    ]
+                },
+                # 4 大關鍵指標 Grid
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "md",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#1e293b",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "BPA 市場狀態", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": ai_zh, "weight": "bold", "size": "sm", "color": ai_color, "margin": "xs"},
+                                {"type": "text", "text": ai_desc, "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#1e293b",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "20 EMA 基準位階", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": f"{ema_val:.2f}", "weight": "bold", "size": "sm", "color": "#f8fafc", "margin": "xs"},
+                                {"type": "text", "text": f"乖離 {bias_ema:+.1f}% ｜ 斜率 {slope_ema:+.1f}%", "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "sm",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#1e293b",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "多維量化評級", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": f"{trend_score:+d} 分", "weight": "bold", "size": "sm", "color": "#38bdf8", "margin": "xs"},
+                                {"type": "text", "text": rating_short, "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#1e293b",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "當前 K 線結構", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": last_bar, "weight": "bold", "size": "sm", "color": "#f8fafc", "margin": "xs"},
+                                {"type": "text", "text": stage_text, "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        }
+                    ]
+                },
+                # 巨星多維綜合評級 (4合1)
+                {
+                    "type": "text",
+                    "text": f"🌟 多維綜合評級 ｜ 評分：{score_val} / 100",
+                    "weight": "bold",
+                    "size": "xs",
+                    "color": "#38bdf8",
+                    "margin": "md"
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "xs",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#131f33",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "趨勢樣板 (Minervini)", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": f"{m_passed}/7 項", "weight": "bold", "size": "sm", "color": m_color, "margin": "xs"},
+                                {"type": "text", "text": m_status, "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#131f33",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "成長動能 (CANSLIM)", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": c_grade, "weight": "bold", "size": "sm", "color": c_color, "margin": "xs"},
+                                {"type": "text", "text": c_sub, "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "sm",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#131f33",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "價格行為 (BPA)", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": b_zh, "weight": "bold", "size": "sm", "color": b_color, "margin": "xs"},
+                                {"type": "text", "text": b_sub, "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#131f33",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "量能籌碼 (VPA/法人)", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": chip_zh, "weight": "bold", "size": "sm", "color": chip_color, "margin": "xs"},
+                                {"type": "text", "text": chip_sub, "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        }
+                    ]
+                },
+                # 操盤方針摘要
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#14243b",
+                    "cornerRadius": "6px",
+                    "paddingAll": "8px",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"🎯 操盤方針：{action_tag} ｜ {summary_advice}",
+                            "size": "xxs",
+                            "color": "#cbd5e1",
+                            "wrap": True
+                        }
+                    ]
+                },
+                # 支撐 S1 與壓力 R1
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "sm",
+                    "contents": [
+                        {"type": "text", "text": f"支撐 S1: {s1:.2f} 元 (月線)", "size": "xxs", "color": "#4ade80", "flex": 1},
+                        {"type": "text", "text": f"壓力 R1: {r1:.2f} 元 (前高)", "size": "xxs", "color": "#f87171", "align": "end", "flex": 1}
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "horizontal",
+            "backgroundColor": "#0b1120",
+            "paddingAll": "12px",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#0284c7",
+                    "height": "sm",
+                    "action": {
+                        "type": "message",
+                        "label": f"買 {ticker}",
+                        "text": f"買 {ticker} {close_now:.2f}"
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "color": "#334155",
+                    "height": "sm",
+                    "action": {
+                        "type": "message",
+                        "label": "查看持倉",
+                        "text": "持倉"
+                    }
+                }
+            ]
+        }
+    }
+    return flex_bubble
+

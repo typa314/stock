@@ -39,7 +39,7 @@ CACHE_TTL_SEC = 60  # 快取有效時間 60 秒
 
 def get_cached_stock_analysis(ticker: str, months: int = 1):
     """
-    獲取個股 BPA 量化數據，支援 60s 記憶體快取與 quick_mode 極速分析
+    獲取個股多維度量化數據，支援 60s 記憶體快取
     """
     now = time.time()
     if ticker in _STOCK_CACHE:
@@ -48,8 +48,8 @@ def get_cached_stock_analysis(ticker: str, months: int = 1):
             logger.info(f"快取命中！【{ticker}】自記憶體快取即刻回傳（耗時 < 1ms）")
             return cached_res
 
-    # 採用 quick_mode=True 跳過圖表渲染與冗餘報表，僅保留核心 K 線與 BPA 形態，耗時 < 1s
-    res = analyze_stock(ticker, months=months, generate_html=False, print_report=False, quick_mode=True)
+    # 執行完整多維度分析（Minervini + CANSLIM + BPA + 籌碼），跳過圖表渲染與磁碟寫入，耗時約 1-2 秒
+    res = analyze_stock(ticker, months=months, generate_html=False, print_report=False)
     _STOCK_CACHE[ticker] = (now, res)
     return res
 
@@ -248,41 +248,28 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             res = get_cached_stock_analysis(ticker, months=1)
             sname = res.get("stock_name", ticker)
             df = res["df"]
-            bpa_res = res["bpa_res"]
-            sr = res["sr_levels"]
-            close_now = float(res["close_now"])
+            bpa_res = res.get("bpa_res", {})
+            sr = res.get("sr_levels", {})
+            close_now = float(res.get("close_now", 0.0))
             prev_close = float(df["close"].iloc[-2]) if len(df) >= 2 else close_now
             chg_val = close_now - prev_close
             chg_pct = (chg_val / prev_close) * 100 if prev_close > 0 else 0.0
-            ema20_val = float(df["ema20"].iloc[-1]) if "ema20" in df.columns else close_now
 
-            if math.isnan(ema20_val) or ema20_val <= 0:
-                ema20_val = close_now
-
-            always_code = bpa_res.get("always_in_code", "TR")
-            if always_code == "AIL":
-                action_tag = "🟢 建議買入 (AIL 多頭主控)"
-            elif always_code == "AIS":
-                action_tag = "🔴 建議逢高做空 (AIS 空頭主控)"
-            else:
-                action_tag = "🟡 建議觀望 (TR 區間震盪)"
-
-            sig_list = bpa_res.get("signals", [])
-            if sig_list:
-                action_sub = sig_list[-1]
-            else:
-                action_sub = f"順應 20 EMA（{ema20_val:.2f} 元）趨勢運行"
-
-            s1 = float(sr.get("s1", close_now * 0.98))
-            r1 = float(sr.get("r1", close_now * 1.02))
-            if math.isnan(s1) or s1 <= 0:
-                s1 = round(close_now * 0.98, 2)
-            if math.isnan(r1) or r1 <= 0:
-                r1 = round(close_now * 1.02, 2)
-
-            flex_dict = bot_flex.build_single_stock_flex(
-                sname, ticker, close_now, chg_val, chg_pct, ema20_val,
-                action_tag, action_sub, s1, r1
+            flex_dict = bot_flex.build_dashboard_stock_flex(
+                stock_name=sname,
+                ticker=ticker,
+                market=res.get("market", "tse"),
+                close_now=close_now,
+                chg_val=chg_val,
+                chg_pct=chg_pct,
+                realtime_info=res.get("realtime_info"),
+                df=df,
+                bpa_res=bpa_res,
+                trend_score=res.get("trend_score", 0),
+                trend_stage=res.get("trend_stage", ""),
+                rating_badge=res.get("rating_badge", ""),
+                comp=res.get("composite_rating"),
+                sr=sr
             )
             return flex_dict
         except Exception as e:

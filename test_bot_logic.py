@@ -117,6 +117,19 @@ class TestLineBotCore(unittest.TestCase):
         )
         self.assertEqual(single_flex["type"], "bubble")
 
+        # 測試 1:1 復刻 Web 儀表板旗艦級 4合1 多維綜合評鑑 Flex
+        dash_flex = bot_flex.build_dashboard_stock_flex(
+            stock_name="台積電", ticker="2330", market="tse",
+            close_now=1020.0, chg_val=15.0, chg_pct=1.49,
+            realtime_info={"is_realtime": True, "time": "13:30:00"},
+            df=None, bpa_res={}, trend_score=2, trend_stage="多頭推升",
+            rating_badge="優質多頭", comp={"score": 85, "badge": "⭐⭐⭐⭐⭐ 優質多頭", "action_tag": "🟢 建議買入"},
+            sr={"s1": 1000.0, "r1": 1050.0}
+        )
+        self.assertEqual(dash_flex["type"], "bubble")
+        self.assertEqual(dash_flex["size"], "giga")
+        self.assertIn("台積電", dash_flex["header"]["contents"][0]["contents"][0]["contents"][0]["text"])
+
     def test_04_command_parser_integration(self):
         """測試自然語言指令解析與相應回覆"""
         # 測試 說明 指令
