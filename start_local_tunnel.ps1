@@ -68,24 +68,23 @@ try {
 # 4. 啟動 Cloudflare Tunnel 並自動擷取穿透網址
 Write-Host "`n🌐 [2/2] 正在建立 Cloudflare 穿透通道 (Quick Tunnel)..." -ForegroundColor Cyan
 
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $CloudflaredBin
-$psi.Arguments = "tunnel --url http://127.0.0.1:8080"
-$psi.RedirectStandardError = $true
-$psi.UseShellExecute = $false
-$psi.CreateNoWindow = $true
+$CfLogFile = "$CurrentDir\cloudflared.log"
+if (Test-Path $CfLogFile) { Remove-Item $CfLogFile -Force -ErrorAction SilentlyContinue }
 
-$TunnelProcess = [System.Diagnostics.Process]::Start($psi)
+$TunnelProcess = Start-Process -FilePath $CloudflaredBin -ArgumentList "tunnel --url http://127.0.0.1:8080" -RedirectStandardError $CfLogFile -WindowStyle Hidden -PassThru
 
 $DetectedUrl = ""
-$MaxWaitSec = 20
+$MaxWaitSec = 25
 $StartTime = Get-Date
 
 while (-not $TunnelProcess.HasExited -and -not $DetectedUrl) {
-    $line = $TunnelProcess.StandardError.ReadLine()
-    if ($line -and $line -match "https://[a-zA-Z0-9-]+\.trycloudflare\.com") {
-        $DetectedUrl = $matches[0]
-        break
+    Start-Sleep -Milliseconds 800
+    if (Test-Path $CfLogFile) {
+        $logContent = Get-Content $CfLogFile -Raw -ErrorAction SilentlyContinue
+        if ($logContent -and $logContent -match "https://[a-zA-Z0-9-]+\.trycloudflare\.com") {
+            $DetectedUrl = $matches[0]
+            break
+        }
     }
     if ((Get-Date) - $StartTime -gt (New-TimeSpan -Seconds $MaxWaitSec)) {
         break
@@ -114,7 +113,7 @@ if ($DetectedUrl) {
             "Content-Type"  = "application/json"
         }
         $Body = @{
-            "name" = "LOCAL_BACKEND_URL"
+            "name" = "LOCAL_TUNNEL_URL"
             "text" = $DetectedUrl
             "type" = "secret_text"
         } | ConvertTo-Json
