@@ -31,7 +31,7 @@ export default {
     const renderUrl = sanitizeBaseUrl(env.RENDER_BACKEND_URL || "https://tw-stock-bpa-bot.onrender.com");
     const backup3Url = sanitizeBaseUrl(env.BACKUP_3_URL || "");
 
-    const localTimeout = parseInt(env.LOCAL_TIMEOUT_MS || "1500", 10);
+    const localTimeout = parseInt(env.LOCAL_TIMEOUT_MS || "4200", 10);
     const cloudTimeout = parseInt(env.CLOUD_TIMEOUT_MS || "25000", 10);
 
     const backends = [];

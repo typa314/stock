@@ -20,6 +20,9 @@ load_dotenv(os.path.join(current_dir, ".env"))
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 import uvicorn
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import requests
 
 import bot_db
 import bot_flex
@@ -32,26 +35,55 @@ logger = logging.getLogger("line_bot")
 # 初始化資料庫
 bot_db.init_db()
 
+# ── 雙節點資料庫自動同步 (Local <-> Render Cloud) ──
+RENDER_BACKEND_URL = os.environ.get("RENDER_BACKEND_URL", "https://tw-stock-bpa-bot.onrender.com").strip().rstrip("/")
+
+def sync_to_cloud_async():
+    """在背景非同步將本地資料庫快照推送到 Render 雲端備援"""
+    if not RENDER_BACKEND_URL or "127.0.0.1" in RENDER_BACKEND_URL or "localhost" in RENDER_BACKEND_URL:
+        return
+    def _run():
+        try:
+            snapshot = bot_db.export_db_snapshot()
+            url = f"{RENDER_BACKEND_URL}/api/sync_db"
+            res = requests.post(url, json=snapshot, timeout=5)
+            if res.status_code == 200:
+                logger.info("✅ 已成功將本地持倉與自選資料庫同步至 Render 雲端！")
+        except Exception as e:
+            logger.debug(f"雲端資料庫同步略過: {e}")
+    threading.Thread(target=_run, daemon=True).start()
+
+# 啟動時背景觸發一次資料同步
+sync_to_cloud_async()
+
+
 # ── 記憶體快取機制（加速個股查詢與避免重複請求超時） ──
 import time
 _STOCK_CACHE = {}  # ticker -> (timestamp, analysis_dict)
 CACHE_TTL_SEC = 60  # 快取有效時間 60 秒
 
-def get_cached_stock_analysis(ticker: str, months: int = 1):
+def get_cached_stock_analysis(ticker: str, months: int = 1, quick_mode: bool = False):
     """
     獲取個股多維度量化數據，支援 60s 記憶體快取
     """
     now = time.time()
-    if ticker in _STOCK_CACHE:
-        cached_ts, cached_res = _STOCK_CACHE[ticker]
+    cache_key = f"{ticker}_{months}_{quick_mode}"
+    full_key = f"{ticker}_{months}_False"
+    if full_key in _STOCK_CACHE:
+        cached_ts, cached_res = _STOCK_CACHE[full_key]
         if now - cached_ts < CACHE_TTL_SEC:
-            logger.info(f"快取命中！【{ticker}】自記憶體快取即刻回傳（耗時 < 1ms）")
+            logger.info(f"快取命中！【{ticker}】(完整快取) 自記憶體即刻回傳（耗時 < 1ms）")
+            return cached_res
+    if cache_key in _STOCK_CACHE:
+        cached_ts, cached_res = _STOCK_CACHE[cache_key]
+        if now - cached_ts < CACHE_TTL_SEC:
+            logger.info(f"快取命中！【{ticker}】(quick_mode={quick_mode}) 自記憶體即刻回傳（耗時 < 1ms）")
             return cached_res
 
-    # 執行完整多維度分析（Minervini + CANSLIM + BPA + 籌碼），跳過圖表渲染與磁碟寫入，耗時約 1-2 秒
-    res = analyze_stock(ticker, months=months, generate_html=False, print_report=False)
-    _STOCK_CACHE[ticker] = (now, res)
+    res = analyze_stock(ticker, months=months, generate_html=False, print_report=False, quick_mode=quick_mode)
+    _STOCK_CACHE[cache_key] = (now, res)
     return res
+
 
 # LINE 設定憑證（優先從環境變數讀取，若未設定則為預設占位字串）
 CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "YOUR_CHANNEL_SECRET").strip().strip('"').strip("'")
@@ -101,6 +133,22 @@ def health_check():
         "line_sdk_configured": line_bot_api is not None
     }
 
+@app.get("/api/sync_db")
+def get_db_snapshot():
+    """供雙節點查詢資料庫快照"""
+    return bot_db.export_db_snapshot()
+
+@app.post("/api/sync_db")
+async def post_db_snapshot(req: Request):
+    """供雙節點寫入資料庫快照"""
+    try:
+        data = await req.json()
+        ok = bot_db.import_db_snapshot(data)
+        return {"status": "ok" if ok else "error"}
+    except Exception as e:
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=400)
+
+
 def handle_user_command(user_id: str, text: str, user_name: str = "投資人", is_group: bool = False):
     """
     核心指令處理器：
@@ -135,6 +183,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
 
         market, sname = get_info(ticker)
         bot_db.add_or_update_position(user_id, ticker, cost_p, shares, sname)
+        sync_to_cloud_async()
         stop_7 = round(cost_p * 0.93, 2)
         stop_8 = round(cost_p * 0.92, 2)
 
@@ -161,6 +210,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
         ticker = ticker_match.group().upper() if ticker_match else cleaned_t
         ok = bot_db.close_position(user_id, ticker)
         if ok:
+            sync_to_cloud_async()
             return f"✅ 已成功將【{ticker}】結案平倉，並已移出盤中風控巡邏監控！"
         else:
             return f"⚠️ 找不到【{ticker}】的進行中持倉記錄。"
@@ -257,6 +307,8 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
         if not ok:
             return msg
 
+        sync_to_cloud_async()
+
         # 取得最新現價做為即時回饋
         rt = fetch_realtime_bar(ticker, market)
         cur_p_str = f"{rt['close']:.2f} 元" if (rt and rt.get("close")) else "連線撮合中"
@@ -290,6 +342,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
 
         ok = bot_db.remove_from_watchlist(user_id, ticker)
         if ok:
+            sync_to_cloud_async()
             return f"✅ 已成功將【{ticker}】移出觀察清單，停止盤中買點推播！"
         else:
             return f"⚠️ 您的觀察名單中目前沒有【{ticker}】。"
@@ -305,8 +358,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
                 "盤中一旦偵測到 20 EMA 支撐回測或 High 2 底部確認，系統將主動震動通知您！"
             )
 
-        items = []
-        for w in watch_items:
+        def process_one_watch_item(w):
             t = w["ticker"]
             market, sname = get_info(t)
             sname = sname or w.get("stock_name", t)
@@ -319,7 +371,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
                 chg_pct = (chg_val / float(rt["open"])) * 100 if rt.get("open") else 0.0
             else:
                 try:
-                    res_alt = get_cached_stock_analysis(t, months=1)
+                    res_alt = get_cached_stock_analysis(t, months=1, quick_mode=True)
                     cur_p = float(res_alt["close_now"]) if res_alt and "close_now" in res_alt else 0.0
                     df_alt = res_alt.get("df")
                     prev_c = float(df_alt["close"].iloc[-2]) if (df_alt is not None and len(df_alt) >= 2) else cur_p
@@ -332,7 +384,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
 
             # 取得 BPA 狀態與 20 EMA 距離
             try:
-                res_alt = get_cached_stock_analysis(t, months=1)
+                res_alt = get_cached_stock_analysis(t, months=1, quick_mode=True)
                 bpa_res = res_alt.get("bpa_res", {})
                 bpa_zh = bpa_res.get("always_in_zh", "箱型震盪")
                 bpa_color = "#4ade80" if "多" in bpa_zh else ("#f87171" if "空" in bpa_zh else "#fbbf24")
@@ -350,7 +402,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
                 bpa_color = "#94a3b8"
                 dist_desc = "觀察中"
 
-            items.append({
+            return {
                 "ticker": t,
                 "stock_name": sname,
                 "current_price": cur_p,
@@ -359,7 +411,10 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
                 "bpa_zh": bpa_zh,
                 "bpa_color": bpa_color,
                 "dist_desc": dist_desc
-            })
+            }
+
+        with ThreadPoolExecutor(max_workers=min(len(watch_items), 8)) as executor:
+            items = list(executor.map(process_one_watch_item, watch_items))
 
         flex_dict = bot_flex.build_watchlist_flex(user_name, items)
         return flex_dict

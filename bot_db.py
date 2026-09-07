@@ -261,3 +261,57 @@ def get_all_active_watchlist(db_path=None):
         WHERE w.active = 1 AND u.alert_enabled = 1
         """)
         return [dict(r) for r in cursor.fetchall()]
+
+# ── 雙節點資料同步 (Database Snapshot Export / Import) ─────
+def export_db_snapshot(db_path=None):
+    """匯出所有用戶、持倉與自選觀察名單快照字典"""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        users = [dict(r) for r in cursor.execute("SELECT id, line_user_id, display_name, alert_enabled, created_at FROM users").fetchall()]
+        positions = [dict(r) for r in cursor.execute("SELECT id, user_id, ticker, stock_name, shares, cost_price, stop_loss_pct, status, created_at, updated_at FROM positions").fetchall()]
+        watchlist = [dict(r) for r in cursor.execute("SELECT id, user_id, ticker, stock_name, note, active, created_at, updated_at FROM watchlist").fetchall()]
+        return {"users": users, "positions": positions, "watchlist": watchlist}
+
+def import_db_snapshot(data, db_path=None):
+    """將外部快照資料寫入本地資料庫 (以 updated_at 較新或最新資料寫入)"""
+    if not isinstance(data, dict):
+        return False
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        for u in data.get("users", []):
+            cursor.execute("""
+            INSERT INTO users (id, line_user_id, display_name, alert_enabled, created_at)
+            VALUES (:id, :line_user_id, :display_name, :alert_enabled, :created_at)
+            ON CONFLICT(line_user_id) DO UPDATE SET
+                display_name = excluded.display_name,
+                alert_enabled = excluded.alert_enabled
+            """, u)
+
+        for p in data.get("positions", []):
+            cursor.execute("""
+            INSERT INTO positions (id, user_id, ticker, stock_name, shares, cost_price, stop_loss_pct, status, created_at, updated_at)
+            VALUES (:id, :user_id, :ticker, :stock_name, :shares, :cost_price, :stop_loss_pct, :status, :created_at, :updated_at)
+            ON CONFLICT(user_id, ticker) DO UPDATE SET
+                stock_name = excluded.stock_name,
+                shares = excluded.shares,
+                cost_price = excluded.cost_price,
+                stop_loss_pct = excluded.stop_loss_pct,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            WHERE excluded.updated_at >= positions.updated_at
+            """, p)
+
+        for w in data.get("watchlist", []):
+            cursor.execute("""
+            INSERT INTO watchlist (id, user_id, ticker, stock_name, note, active, created_at, updated_at)
+            VALUES (:id, :user_id, :ticker, :stock_name, :note, :active, :created_at, :updated_at)
+            ON CONFLICT(user_id, ticker) DO UPDATE SET
+                stock_name = excluded.stock_name,
+                note = excluded.note,
+                active = excluded.active,
+                updated_at = excluded.updated_at
+            WHERE excluded.updated_at >= watchlist.updated_at
+            """, w)
+        conn.commit()
+    return True
+
