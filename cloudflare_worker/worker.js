@@ -26,6 +26,7 @@ export default {
 
     // ── 1. 定義後端備援節點清單（優先順序由上而下） ──
     const localUrl = sanitizeBaseUrl(env.LOCAL_BACKEND_URL || "");
+    const koyebUrl = sanitizeBaseUrl(env.KOYEB_BACKEND_URL || "");
     const hfUrl = sanitizeBaseUrl(env.HF_BACKEND_URL || "");
     const renderUrl = sanitizeBaseUrl(env.RENDER_BACKEND_URL || "https://tw-stock-bpa-bot.onrender.com");
     const backup3Url = sanitizeBaseUrl(env.BACKUP_3_URL || "");
@@ -46,11 +47,22 @@ export default {
       });
     }
 
-    // 若有設定 Hugging Face，列為旗艦主力雲端
+    // 若有設定 Koyeb，列為 24/7 不休眠主力雲端
+    if (koyebUrl) {
+      backends.push({
+        id: "koyeb_cloud",
+        name: "⚡ Koyeb 雲端 (24/7 不休眠主力)",
+        baseUrl: koyebUrl,
+        timeoutMs: cloudTimeout,
+        isLocal: false
+      });
+    }
+
+    // 若有設定 Hugging Face，列為備用雲端
     if (hfUrl) {
       backends.push({
         id: "huggingface_cloud",
-        name: "🤗 Hugging Face 旗艦雲端 (2核16G ⚡ 極速主力)",
+        name: "🤗 Hugging Face 旗艦雲端",
         baseUrl: hfUrl,
         timeoutMs: cloudTimeout,
         isLocal: false
