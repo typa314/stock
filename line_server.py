@@ -248,7 +248,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
         ticker = ticker_match.group().upper() if ticker_match else cleaned_t
 
         market, sname = get_info(ticker)
-        ok, msg = bot_db.add_to_watchlist(user_id, ticker, stock_name=sname, max_limit=10)
+        ok, msg = bot_db.add_to_watchlist(user_id, ticker, stock_name=sname)
         if not ok:
             return msg
 

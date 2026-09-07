@@ -188,9 +188,9 @@ def record_alert_log(user_id, ticker, alert_type, trigger_price, alert_date=None
         conn.commit()
 
 # ── 觀察名單 (Watchlist) 管理 ──────────────────────────────
-def add_to_watchlist(line_user_id, ticker, stock_name=None, note=None, max_limit=10, db_path=None):
+def add_to_watchlist(line_user_id, ticker, stock_name=None, note=None, max_limit=None, db_path=None):
     """
-    將股票加入用戶的觀察名單，受 max_limit 額度保護
+    將股票加入用戶的觀察名單（預設不設上限）
     回傳: (ok: bool, message: str)
     """
     user = get_or_create_user(line_user_id, db_path=db_path)
@@ -200,15 +200,16 @@ def add_to_watchlist(line_user_id, ticker, stock_name=None, note=None, max_limit
 
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
-        # 檢查該用戶當前已啟用之觀察股數量
-        cursor.execute(
-            "SELECT COUNT(*) as cnt FROM watchlist WHERE user_id = ? AND active = 1 AND ticker != ?",
-            (user_id, t)
-        )
-        row = cursor.fetchone()
-        current_cnt = row["cnt"] if row else 0
-        if current_cnt >= max_limit:
-            return False, f"⚠️ 您的觀察名單已達上限（{max_limit} 檔）！\n請先輸入「取消關注 [代號]」移出舊標的。"
+        # 若有特別指定 max_limit 則檢查，預設 None 不設數量上限
+        if max_limit is not None and max_limit > 0:
+            cursor.execute(
+                "SELECT COUNT(*) as cnt FROM watchlist WHERE user_id = ? AND active = 1 AND ticker != ?",
+                (user_id, t)
+            )
+            row = cursor.fetchone()
+            current_cnt = row["cnt"] if row else 0
+            if current_cnt >= max_limit:
+                return False, f"⚠️ 您的觀察名單已達上限（{max_limit} 檔）！\n請先輸入「取消關注 [代號]」移出舊標的。"
 
         cursor.execute("""
         INSERT INTO watchlist (user_id, ticker, stock_name, note, active, updated_at)

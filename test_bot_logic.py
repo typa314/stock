@@ -67,31 +67,29 @@ class TestLineBotCore(unittest.TestCase):
         self.assertEqual(len(positions_remaining), 1)
         self.assertEqual(positions_remaining[0]["ticker"], "3042")
 
-        # ── 測試自選觀察名單 (Watchlist) CRUD ──
-        # 加入 2330 到觀察名單
-        ok_w, msg_w = bot_db.add_to_watchlist(self.user_id, "2330", "台積電", max_limit=2, db_path=self.test_db)
+        # ── 測試自選觀察名單 (Watchlist) CRUD（預設不設上限） ──
+        # 預設不設上限：加入 2330 到觀察名單
+        ok_w, msg_w = bot_db.add_to_watchlist(self.user_id, "2330", "台積電", db_path=self.test_db)
         self.assertTrue(ok_w)
         self.assertIn("台積電", msg_w)
 
         # 加入 00708L
-        ok_w2, _ = bot_db.add_to_watchlist(self.user_id, "00708L", "期元大S&P黃金正2", max_limit=2, db_path=self.test_db)
+        ok_w2, _ = bot_db.add_to_watchlist(self.user_id, "00708L", "期元大S&P黃金正2", db_path=self.test_db)
         self.assertTrue(ok_w2)
 
-        # 嘗試加入第 3 檔（應觸發上限保護 max_limit=2）
-        ok_w3, msg_w3 = bot_db.add_to_watchlist(self.user_id, "2603", "長榮", max_limit=2, db_path=self.test_db)
-        self.assertFalse(ok_w3)
-        self.assertIn("已達上限", msg_w3)
+        # 加入第 3 檔（預設無上限，應順利成功）
+        ok_w3, _ = bot_db.add_to_watchlist(self.user_id, "2603", "長榮", db_path=self.test_db)
+        self.assertTrue(ok_w3)
 
-        # 查詢名單
+        # 查詢名單（應有 3 檔）
         wl = bot_db.get_user_watchlist(self.user_id, db_path=self.test_db)
-        self.assertEqual(len(wl), 2)
+        self.assertEqual(len(wl), 3)
 
         # 移除 2330
         rm_ok = bot_db.remove_from_watchlist(self.user_id, "2330", db_path=self.test_db)
         self.assertTrue(rm_ok)
         wl_after = bot_db.get_user_watchlist(self.user_id, db_path=self.test_db)
-        self.assertEqual(len(wl_after), 1)
-        self.assertEqual(wl_after[0]["ticker"], "00708L")
+        self.assertEqual(len(wl_after), 2)
 
     def test_02_alert_throttle_deduplication(self):
         """測試單日單股告警去重冷卻機制"""
