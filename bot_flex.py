@@ -806,8 +806,21 @@ def build_dashboard_stock_flex(
                 {
                     "type": "button",
                     "style": "primary",
+                    "color": "#0284c7",
+                    "height": "sm",
+                    "flex": 2,
+                    "action": {
+                        "type": "message",
+                        "label": "⚡ 5分K 當沖",
+                        "text": f"k{ticker}"
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "primary",
                     "color": "#d97706",
                     "height": "sm",
+                    "flex": 2,
                     "action": {
                         "type": "message",
                         "label": f"⭐ 關注 {ticker}",
@@ -819,6 +832,7 @@ def build_dashboard_stock_flex(
                     "style": "primary",
                     "color": "#2563eb",
                     "height": "sm",
+                    "flex": 2,
                     "action": {
                         "type": "message",
                         "label": "💼 查看持倉",
@@ -1188,6 +1202,374 @@ def build_buy_signal_alert_flex(
                         "type": "message",
                         "label": "📋 查看自選",
                         "text": "自選"
+                    }
+                }
+            ]
+        }
+    }
+    return flex_bubble
+
+
+def build_5m_stock_flex(res5: dict) -> dict:
+    """
+    建立 5 分鐘 K 線 (5m) BPA 日內當沖多維研判 Flex Bubble
+    包含：
+    1. 行情報頭（現價、今日高低振幅、時間）
+    2. 操盤方針 & 主力異動雷達橫幅
+    3. 4 大量化指標矩陣（5m BPA 狀態、20 EMA 乖離、最新 K 棒形態、量能倍數）
+    4. 當沖風控掛單指引卡（Buy Stop、Sell Stop、硬停損、1R、2R）
+    5. 快捷操作按鈕（日K 4合1診斷、關注、持倉，無買入按鈕）
+    """
+    ticker = str(res5.get("ticker", "")).upper()
+    stock_name = res5.get("stock_name", ticker)
+    market = str(res5.get("market", "tse")).lower()
+    m_label = "上市 (TSE)" if market == "tse" else "上櫃 (OTC)"
+
+    close_now = float(res5.get("close_now", 0.0))
+    chg_today = float(res5.get("change_today", 0.0))
+    chg_today_pct = float(res5.get("change_today_pct", 0.0))
+    chg_color = get_tw_pnl_color(chg_today)
+    chg_sign = "+" if chg_today > 0 else ""
+
+    high_today = float(res5.get("high_today", close_now))
+    low_today = float(res5.get("low_today", close_now))
+    range_today = float(res5.get("range_today", 0.0))
+    data_time_str = res5.get("data_time_str", "")
+
+    ema_now = float(res5.get("ema_now", close_now))
+    ema_bias_pct = float(res5.get("ema_bias_pct", 0.0))
+    ema_bias_sign = "+" if ema_bias_pct > 0 else ""
+
+    bpa_status = res5.get("bpa_status", "箱型震盪")
+    bpa_color = res5.get("bpa_status_color", "#fbbf24")
+
+    last_bar_type = res5.get("last_bar_type", "⚪ 普通震盪棒")
+    vol_now = float(res5.get("vol_now", 0.0))
+    vol_ratio_5m = float(res5.get("vol_ratio_5m", 1.0))
+
+    action_tag = res5.get("action_tag", "🟡 建議觀望整理")
+    action_sub = res5.get("action_sub", "")
+    action_color = res5.get("action_color", "#fbbf24")
+
+    whale_tag = res5.get("whale_tag", "⚪ 常態量能流動")
+    whale_color = res5.get("whale_color", "#94a3b8")
+    whale_advice = res5.get("whale_advice", "")
+
+    buy_stop = float(res5.get("buy_stop", close_now))
+    sell_stop = float(res5.get("sell_stop", close_now))
+    stop_loss = float(res5.get("stop_loss", close_now))
+    stop_type = res5.get("stop_type", "防守停損")
+    r_val = float(res5.get("r_val", 0.0))
+    target_1r = float(res5.get("target_1r", close_now))
+    target_2r = float(res5.get("target_2r", close_now))
+    pct_stop = abs(close_now - stop_loss) / close_now * 100 if close_now > 0 else 0.0
+    pct_1r = abs(target_1r - close_now) / close_now * 100 if close_now > 0 else 0.0
+    pct_2r = abs(target_2r - close_now) / close_now * 100 if close_now > 0 else 0.0
+
+    flex_bubble = {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#0b1329",
+            "paddingAll": "16px",
+            "contents": [
+                # 代號與名稱
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"{stock_name} ({ticker})",
+                            "weight": "bold",
+                            "size": "lg",
+                            "color": "#ffffff",
+                            "flex": 4
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#1e293b",
+                            "cornerRadius": "4px",
+                            "paddingStart": "6px",
+                            "paddingEnd": "6px",
+                            "paddingTop": "2px",
+                            "paddingBottom": "2px",
+                            "contents": [
+                                {"type": "text", "text": m_label, "size": "xxs", "color": "#94a3b8"}
+                            ]
+                        }
+                    ]
+                },
+                # 現價與漲跌幅
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"{close_now:.2f}",
+                            "size": "xxl",
+                            "weight": "bold",
+                            "color": "#ffffff",
+                            "flex": 3
+                        },
+                        {
+                            "type": "text",
+                            "text": f"{chg_sign}{chg_today:.2f} ({chg_sign}{chg_today_pct:.2f}%)",
+                            "size": "sm",
+                            "weight": "bold",
+                            "color": chg_color,
+                            "align": "end",
+                            "gravity": "bottom",
+                            "flex": 4
+                        }
+                    ]
+                },
+                # 日內區間與時間
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "sm",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"⚡ 5分K ｜ 振幅 {range_today:.2f}元 ({low_today:.2f}~{high_today:.2f})",
+                            "size": "xxs",
+                            "color": "#94a3b8",
+                            "flex": 5
+                        },
+                        {
+                            "type": "text",
+                            "text": data_time_str.split(" ")[-1] if data_time_str else "",
+                            "size": "xxs",
+                            "color": "#64748b",
+                            "align": "end",
+                            "flex": 3
+                        }
+                    ]
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#0f172a",
+            "paddingAll": "14px",
+            "contents": [
+                # 操盤方針與主力雷達橫幅
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#162235",
+                    "cornerRadius": "8px",
+                    "paddingAll": "10px",
+                    "borderColor": "#1e3a5f",
+                    "borderWidth": "1px",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": action_tag,
+                                    "weight": "bold",
+                                    "size": "sm",
+                                    "color": action_color,
+                                    "flex": 5
+                                },
+                                {
+                                    "type": "text",
+                                    "text": whale_tag,
+                                    "weight": "bold",
+                                    "size": "xs",
+                                    "color": whale_color,
+                                    "align": "end",
+                                    "flex": 4
+                                }
+                            ]
+                        },
+                        {
+                            "type": "text",
+                            "text": f"💡 {action_sub}",
+                            "size": "xxs",
+                            "color": "#cbd5e1",
+                            "wrap": True,
+                            "margin": "sm"
+                        },
+                        {
+                            "type": "text",
+                            "text": f"🎯 {whale_advice}",
+                            "size": "xxs",
+                            "color": "#94a3b8",
+                            "wrap": True,
+                            "margin": "xs"
+                        }
+                    ]
+                },
+                # 4 大量化核心指標 (2x2 Grid)
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "md",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#131f33",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "5m BPA 市場架構", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": bpa_status, "weight": "bold", "size": "xs", "color": bpa_color, "margin": "xs", "wrap": True}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#131f33",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "5m 20 EMA 基準", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": f"{ema_now:.2f} 元", "weight": "bold", "size": "xs", "color": "#38bdf8", "margin": "xs"},
+                                {"type": "text", "text": f"乖離 {ema_bias_sign}{ema_bias_pct:.1f}%", "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "sm",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#131f33",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "最新 5分K 棒形態", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": last_bar_type, "weight": "bold", "size": "xs", "color": "#ffffff", "margin": "xs", "wrap": True}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#131f33",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "flex": 1,
+                            "contents": [
+                                {"type": "text", "text": "5m 量能倍數", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": f"{vol_ratio_5m:.1f}倍 均量", "weight": "bold", "size": "xs", "color": whale_color, "margin": "xs"},
+                                {"type": "text", "text": f"現量 {int(vol_now)} 張", "size": "xxs", "color": "#64748b", "margin": "xs"}
+                            ]
+                        }
+                    ]
+                },
+                # 當沖風控掛單指引卡
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#14243b",
+                    "cornerRadius": "8px",
+                    "paddingAll": "10px",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "⚡ 5分K 當沖風控掛單指引 (BPA)",
+                            "weight": "bold",
+                            "size": "xs",
+                            "color": "#38bdf8"
+                        },
+                        {
+                            "type": "separator",
+                            "margin": "xs",
+                            "color": "#1e3a5f"
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "margin": "sm",
+                            "contents": [
+                                {"type": "text", "text": f"突破進場: {buy_stop:.2f}", "size": "xxs", "color": "#ef4444", "weight": "bold", "flex": 1},
+                                {"type": "text", "text": f"跌破放空: {sell_stop:.2f}", "size": "xxs", "color": "#22c55e", "weight": "bold", "align": "end", "flex": 1}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "margin": "xs",
+                            "contents": [
+                                {"type": "text", "text": f"防守停損: {stop_loss:.2f} (風險 {r_val:.2f}元/{pct_stop:.1f}%)", "size": "xxs", "color": "#f59e0b", "flex": 1}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "margin": "xs",
+                            "contents": [
+                                {"type": "text", "text": f"目標 1R: {target_1r:.2f} (+{pct_1r:.1f}%)", "size": "xxs", "color": "#4ade80", "flex": 1},
+                                {"type": "text", "text": f"目標 2R: {target_2r:.2f} (+{pct_2r:.1f}%)", "size": "xxs", "color": "#4ade80", "align": "end", "flex": 1}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "horizontal",
+            "backgroundColor": "#0b1120",
+            "paddingAll": "12px",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#0284c7",
+                    "height": "sm",
+                    "flex": 2,
+                    "action": {
+                        "type": "message",
+                        "label": "📊 查日K (4合1)",
+                        "text": ticker
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#d97706",
+                    "height": "sm",
+                    "flex": 2,
+                    "action": {
+                        "type": "message",
+                        "label": f"⭐ 關注 {ticker}",
+                        "text": f"+{ticker}"
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#2563eb",
+                    "height": "sm",
+                    "flex": 2,
+                    "action": {
+                        "type": "message",
+                        "label": "💼 查看持倉",
+                        "text": "持倉"
                     }
                 }
             ]

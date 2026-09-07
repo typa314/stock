@@ -26,7 +26,7 @@ import requests
 
 import bot_db
 import bot_flex
-from kline import get_info, fetch_realtime_bar, analyze_stock
+from kline import get_info, fetch_realtime_bar, analyze_stock, analyze_stock_5m
 
 # 設定記錄檔
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -82,6 +82,26 @@ def get_cached_stock_analysis(ticker: str, months: int = 1, quick_mode: bool = F
 
     res = analyze_stock(ticker, months=months, generate_html=False, print_report=False, quick_mode=quick_mode)
     _STOCK_CACHE[cache_key] = (now, res)
+    return res
+
+
+_STOCK_5M_CACHE = {}  # ticker -> (timestamp, analysis_dict)
+CACHE_5M_TTL_SEC = 30  # 5分K 快取有效時間 30 秒
+
+def get_cached_5m_analysis(ticker: str, days: int = 3):
+    """
+    獲取個股 5 分鐘 K 線當沖 BPA 多維量化數據，支援 30s 記憶體快取
+    """
+    now = time.time()
+    ticker_key = str(ticker).upper()
+    if ticker_key in _STOCK_5M_CACHE:
+        cached_ts, cached_res = _STOCK_5M_CACHE[ticker_key]
+        if now - cached_ts < CACHE_5M_TTL_SEC:
+            logger.info(f"5分K快取命中！【{ticker_key}】自記憶體即刻回傳（耗時 < 1ms）")
+            return cached_res
+
+    res = analyze_stock_5m(ticker=ticker_key, days=days)
+    _STOCK_5M_CACHE[ticker_key] = (now, res)
     return res
 
 
@@ -419,10 +439,34 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
         flex_dict = bot_flex.build_watchlist_flex(user_name, items)
         return flex_dict
 
+    # 3.9 查詢 5 分鐘 K 線當沖研判 (支援 k2330, K2330, k 2330, 5k 2330, 5m 2330, 5分 2330, 當沖 2330 等)
+    m_5m = re.match(r"^(k|5k|5m|5分|當沖)\s*(\d{4,6}[a-zA-Z]?)(\.(tw|two))?$", raw_text, re.IGNORECASE)
+    if m_5m or (action in ["k", "5k", "5m", "5分", "當沖"] and len(tokens) >= 2):
+        if m_5m and m_5m.group(2):
+            ticker_raw = m_5m.group(2)
+        elif len(tokens) >= 2:
+            ticker_raw = tokens[1].strip()
+        else:
+            ticker_raw = ""
+
+        cleaned_t = re.sub(r"\.(tw|two)$", "", ticker_raw, flags=re.IGNORECASE).upper()
+        ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
+        if not ticker_match:
+            return "⚠️ 請提供欲查詢 5 分 K 的股票代號，例如「k2330」或「k 00708L」"
+        ticker = ticker_match.group().upper()
+
+        try:
+            res5 = get_cached_5m_analysis(ticker, days=3)
+            flex_dict = bot_flex.build_5m_stock_flex(res5)
+            return flex_dict
+        except Exception as e:
+            logger.error(f"查詢 5分K【{ticker}】失敗: {e}", exc_info=True)
+            return f"⚠️ 查詢股票【{ticker}】5 分鐘 K 線失敗：{e}"
+
     # 4. 單檔股票代號查詢 (支援純代號 2330, 00708L, 查 2330, 診斷 00708L, 2330.TW 等)
     elif (
         re.match(r"^\d{4,6}[a-zA-Z]?(\.(tw|two))?$", action, re.IGNORECASE)
-        or (action in ["查", "查詢", "診斷", "分析", "看", "k", "bpa", "stock", "個股"] and len(tokens) >= 2)
+        or (action in ["查", "查詢", "診斷", "分析", "看", "bpa", "stock", "個股"] and len(tokens) >= 2)
         or (len(tokens) == 1 and re.search(r"\d{4,6}[a-zA-Z]?", action, re.IGNORECASE))
         or re.search(r"\d{4,6}[a-zA-Z]?", cmd, re.IGNORECASE)
     ):
@@ -481,6 +525,8 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             "   +2330 (快速加入追蹤)\n"
             "   -2330 (快速取消關注)\n"
             "   自選 或 清單 (查觀察名單)\n\n"
+            "📌 5分K 日內當沖研判：\n"
+            "   k2330 或 5k 2330 (查5分鐘K線與當沖掛單)\n\n"
             "📌 單股 BPA 4合1 旗艦研判：\n"
             "   直接輸入代號，如「2330」或「00708L」\n"
             "━━━━━━━━━━━━━━━━━━\n"
