@@ -9,6 +9,7 @@ streamlit>=1.30.0
 pyflakes>=3.0.0
 fastapi>=0.110.0
 uvicorn>=0.28.0
+gunicorn>=21.2.0
 line-bot-sdk>=3.0.0
 python-dotenv>=1.0.0
 Pillow>=10.0.0
