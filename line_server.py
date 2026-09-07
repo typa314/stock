@@ -232,10 +232,19 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
         flex_dict = bot_flex.build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct)
         return flex_dict
 
-    # 4. 單檔股票代號查詢 (4~6碼數字)
-    elif re.match(r"^\d{4,6}$", action):
-        ticker = action
+    # 4. 單檔股票代號查詢 (支援純代號 2330, 查 2330, 診斷 2330, 2330.TW 等)
+    elif (
+        re.match(r"^\d{4,6}(\.(tw|two))?$", action)
+        or (action in ["查", "查詢", "診斷", "分析", "看", "k", "bpa", "stock"] and len(tokens) >= 2)
+        or (len(tokens) == 1 and re.search(r"\d{4,6}", action))
+    ):
+        ticker_match = re.search(r"\b\d{4,6}\b", cmd) or re.search(r"\d{4,6}", cmd)
+        if not ticker_match:
+            return "⚠️ 請提供欲查詢的股票代號，例如「2330」或「查 2330」"
+        ticker = ticker_match.group()
+
         try:
+            import math
             res = get_cached_stock_analysis(ticker, months=1)
             sname = res.get("stock_name", ticker)
             df = res["df"]
@@ -246,6 +255,9 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             chg_val = close_now - prev_close
             chg_pct = (chg_val / prev_close) * 100 if prev_close > 0 else 0.0
             ema20_val = float(df["ema20"].iloc[-1]) if "ema20" in df.columns else close_now
+
+            if math.isnan(ema20_val) or ema20_val <= 0:
+                ema20_val = close_now
 
             always_code = bpa_res.get("always_in_code", "TR")
             if always_code == "AIL":
@@ -263,6 +275,10 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
 
             s1 = float(sr.get("s1", close_now * 0.98))
             r1 = float(sr.get("r1", close_now * 1.02))
+            if math.isnan(s1) or s1 <= 0:
+                s1 = round(close_now * 0.98, 2)
+            if math.isnan(r1) or r1 <= 0:
+                r1 = round(close_now * 1.02, 2)
 
             flex_dict = bot_flex.build_single_stock_flex(
                 sname, ticker, close_now, chg_val, chg_pct, ema20_val,
@@ -351,8 +367,16 @@ if handler:
 
         if isinstance(result, dict):
             # Flex Message 卡片回傳
-            flex_msg = FlexSendMessage(alt_text="📊 BPA 個人持股風控總覽", contents=result)
-            line_bot_api.reply_message(reply_token, flex_msg)
+            try:
+                header_text = result.get("header", {}).get("contents", [{}])[0].get("text", "📊 BPA 操盤診斷")
+                alt_txt = f"📊 {header_text}" if header_text else "📊 BPA 操盤診斷"
+                flex_msg = FlexSendMessage(alt_text=alt_txt, contents=result)
+                line_bot_api.reply_message(reply_token, flex_msg)
+            except Exception as fe:
+                logger.error(f"發送 Flex Message 失敗，啟動純文字備援: {fe}", exc_info=True)
+                # 若 LINE 客戶端或伺服器異常，自動降級以純文字回覆
+                fallback_txt = f"📊 【BPA 診斷回報】\n{header_text}\n現價與指標已計算完成。"
+                line_bot_api.reply_message(reply_token, TextSendMessage(text=fallback_txt))
         else:
             # 純文字訊息回傳
             txt_msg = TextSendMessage(text=result)

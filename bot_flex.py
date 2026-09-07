@@ -269,7 +269,7 @@ def build_stop_loss_alert_flex(stock_name, ticker, current_price, cost_price, st
                     "type": "box",
                     "layout": "vertical",
                     "margin": "lg",
-                    "backgroundColor": "rgba(239, 68, 68, 0.15)",
+                    "backgroundColor": "#3b1414",
                     "paddingAll": "10px",
                     "cornerRadius": "6px",
                     "contents": [
@@ -342,7 +342,7 @@ def build_single_stock_flex(stock_name, ticker, close_now, chg_val, chg_pct, ema
                 {
                     "type": "box",
                     "layout": "vertical",
-                    "backgroundColor": "rgba(56, 189, 248, 0.15)",
+                    "backgroundColor": "#0f2942",
                     "paddingAll": "10px",
                     "cornerRadius": "6px",
                     "contents": [
@@ -371,6 +371,37 @@ def build_single_stock_flex(stock_name, ticker, close_now, chg_val, chg_pct, ema
                         {"type": "text", "text": f"支撐 S1: {s1:.2f} 元", "size": "xs", "color": "#4ade80"},
                         {"type": "text", "text": f"壓力 R1: {r1:.2f} 元", "size": "xs", "color": "#f87171", "align": "end"}
                     ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "horizontal",
+            "backgroundColor": "#0f172a",
+            "paddingAll": "12px",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#0284c7",
+                    "height": "sm",
+                    "action": {
+                        "type": "message",
+                        "label": f"買 {ticker}",
+                        "text": f"買 {ticker} {close_now:.2f}"
+                    }
+                },
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "color": "#334155",
+                    "height": "sm",
+                    "action": {
+                        "type": "message",
+                        "label": "查持倉",
+                        "text": "持倉"
+                    }
                 }
             ]
         }
