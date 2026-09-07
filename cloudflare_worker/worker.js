@@ -25,7 +25,7 @@ export default {
     };
 
     // ── 1. 定義後端備援節點清單（優先順序由上而下） ──
-    const localUrl = sanitizeBaseUrl(env.LOCAL_BACKEND_URL || "");
+    const localUrl = sanitizeBaseUrl(env.LOCAL_TUNNEL_URL || env.LOCAL_BACKEND_URL || "");
     const koyebUrl = sanitizeBaseUrl(env.KOYEB_BACKEND_URL || "");
     const hfUrl = sanitizeBaseUrl(env.HF_BACKEND_URL || "");
     const renderUrl = sanitizeBaseUrl(env.RENDER_BACKEND_URL || "https://tw-stock-bpa-bot.onrender.com");
