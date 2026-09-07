@@ -32,6 +32,27 @@ logger = logging.getLogger("line_bot")
 # 初始化資料庫
 bot_db.init_db()
 
+# ── 記憶體快取機制（加速個股查詢與避免重複請求超時） ──
+import time
+_STOCK_CACHE = {}  # ticker -> (timestamp, analysis_dict)
+CACHE_TTL_SEC = 60  # 快取有效時間 60 秒
+
+def get_cached_stock_analysis(ticker: str, months: int = 1):
+    """
+    獲取個股 BPA 量化數據，支援 60s 記憶體快取與 quick_mode 極速分析
+    """
+    now = time.time()
+    if ticker in _STOCK_CACHE:
+        cached_ts, cached_res = _STOCK_CACHE[ticker]
+        if now - cached_ts < CACHE_TTL_SEC:
+            logger.info(f"快取命中！【{ticker}】自記憶體快取即刻回傳（耗時 < 1ms）")
+            return cached_res
+
+    # 採用 quick_mode=True 跳過圖表渲染與冗餘報表，僅保留核心 K 線與 BPA 形態，耗時 < 1s
+    res = analyze_stock(ticker, months=months, generate_html=False, print_report=False, quick_mode=True)
+    _STOCK_CACHE[ticker] = (now, res)
+    return res
+
 # LINE 設定憑證（優先從環境變數讀取，若未設定則為預設占位字串）
 CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "YOUR_CHANNEL_SECRET").strip().strip('"').strip("'")
 CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "YOUR_CHANNEL_ACCESS_TOKEN").strip().strip('"').strip("'")
@@ -161,8 +182,8 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             else:
                 # 備援：若非盤中抓取近期日K最新收盤
                 try:
-                    df_alt, _, _, _ = analyze_stock(t, months=1, generate_html=False, print_report=False)
-                    cur_p = float(df_alt["close"].iloc[-1]) if df_alt is not None and not df_alt.empty else cost_p
+                    res_alt = get_cached_stock_analysis(t, months=1)
+                    cur_p = float(res_alt["close_now"]) if res_alt and "close_now" in res_alt else cost_p
                 except Exception:
                     cur_p = cost_p
 
@@ -215,23 +236,41 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     elif re.match(r"^\d{4,6}$", action):
         ticker = action
         try:
-            market, sname = get_info(ticker)
-            df, bpa_res, sr, _ = analyze_stock(ticker, months=1, generate_html=False, print_report=False)
-            close_now = float(df["close"].iloc[-1])
+            res = get_cached_stock_analysis(ticker, months=1)
+            sname = res.get("stock_name", ticker)
+            df = res["df"]
+            bpa_res = res["bpa_res"]
+            sr = res["sr_levels"]
+            close_now = float(res["close_now"])
             prev_close = float(df["close"].iloc[-2]) if len(df) >= 2 else close_now
             chg_val = close_now - prev_close
-            chg_pct = (chg_val / prev_close) * 100
+            chg_pct = (chg_val / prev_close) * 100 if prev_close > 0 else 0.0
             ema20_val = float(df["ema20"].iloc[-1]) if "ema20" in df.columns else close_now
 
-            action_tag = "🟢 建議買入" if bpa_res.get("always_in_code") == "AIL" else ("🔴 建議逢高做空" if bpa_res.get("always_in_code") == "AIS" else "🟡 建議觀望")
-            action_sub = f"順應 20 EMA（{ema20_val:.2f} 元）趨勢運行"
+            always_code = bpa_res.get("always_in_code", "TR")
+            if always_code == "AIL":
+                action_tag = "🟢 建議買入 (AIL 多頭主控)"
+            elif always_code == "AIS":
+                action_tag = "🔴 建議逢高做空 (AIS 空頭主控)"
+            else:
+                action_tag = "🟡 建議觀望 (TR 區間震盪)"
+
+            sig_list = bpa_res.get("signals", [])
+            if sig_list:
+                action_sub = sig_list[-1]
+            else:
+                action_sub = f"順應 20 EMA（{ema20_val:.2f} 元）趨勢運行"
+
+            s1 = float(sr.get("s1", close_now * 0.98))
+            r1 = float(sr.get("r1", close_now * 1.02))
 
             flex_dict = bot_flex.build_single_stock_flex(
                 sname, ticker, close_now, chg_val, chg_pct, ema20_val,
-                action_tag, action_sub, sr["s1"], sr["r1"]
+                action_tag, action_sub, s1, r1
             )
             return flex_dict
         except Exception as e:
+            logger.error(f"查詢股票【{ticker}】失敗: {e}", exc_info=True)
             return f"⚠️ 查詢股票【{ticker}】失敗：{e}"
 
     # 5. 說明 / Help

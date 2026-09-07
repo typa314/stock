@@ -132,6 +132,15 @@ class TestLineBotCore(unittest.TestCase):
         res_sell = line_server.handle_user_command(self.user_id, "賣 2330")
         self.assertIn("已成功將【2330】結案平倉", res_sell)
 
+        # 測試 單檔股票 BPA 診斷查詢 (如 2330)
+        res_single = line_server.handle_user_command(self.user_id, "2330")
+        self.assertIsInstance(res_single, dict)
+        self.assertEqual(res_single.get("type"), "bubble")
+
+        # 測試 持倉 / 庫存 指令
+        res_pos_empty = line_server.handle_user_command(self.user_id, "持倉")
+        self.assertIn("尚無任何持倉記錄", res_pos_empty)
+
     def test_05_patrol_worker_simulation(self):
         """測試盤中巡邏 Worker 跌破停損比對與冷卻去重"""
         import monitor_worker
