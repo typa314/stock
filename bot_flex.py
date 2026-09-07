@@ -384,22 +384,22 @@ def build_single_stock_flex(stock_name, ticker, close_now, chg_val, chg_pct, ema
                 {
                     "type": "button",
                     "style": "primary",
-                    "color": "#0284c7",
+                    "color": "#d97706",
                     "height": "sm",
                     "action": {
                         "type": "message",
-                        "label": f"買 {ticker}",
-                        "text": f"買 {ticker} {close_now:.2f}"
+                        "label": f"⭐ 關注 {ticker}",
+                        "text": f"+{ticker}"
                     }
                 },
                 {
                     "type": "button",
-                    "style": "secondary",
-                    "color": "#334155",
+                    "style": "primary",
+                    "color": "#2563eb",
                     "height": "sm",
                     "action": {
                         "type": "message",
-                        "label": "查持倉",
+                        "label": "💼 查看持倉",
                         "text": "持倉"
                     }
                 }
@@ -806,22 +806,22 @@ def build_dashboard_stock_flex(
                 {
                     "type": "button",
                     "style": "primary",
-                    "color": "#0284c7",
+                    "color": "#d97706",
                     "height": "sm",
                     "action": {
                         "type": "message",
-                        "label": f"買 {ticker}",
-                        "text": f"買 {ticker} {close_now:.2f}"
+                        "label": f"⭐ 關注 {ticker}",
+                        "text": f"+{ticker}"
                     }
                 },
                 {
                     "type": "button",
-                    "style": "secondary",
-                    "color": "#334155",
+                    "style": "primary",
+                    "color": "#2563eb",
                     "height": "sm",
                     "action": {
                         "type": "message",
-                        "label": "查看持倉",
+                        "label": "💼 查看持倉",
                         "text": "持倉"
                     }
                 }
@@ -918,26 +918,26 @@ def build_watchlist_flex(user_name, items):
                         "contents": [
                             {
                                 "type": "button",
-                                "style": "secondary",
-                                "color": "#1e293b",
-                                "height": "sm",
-                                "flex": 1,
-                                "action": {
-                                    "type": "message",
-                                    "label": f"4合1診斷",
-                                    "text": item['ticker']
-                                }
-                            },
-                            {
-                                "type": "button",
                                 "style": "primary",
                                 "color": "#0284c7",
                                 "height": "sm",
                                 "flex": 1,
                                 "action": {
                                     "type": "message",
-                                    "label": f"買 {item['ticker']}",
-                                    "text": f"買 {item['ticker']} {item['current_price']:.2f}"
+                                    "label": "📊 4合1診斷",
+                                    "text": item['ticker']
+                                }
+                            },
+                            {
+                                "type": "button",
+                                "style": "primary",
+                                "color": "#475569",
+                                "height": "sm",
+                                "flex": 1,
+                                "action": {
+                                    "type": "message",
+                                    "label": "➖ 取消關注",
+                                    "text": f"-{item['ticker']}"
                                 }
                             }
                         ]
@@ -1001,23 +1001,23 @@ def build_watchlist_flex(user_name, items):
             "contents": [
                 {
                     "type": "button",
-                    "style": "secondary",
-                    "color": "#334155",
+                    "style": "primary",
+                    "color": "#2563eb",
                     "height": "sm",
                     "action": {
                         "type": "message",
-                        "label": "查看持倉庫存",
+                        "label": "💼 查看持倉",
                         "text": "持倉"
                     }
                 },
                 {
                     "type": "button",
-                    "style": "secondary",
-                    "color": "#334155",
+                    "style": "primary",
+                    "color": "#4f46e5",
                     "height": "sm",
                     "action": {
                         "type": "message",
-                        "label": "指令說明",
+                        "label": "📖 指令說明",
                         "text": "說明"
                     }
                 }
@@ -1171,23 +1171,23 @@ def build_buy_signal_alert_flex(
                 {
                     "type": "button",
                     "style": "primary",
-                    "color": "#059669",
+                    "color": "#0284c7",
                     "height": "sm",
                     "action": {
                         "type": "message",
-                        "label": f"買 {ticker}",
-                        "text": f"買 {ticker} {close_now:.2f}"
+                        "label": "📊 4合1 診斷",
+                        "text": ticker
                     }
                 },
                 {
                     "type": "button",
-                    "style": "secondary",
-                    "color": "#334155",
+                    "style": "primary",
+                    "color": "#2563eb",
                     "height": "sm",
                     "action": {
                         "type": "message",
-                        "label": "4合1 診斷",
-                        "text": ticker
+                        "label": "📋 查看自選",
+                        "text": "自選"
                     }
                 }
             ]
