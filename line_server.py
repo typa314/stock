@@ -522,5 +522,6 @@ if handler:
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=welcome_text))
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    uvicorn.run("line_server:app", host="0.0.0.0", port=port, reload=True)
+    port = int(os.environ.get("PORT", 7860))
+    reload_flag = os.environ.get("RELOAD", "false").lower() == "true"
+    uvicorn.run("line_server:app", host="0.0.0.0", port=port, reload=reload_flag)

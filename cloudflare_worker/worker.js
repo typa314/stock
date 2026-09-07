@@ -26,6 +26,7 @@ export default {
 
     // ── 1. 定義後端備援節點清單（優先順序由上而下） ──
     const localUrl = sanitizeBaseUrl(env.LOCAL_BACKEND_URL || "");
+    const hfUrl = sanitizeBaseUrl(env.HF_BACKEND_URL || "");
     const renderUrl = sanitizeBaseUrl(env.RENDER_BACKEND_URL || "https://tw-stock-bpa-bot.onrender.com");
     const backup3Url = sanitizeBaseUrl(env.BACKUP_3_URL || "");
 
@@ -45,11 +46,22 @@ export default {
       });
     }
 
-    // Render 雲端為第 2 順位
+    // 若有設定 Hugging Face，列為旗艦主力雲端
+    if (hfUrl) {
+      backends.push({
+        id: "huggingface_cloud",
+        name: "🤗 Hugging Face 旗艦雲端 (2核16G ⚡ 極速主力)",
+        baseUrl: hfUrl,
+        timeoutMs: cloudTimeout,
+        isLocal: false
+      });
+    }
+
+    // Render 雲端為備援守護
     if (renderUrl) {
       backends.push({
         id: "render_cloud",
-        name: "☁️ Render 雲端 (主力守護)",
+        name: "☁️ Render 雲端 (留守備援)",
         baseUrl: renderUrl,
         timeoutMs: cloudTimeout,
         isLocal: false
