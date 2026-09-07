@@ -22,6 +22,7 @@ ENV/
 secrets.*
 credentials.*
 token.txt
+linebot.txt
 
 
 # IDE & Editors
@@ -32,3 +33,14 @@ token.txt
 
 # Logs
 *.log
+
+# Databases
+*.db
+*.sqlite3
+
+# Portable Binaries
+cloudflared.exe
+*.exe
+
+# Generated Rich Menu
+rich_menu.png
