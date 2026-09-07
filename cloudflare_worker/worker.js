@@ -16,10 +16,18 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // ── 輔助函式：清理後端網址（自動容錯結尾斜線或誤填 /callback） ──
+    const sanitizeBaseUrl = (raw) => {
+      if (!raw) return "";
+      let u = raw.trim().replace(/\/+$/, "");
+      u = u.replace(/\/callback\/?$/i, "");
+      return u.replace(/\/+$/, "");
+    };
+
     // ── 1. 定義後端備援節點清單（優先順序由上而下） ──
-    const localUrl = (env.LOCAL_BACKEND_URL || "").trim().replace(/\/+$/, "");
-    const renderUrl = (env.RENDER_BACKEND_URL || "https://tw-stock-bpa-bot.onrender.com").trim().replace(/\/+$/, "");
-    const backup3Url = (env.BACKUP_3_URL || "").trim().replace(/\/+$/, "");
+    const localUrl = sanitizeBaseUrl(env.LOCAL_BACKEND_URL || "");
+    const renderUrl = sanitizeBaseUrl(env.RENDER_BACKEND_URL || "https://tw-stock-bpa-bot.onrender.com");
+    const backup3Url = sanitizeBaseUrl(env.BACKUP_3_URL || "");
 
     const localTimeout = parseInt(env.LOCAL_TIMEOUT_MS || "1500", 10);
     const cloudTimeout = parseInt(env.CLOUD_TIMEOUT_MS || "25000", 10);
