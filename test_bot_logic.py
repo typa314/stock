@@ -210,18 +210,24 @@ class TestLineBotCore(unittest.TestCase):
         res_pos_empty = line_server.handle_user_command(self.user_id, "持倉")
         self.assertIn("尚無任何持倉記錄", res_pos_empty)
 
-        # 測試 關注 / 追蹤 指令
+        # 測試 關注 / 追蹤 指令（支援 關注 2330 與快捷指令 +2330, +00708L）
         res_watch = line_server.handle_user_command(self.user_id, "關注 2330")
         self.assertIn("成功將【台積電 (2330)】加入自選觀察名單", res_watch)
+
+        res_plus = line_server.handle_user_command(self.user_id, "+00708L")
+        self.assertIn("成功將【期元大S&P黃金正2 (00708L)】加入自選觀察名單", res_plus)
 
         # 測試 自選 / 清單 指令 (回傳 Flex 卡片)
         res_wl = line_server.handle_user_command(self.user_id, "自選")
         self.assertIsInstance(res_wl, dict)
         self.assertEqual(res_wl.get("type"), "bubble")
 
-        # 測試 取消關注 指令
+        # 測試 取消關注 指令（支援 取消關注 2330 與快捷指令 -2330, -00708L）
         res_unwatch = line_server.handle_user_command(self.user_id, "取消關注 2330")
         self.assertIn("成功將【2330】移出觀察清單", res_unwatch)
+
+        res_minus = line_server.handle_user_command(self.user_id, "-00708L")
+        self.assertIn("成功將【00708L】移出觀察清單", res_minus)
 
     def test_05_patrol_worker_simulation(self):
         """測試盤中巡邏 Worker 跌破停損比對與冷卻去重"""

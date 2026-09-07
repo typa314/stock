@@ -111,7 +111,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     - 說明 / help
     """
     raw_text = text.strip()
-    cmd = raw_text.replace("，", " ").replace(",", " ")
+    cmd = raw_text.replace("，", " ").replace(",", " ").replace("＋", "+").replace("－", "-")
     tokens = cmd.split()
 
     if not tokens:
@@ -238,11 +238,16 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
         flex_dict = bot_flex.build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct)
         return flex_dict
 
-    # 3.1 加入自選觀察清單 (追蹤回測底部買點)
-    elif action in ["關注", "追蹤", "自選+", "+", "watch", "w"]:
-        if len(tokens) < 2:
-            return "⚠️ 格式錯誤！請輸入：\n關注 [股票代號]\n範例：關注 2330 或 關注 00708L"
-        raw_t = tokens[1].strip()
+    # 3.1 加入自選觀察清單 (追蹤回測底部買點，支援 +2330, + 2330, 關注 2330 等)
+    elif cmd.startswith("+") or action in ["關注", "追蹤", "自選+", "+", "watch", "w"]:
+        if cmd.startswith("+"):
+            raw_t = cmd.lstrip("+").strip()
+        else:
+            raw_t = tokens[1].strip() if len(tokens) >= 2 else ""
+
+        if not raw_t:
+            return "⚠️ 格式錯誤！請輸入：\n+2330 或 關注 2330\n範例：+2330 或 +00708L"
+
         cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
         ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
         ticker = ticker_match.group().upper() if ticker_match else cleaned_t
@@ -264,15 +269,21 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             f"• 觸發條件：High 2 雙重底 / 20 EMA 支撐回踩 / S1 反轉\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"🛡️ 盤中一旦確認高勝率買點，系統將主動推播通知！\n"
-            f"隨時輸入「自選」或「清單」即可查看追蹤列表。"
+            f"隨時輸入「自選」或「清單」即可查看追蹤列表。\n"
+            f"💡 快捷指令：輸入 -{ticker} 即可隨時取消關注。"
         )
         return reply
 
-    # 3.2 取消關注 / 移出觀察名單
-    elif action in ["取消關注", "取消追蹤", "退訂", "自選-", "-", "unwatch", "uw"]:
-        if len(tokens) < 2:
-            return "⚠️ 格式錯誤！請輸入：\n取消關注 [股票代號]\n範例：取消關注 2330"
-        raw_t = tokens[1].strip()
+    # 3.2 取消關注 / 移出觀察名單 (支援 -2330, - 2330, 取消關注 2330 等)
+    elif cmd.startswith("-") or action in ["取消關注", "取消追蹤", "退訂", "自選-", "-", "unwatch", "uw"]:
+        if cmd.startswith("-"):
+            raw_t = cmd.lstrip("-").strip()
+        else:
+            raw_t = tokens[1].strip() if len(tokens) >= 2 else ""
+
+        if not raw_t:
+            return "⚠️ 格式錯誤！請輸入：\n-2330 或 取消關注 2330\n範例：-2330 或 -00708L"
+
         cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
         ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
         ticker = ticker_match.group().upper() if ticker_match else cleaned_t
@@ -412,8 +423,8 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             "📌 查詢持倉與損益：\n"
             "   輸入「持倉」或「庫存」\n\n"
             "📌 自選觀察與買點雷達：\n"
-            "   關注 2330 (加入追蹤)\n"
-            "   取消關注 2330 (移出清單)\n"
+            "   +2330 (快速加入追蹤)\n"
+            "   -2330 (快速取消關注)\n"
             "   自選 或 清單 (查觀察名單)\n\n"
             "📌 單股 BPA 4合1 旗艦研判：\n"
             "   直接輸入代號，如「2330」或「00708L」\n"
