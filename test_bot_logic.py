@@ -173,6 +173,10 @@ class TestLineBotCore(unittest.TestCase):
         self.assertEqual(dash_flex["size"], "giga")
         self.assertIn("台積電", dash_flex["header"]["contents"][0]["contents"][0]["contents"][0]["text"])
 
+        # 驗證日K卡片 footer 已移除 5分K 當沖按鍵
+        footer_btn_labels = [b.get("action", {}).get("label", "") for b in dash_flex.get("footer", {}).get("contents", [])]
+        self.assertNotIn("⚡ 5分K 當沖", footer_btn_labels, "日K卡片 footer 應已移除 5分K 當沖按鍵")
+
         # 測試 自選觀察清單 Flex
         wl_flex = bot_flex.build_watchlist_flex("小明", [{
             "ticker": "2330",
@@ -210,20 +214,23 @@ class TestLineBotCore(unittest.TestCase):
         res_sell = line_server.handle_user_command(self.user_id, "賣 2330")
         self.assertIn("已成功將【2330】結案平倉", res_sell)
 
-        # 測試 單檔股票 BPA 診斷查詢 (如 2330 與 00708L / 00708l)
+        # 測試 單檔股票 BPA 雙時框輪播查詢 (如 2330 與 00708L / 00708l)
         res_single = line_server.handle_user_command(self.user_id, "2330")
         self.assertIsInstance(res_single, dict)
-        self.assertEqual(res_single.get("type"), "bubble")
+        self.assertEqual(res_single.get("type"), "carousel")
+        self.assertEqual(len(res_single.get("contents", [])), 2, "Carousel 應包含日K與5分K兩張圖卡")
 
         # 測試 槓桿/反向 ETF 與英數字後綴代號 (如 00708L)
         res_etf = line_server.handle_user_command(self.user_id, "00708L")
         self.assertIsInstance(res_etf, dict)
-        self.assertEqual(res_etf.get("type"), "bubble")
+        self.assertEqual(res_etf.get("type"), "carousel")
+        self.assertEqual(len(res_etf.get("contents", [])), 2)
 
         # 測試小寫代號輸入 (如 00708l) 自動轉大寫處理
         res_etf_lower = line_server.handle_user_command(self.user_id, "00708l")
         self.assertIsInstance(res_etf_lower, dict)
-        self.assertEqual(res_etf_lower.get("type"), "bubble")
+        self.assertEqual(res_etf_lower.get("type"), "carousel")
+        self.assertEqual(len(res_etf_lower.get("contents", [])), 2)
 
         # 測試 持倉 / 庫存 指令
         res_pos_empty = line_server.handle_user_command(self.user_id, "持倉")

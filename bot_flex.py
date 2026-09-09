@@ -850,6 +850,22 @@ def build_dashboard_stock_flex(
                         {"type": "text", "text": f"支撐 S1: {s1:.2f} 元 (月線)", "size": "xxs", "color": "#4ade80", "flex": 1},
                         {"type": "text", "text": f"壓力 R1: {r1:.2f} 元 (前高)", "size": "xxs", "color": "#f87171", "align": "end", "flex": 1}
                     ]
+                },
+                # 雙時框 Carousel 左右滑動提示
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "👉 向左滑動查看 5分K 當沖研判 ⚡",
+                            "size": "xxs",
+                            "color": "#38bdf8",
+                            "align": "center",
+                            "flex": 1
+                        }
+                    ]
                 }
             ]
         },
@@ -863,21 +879,9 @@ def build_dashboard_stock_flex(
                 {
                     "type": "button",
                     "style": "primary",
-                    "color": "#0284c7",
-                    "height": "sm",
-                    "flex": 2,
-                    "action": {
-                        "type": "message",
-                        "label": "⚡ 5分K 當沖",
-                        "text": f"k{ticker}"
-                    }
-                },
-                {
-                    "type": "button",
-                    "style": "primary",
                     "color": "#d97706",
                     "height": "sm",
-                    "flex": 2,
+                    "flex": 1,
                     "action": {
                         "type": "message",
                         "label": f"⭐ 關注 {ticker}",
@@ -889,7 +893,7 @@ def build_dashboard_stock_flex(
                     "style": "primary",
                     "color": "#2563eb",
                     "height": "sm",
-                    "flex": 2,
+                    "flex": 1,
                     "action": {
                         "type": "message",
                         "label": "💼 查看持倉",
@@ -1625,6 +1629,22 @@ def build_5m_stock_flex(res5: dict) -> dict:
                             ]
                         }
                     ]
+                },
+                # 雙時框 Carousel 左右滑動提示
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "margin": "md",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": "👈 向右滑動返回 日K 4合1 旗艦研判 📊",
+                            "size": "xxs",
+                            "color": "#38bdf8",
+                            "align": "center",
+                            "flex": 1
+                        }
+                    ]
                 }
             ]
         },
@@ -1675,5 +1695,17 @@ def build_5m_stock_flex(res5: dict) -> dict:
         }
     }
     return flex_bubble
+
+
+def build_stock_carousel_flex(bubble_daily: dict, bubble_5m: dict) -> dict:
+    """
+    建立個股雙時框 (日K 4合1 旗艦 + 5分K 當沖風控) Carousel 輪播卡片容器
+    支援左右流暢滑動切換，零資訊刪減、單則訊息省額度
+    """
+    return {
+        "type": "carousel",
+        "contents": [bubble_daily, bubble_5m]
+    }
+
 
 

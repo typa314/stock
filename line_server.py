@@ -566,7 +566,8 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             chg_val = close_now - prev_close
             chg_pct = (chg_val / prev_close) * 100 if prev_close > 0 else 0.0
 
-            flex_dict = bot_flex.build_dashboard_stock_flex(
+            # 1. 建立日K 4合1 旗艦研判 Bubble
+            bubble_daily = bot_flex.build_dashboard_stock_flex(
                 stock_name=sname,
                 ticker=ticker,
                 market=res.get("market", "tse"),
@@ -582,6 +583,16 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
                 comp=res.get("composite_rating"),
                 sr=sr
             )
+
+            # 2. 整合 5 分鐘 K 線當沖研判為雙時框 Carousel 輪播 (左右滑動切換)
+            try:
+                res5 = get_cached_5m_analysis(ticker, days=3)
+                bubble_5m = bot_flex.build_5m_stock_flex(res5)
+                flex_dict = bot_flex.build_stock_carousel_flex(bubble_daily, bubble_5m)
+            except Exception as e5:
+                logger.warning(f"取得【{ticker}】5分K當沖資料失敗，降級回傳日K單卡: {e5}")
+                flex_dict = bubble_daily
+
             return flex_dict
         except Exception as e:
             logger.error(f"查詢股票【{ticker}】失敗: {e}", exc_info=True)
@@ -602,11 +613,10 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             "📌 自選觀察與買點雷達：\n"
             "   +2330 (快速加入追蹤)\n"
             "   -2330 (快速取消關注)\n"
-            "   自選 或 清單 (查觀察名單)\n\n"
-            "📌 5分K 日內當沖研判：\n"
-            "   k2330 或 5k 2330 (查5分鐘K線與當沖掛單)\n\n"
-            "📌 單股 4合1 多維旗艦研判：\n"
-            "   直接輸入代號，如「2330」或「00708L」\n"
+            "📌 個股雙時框 (日K+5分K) 輪播：\n"
+            "   直接輸入代號，如「2330」或「00708L」（左右滑動切換波段與當沖）\n\n"
+            "📌 單獨查 5分K 當沖：\n"
+            "   k2330 或 5k 2330 (查5分鐘K線與當沖掛單)\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "🛡️ 盤中跌破 -7% 停損或觸發高勝率買點時主動通知！"
         )
@@ -722,10 +732,14 @@ if handler:
         if isinstance(result, dict):
             # Flex Message 卡片回傳
             header_text = "📊 個股多維量化診斷"
+            alt_txt = "📊 個股多維量化診斷"
             flex_msg = None
             try:
-                header_text = result.get("header", {}).get("contents", [{}])[0].get("text", header_text)
-                alt_txt = f"📊 {header_text}" if header_text else "📊 個股多維量化診斷"
+                if result.get("type") == "carousel":
+                    alt_txt = f"📊 【{text.strip().upper()}】雙時框量化診斷 (日K + 5分K)"
+                else:
+                    header_text = result.get("header", {}).get("contents", [{}])[0].get("text", header_text)
+                    alt_txt = f"📊 {header_text}" if header_text else "📊 個股多維量化診斷"
                 flex_msg = FlexSendMessage(alt_text=alt_txt, contents=result)
             except Exception as fe:
                 logger.error(f"組建 Flex Message 失敗，啟動純文字備援: {fe}", exc_info=True)
@@ -733,7 +747,7 @@ if handler:
             status = safe_reply(reply_token, flex_msg, user_id=user_id, label="Flex 卡片") if flex_msg is not None else REPLY_FAILED
             if status == REPLY_FAILED:
                 # 卡片組建失敗或被 LINE 退回（此時 token 仍可用），自動降級以純文字回覆
-                fallback_txt = f"📊 【量化診斷回報】\n{header_text}\n現價與指標已計算完成。"
+                fallback_txt = f"📊 【量化診斷回報】\n{alt_txt}\n現價與指標已計算完成。"
                 safe_reply(reply_token, TextSendMessage(text=fallback_txt), user_id=user_id, label="純文字備援")
             elif status == REPLY_TOKEN_DEAD:
                 logger.error("reply token 已失效且 push 補送失敗，放棄本次回覆（請確認上游是否已重複派送給雲端節點）")

@@ -366,3 +366,36 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 （17:04 那次 pull 又回報 12／29，是因為 17:02 跑 `test_bot_logic.py` 把測試列以較新 TW 時間戳推上雲端，拉回時時間戳相等而全部被接受，非資料回溯。）
 
 **同時工作區狀態**：另一個 session 於 16:45–16:50 修改 `hmm_regime.py`(新增)、`kline.py`、`app.py`、`bot_flex.py`、`monitor_worker.py`、`test_bot_logic.py`、`test_kline_logic.py`、`README.md`（HMM 市場狀態偵測）。本 session 只改 `line_server.py`、`bot_db.py`，無重疊。
+
+---
+
+## Session F：個股雙時框 (日K 4合1 + 5分K 當沖) Carousel 輪播整合與按鈕精簡 (2026-09-09 17:45)
+
+### A. 需求背景與設計目標
+- **使用者需求**：「採用 carousel，並移除現有 5分k 的按鍵」。
+- **問題分析**：
+  1. 過去查詢個股時僅回傳日K單卡，使用者需在 footer 點擊「⚡ 5分K 當沖」再次發送 `k2330` 指令才能看到當沖數據，消耗 2 則訊息額度且體驗割裂。
+  2. 日K 卡片 footer 包含 3 個按鈕（5分K、關注、持倉），視覺密度偏高。
+- **解決方案**：
+  1. **Carousel 輪播容器**：查詢個股時以 `build_stock_carousel_flex` 回傳 Carousel，Slide 1 為日K 4合1 旗艦卡，Slide 2 為 5分K 當沖風控卡，支援左右滑動。
+  2. **按鈕精簡**：日K 卡片 footer 移除「⚡ 5分K 當沖」按鍵，保留「⭐ 關注」與「💼 查看持倉」，按鍵寬度平分對稱。
+  3. **雙向滑動導航指引**：日K 卡片底部新增「👉 向左滑動查看 5分K 當沖研判 ⚡」，5分K 卡片底部新增「👈 向右滑動返回 日K 4合1 旗艦研判 📊」。
+
+### B. 修改檔案與改動清單
+
+| 檔案 | 改動內容 |
+|---|---|
+| [`bot_flex.py`](f:/stock/bot_flex.py) | • `build_dashboard_stock_flex` footer 移除「⚡ 5分K 當沖」按鈕，改為 2 顆按鈕均分寬度 (`flex: 1`)<br>• 在 S1/R1 支撐壓力下方新增「👉 向左滑動查看 5分K 當沖研判 ⚡」引導<br>• `build_5m_stock_flex` 風控掛單下方新增「👈 向右滑動返回 日K 4合1 旗艦研判 📊」引導<br>• 新增 `build_stock_carousel_flex(bubble_daily, bubble_5m)` 輪播產生器 |
+| [`line_server.py`](f:/stock/line_server.py) | • `handle_user_command` Section 4（單股查詢）調用 `get_cached_5m_analysis` 並打包為 Carousel 回傳，失敗時優雅降級回傳日K單卡<br>• `handle_line_text_message` 針對 `result.get("type") == "carousel"` 自動生成 `alt_txt = "📊 【{TICKER}】雙時框量化診斷 (日K + 5分K)"`<br>• 更新「說明」指引文字，明確標註雙時框左右滑動功能 |
+| [`test_bot_logic.py`](f:/stock/test_bot_logic.py) | • `test_03_flex_renderers`：驗證日K卡片 footer 確實已移除「⚡ 5分K 當沖」按鍵<br>• `test_04_command_parser_integration`：驗證 `2330`、`00708L`、`00708l` 均回傳 `carousel` 且包含 2 個 bubbles |
+| [`README.md`](f:/stock/README.md) | • 更新 Changelog，新增 `v3.1.0` 雙時框 Carousel 輪播與介面精簡紀錄 |
+
+### C. 驗證結果
+
+| 測試項目 | 命令 | 結果 |
+|---|---|:---:|
+| Carousel 與按鈕專項測試 | `python scratch/test_stock_carousel.py` | **4/4 PASS (100%)** |
+| Bot 核心邏輯單元測試 | `python test_bot_logic.py` | **9/9 OK (100%)** |
+| Kline 指標與 HMM 測試 | `python test_kline_logic.py` | **7/7 PASS (100%)** |
+| 跨模組全量交叉驗證 | `python scratch/cross_validate_all.py` | **20/20 PASS (100%)** |
+
