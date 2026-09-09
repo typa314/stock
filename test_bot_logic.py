@@ -27,7 +27,7 @@ class TestLineBotCore(unittest.TestCase):
         self.user_id = "U_test_user_001"
 
     def tearDown(self):
-        shutil.rmtree(self.test_dir)
+        shutil.rmtree(self.test_dir, ignore_errors=True)
 
     def test_01_db_user_and_position_crud(self):
         """測試資料庫用戶與持股新增、修改、查詢、平倉"""

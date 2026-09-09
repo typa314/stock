@@ -6,6 +6,7 @@ bot_db.py - SQLite 個人持倉與風控告警資料庫模組
 
 import os
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
 
 # 台股標準時區 (GMT+8)
@@ -13,11 +14,19 @@ TW_TZ = timezone(timedelta(hours=8))
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "portfolio.db")
 
+@contextmanager
 def get_connection(db_path=None):
     path = db_path or DEFAULT_DB_PATH
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def init_db(db_path=None):
     """初始化資料庫表結構"""

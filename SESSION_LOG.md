@@ -399,3 +399,33 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 | Kline 指標與 HMM 測試 | `python test_kline_logic.py` | **7/7 PASS (100%)** |
 | 跨模組全量交叉驗證 | `python scratch/cross_validate_all.py` | **20/20 PASS (100%)** |
 
+---
+
+## Session G：修復 HMM 依賴缺失 (scipy)、SQLite 連線洩漏與本地啟動腳本硬編碼 (2026-09-09 23:05)
+
+### A. 需求背景與問題診斷
+- **使用者回報**：「修正目前最新代碼的錯誤 目前無法使用」。
+- **根因分析**：
+  1. **HMM 外部依賴缺失造成查詢全數崩潰**：`hmm_regime.py` 引用了 `from scipy.special import logsumexp`，但系統未安裝 `scipy` 且 `requirements.txt` 未列入，導致 `analyze_stock` 執行時拋出 `ModuleNotFoundError: No module named 'scipy'`，使所有個股查詢與推播中斷。
+  2. **SQLite 連線未釋放導致 Windows 檔案鎖死**：`bot_db.py` 的 `get_connection()` 雖使用 `with` 語法，但 Python `sqlite3.Connection` 之 context manager 僅負責交易提交而非關閉連線，導致在 Windows 環境下鎖定 `.db` 檔，引起單元測試 `tearDown` 發生 `WinError 32 PermissionError`。
+  3. **本機啟動腳本路徑硬編碼**：所有 `.bat` 與 `.vbs`（如 `啟動本地備援.bat`、`檢查本地備援狀態.bat` 等）硬寫 `F:\stock` 與特定使用者 Python 路徑，於其他路徑或 Windows 開機時無法執行。
+
+### B. 修改檔案與改動清單
+
+| 檔案 | 改動內容 |
+|---|---|
+| [`hmm_regime.py`](c:/Users/USER/Desktop/stock-main/hmm_regime.py) | • 新增純 NumPy 數值穩定版 `logsumexp` 實作（含極值防溢位與 `-inf` 清洗），`try...except ImportError` 優先使用 scipy，無 scipy 時自動無縫降級至純 numpy，徹底解除外部套件依賴。 |
+| [`bot_db.py`](c:/Users/USER/Desktop/stock-main/bot_db.py) | • 以 `@contextmanager` 改寫 `get_connection()`，確保 `with` 區塊結束時在 `finally` 確實調用 `conn.close()`，杜絕資源洩漏與 Windows 檔案佔用鎖定。 |
+| [`test_bot_logic.py`](c:/Users/USER/Desktop/stock-main/test_bot_logic.py) | • `tearDown` 增加 `ignore_errors=True` 提高 Windows 暫存目錄清理容錯率。 |
+| `*.bat` 與 `*.vbs` 啟動腳本 | • `啟動本地備援.bat`、`檢查本地備援狀態.bat`、`停止本地備援.bat`、`一鍵啟用開機自動執行.bat`、`一鍵關閉開機自動執行.bat`、`start_background.vbs`、`start_silent_autostart.vbs`、`scripts/run_server.bat`、`scripts/run_local_server_silent.vbs` 全面改為 `%~dp0` 與動態相對路徑，並改用系統 PATH 之 `python`，實現真正全環境可攜。 |
+
+### C. 驗證結果
+
+| 測試項目 | 命令 | 結果 |
+|---|---|:---:|
+| Bot 業務與自然語言單元測試 | `python test_bot_logic.py` | **9/9 OK (100%)** |
+| Kline 指標與 HMM 測試 | `python test_kline_logic.py` | **7/7 PASS (100%)** |
+| 靜態語法檢查 | `python -m pyflakes hmm_regime.py bot_db.py test_bot_logic.py` | **0 Warnings / 0 Errors** |
+| 個股 2330 雙時框查詢實機測試 | `line_server.handle_user_command('U_test', '2330')` | **成功回傳 Carousel (2 bubbles)** |
+
+

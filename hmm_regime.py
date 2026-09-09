@@ -5,7 +5,22 @@ Zero external dependencies beyond numpy and scipy.
 Strictly point-in-time forward filtering (zero lookahead bias).
 """
 import numpy as np
-from scipy.special import logsumexp
+try:
+    from scipy.special import logsumexp
+except ImportError:
+    def logsumexp(a, axis=None, keepdims=False):
+        """Pure NumPy numerically stable logsumexp fallback."""
+        a = np.asarray(a)
+        a_max = np.amax(a, axis=axis, keepdims=True)
+        a_max_clean = np.where(np.isfinite(a_max), a_max, 0.0)
+        tmp = np.exp(a - a_max_clean)
+        s = np.sum(tmp, axis=axis, keepdims=keepdims)
+        s_clean = np.where(s > 0, s, 1.0)
+        out = np.where(s > 0, np.log(s_clean), -np.inf)
+        if not keepdims:
+            a_max_clean = np.squeeze(a_max_clean, axis=axis)
+        out += a_max_clean
+        return out
 
 class GaussianHMM1D2D:
     def __init__(self, n_components=2, n_iter=30, tol=1e-4, random_state=42):

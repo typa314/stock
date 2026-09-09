@@ -1,6 +1,6 @@
 @echo off
 title Stop Local Server
-cd /d "F:\stock"
+cd /d "%~dp0"
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "& { Write-Host 'Stopping local BPA Stock server and Cloudflare Tunnel...' -ForegroundColor Yellow; Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }; Write-Host 'Successfully stopped all local processes!' -ForegroundColor Green }"
 echo.
 echo ========================================================
