@@ -134,12 +134,16 @@ def close_position(line_user_id, ticker, db_path=None):
     user = get_or_create_user(line_user_id, db_path=db_path)
     user_id = user["id"]
     t = str(ticker).strip()
+    # 必須與 add_position 用同一個時區來源：SQLite 的 CURRENT_TIMESTAMP 是 UTC，
+    # 而新增持倉寫的是 GMT+8，混用會讓「平倉」的時間戳看起來比「買進」早 8 小時，
+    # 雙節點同步以 updated_at 較新者為準時，平倉會被舊的買進紀錄蓋回 OPEN。
+    now_str = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE positions SET status = 'CLOSED', updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND ticker = ? AND status = 'OPEN'",
-            (user_id, t)
+            "UPDATE positions SET status = 'CLOSED', updated_at = ? WHERE user_id = ? AND ticker = ? AND status = 'OPEN'",
+            (now_str, user_id, t)
         )
         affected = cursor.rowcount
         conn.commit()
@@ -243,12 +247,14 @@ def remove_from_watchlist(line_user_id, ticker, db_path=None):
     user = get_or_create_user(line_user_id, db_path=db_path)
     user_id = user["id"]
     t = str(ticker).strip().upper()
+    # 與 add_to_watchlist 同一時區來源（見 close_position 的說明）
+    now_str = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "UPDATE watchlist SET active = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND ticker = ? AND active = 1",
-            (user_id, t)
+            "UPDATE watchlist SET active = 0, updated_at = ? WHERE user_id = ? AND ticker = ? AND active = 1",
+            (now_str, user_id, t)
         )
         affected = cursor.rowcount
         conn.commit()
@@ -288,24 +294,60 @@ def export_db_snapshot(db_path=None):
         return {"users": users, "positions": positions, "watchlist": watchlist}
 
 def import_db_snapshot(data, db_path=None):
-    """將外部快照資料寫入本地資料庫 (以 updated_at 較新或最新資料寫入)"""
+    """
+    將外部節點的快照合併進本地資料庫。
+
+    以 line_user_id 對映用戶並取用「本地」自增 id，不沿用來源節點的 id：
+    兩個節點各自 AUTOINCREMENT，來源 id 直接寫入會撞號，
+    或更糟——把持倉掛到同號的另一個用戶身上。
+    positions / watchlist 以 (user_id, ticker) 為唯一鍵，updated_at 較新者為準。
+    無法對映到本地用戶的資料寧可跳過也不猜。
+
+    回傳各表「接受寫入」筆數 dict（updated_at 較舊而被拒收的不計；
+    內容相同的重寫仍會計入，故筆數不等於「實際變動列數」）。合併失敗回傳 False。
+    """
     if not isinstance(data, dict):
         return False
+
+    stats = {"users": 0, "positions": 0, "watchlist": 0, "skipped": 0}
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
-        for u in data.get("users", []):
-            cursor.execute("""
-            INSERT INTO users (id, line_user_id, display_name, alert_enabled, created_at)
-            VALUES (:id, :line_user_id, :display_name, :alert_enabled, :created_at)
-            ON CONFLICT(line_user_id) DO UPDATE SET
-                display_name = excluded.display_name,
-                alert_enabled = excluded.alert_enabled
-            """, u)
 
-        for p in data.get("positions", []):
+        # 1. 用戶對映：來源 id -> 本地 id
+        id_map = {}
+        for u in data.get("users", []):
+            line_uid = u.get("line_user_id")
+            if not line_uid:
+                stats["skipped"] += 1
+                continue
+            cursor.execute("SELECT id FROM users WHERE line_user_id = ?", (line_uid,))
+            row = cursor.fetchone()
+            if row:
+                local_id = row["id"]
+                if u.get("display_name"):
+                    cursor.execute(
+                        "UPDATE users SET display_name = ?, alert_enabled = ? WHERE id = ?",
+                        (u.get("display_name"), u.get("alert_enabled", 1), local_id)
+                    )
+            else:
+                cursor.execute(
+                    "INSERT INTO users (line_user_id, display_name, alert_enabled) VALUES (?, ?, ?)",
+                    (line_uid, u.get("display_name") or "LineUser", u.get("alert_enabled", 1))
+                )
+                local_id = cursor.lastrowid
+            if u.get("id") is not None:
+                id_map[u["id"]] = local_id
+            stats["users"] += 1
+
+        # 2. 持倉（updated_at 較新者為準）
+        for pos in data.get("positions", []):
+            local_uid = id_map.get(pos.get("user_id"))
+            if local_uid is None or not pos.get("ticker"):
+                stats["skipped"] += 1
+                continue
             cursor.execute("""
-            INSERT INTO positions (id, user_id, ticker, stock_name, shares, cost_price, stop_loss_pct, status, created_at, updated_at)
-            VALUES (:id, :user_id, :ticker, :stock_name, :shares, :cost_price, :stop_loss_pct, :status, :created_at, :updated_at)
+            INSERT INTO positions (user_id, ticker, stock_name, shares, cost_price, stop_loss_pct, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
             ON CONFLICT(user_id, ticker) DO UPDATE SET
                 stock_name = excluded.stock_name,
                 shares = excluded.shares,
@@ -314,19 +356,36 @@ def import_db_snapshot(data, db_path=None):
                 status = excluded.status,
                 updated_at = excluded.updated_at
             WHERE excluded.updated_at >= positions.updated_at
-            """, p)
+            """, (
+                local_uid, pos.get("ticker"), pos.get("stock_name"), pos.get("shares", 1000),
+                pos.get("cost_price"), pos.get("stop_loss_pct", -7.0), pos.get("status", "OPEN"),
+                pos.get("created_at"), pos.get("updated_at")
+            ))
+            if cursor.rowcount > 0:
+                stats["positions"] += 1
 
+        # 3. 自選觀察名單（updated_at 較新者為準）
         for w in data.get("watchlist", []):
+            local_uid = id_map.get(w.get("user_id"))
+            if local_uid is None or not w.get("ticker"):
+                stats["skipped"] += 1
+                continue
             cursor.execute("""
-            INSERT INTO watchlist (id, user_id, ticker, stock_name, note, active, created_at, updated_at)
-            VALUES (:id, :user_id, :ticker, :stock_name, :note, :active, :created_at, :updated_at)
+            INSERT INTO watchlist (user_id, ticker, stock_name, note, active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
             ON CONFLICT(user_id, ticker) DO UPDATE SET
                 stock_name = excluded.stock_name,
                 note = excluded.note,
                 active = excluded.active,
                 updated_at = excluded.updated_at
             WHERE excluded.updated_at >= watchlist.updated_at
-            """, w)
+            """, (
+                local_uid, w.get("ticker"), w.get("stock_name"), w.get("note"),
+                w.get("active", 1), w.get("created_at"), w.get("updated_at")
+            ))
+            if cursor.rowcount > 0:
+                stats["watchlist"] += 1
+
         conn.commit()
-    return True
+    return stats
 

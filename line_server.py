@@ -38,23 +38,95 @@ bot_db.init_db()
 # ── 雙節點資料庫自動同步 (Local <-> Render Cloud) ──
 RENDER_BACKEND_URL = os.environ.get("RENDER_BACKEND_URL", "https://tw-stock-bpa-bot.onrender.com").strip().rstrip("/")
 
+# 本節點是否為雲端節點（Render 會自帶 RENDER 環境變數）。雲端節點不需要再對自己拉／推快照。
+IS_CLOUD_NODE = bool(os.environ.get("RENDER")) or os.environ.get("DISABLE_CLOUD_SYNC", "").strip() == "1"
+
+
+def _cloud_sync_enabled():
+    if IS_CLOUD_NODE:
+        return False
+    if not RENDER_BACKEND_URL or "127.0.0.1" in RENDER_BACKEND_URL or "localhost" in RENDER_BACKEND_URL:
+        return False
+    return True
+
+
+def push_snapshot_to_cloud():
+    """（同步）將本地資料庫快照推送到 Render 雲端備援"""
+    if not _cloud_sync_enabled():
+        return False
+    try:
+        snapshot = bot_db.export_db_snapshot()
+        res = requests.post(f"{RENDER_BACKEND_URL}/api/sync_db", json=snapshot, timeout=(5, 15))
+        if res.status_code == 200:
+            logger.info("✅ 已成功將本地持倉與自選資料庫同步至 Render 雲端！")
+            return True
+        logger.warning(f"推送快照至雲端被拒：HTTP {res.status_code}")
+    except Exception as e:
+        logger.debug(f"雲端資料庫同步略過: {e}")
+    return False
+
+
 def sync_to_cloud_async():
     """在背景非同步將本地資料庫快照推送到 Render 雲端備援"""
-    if not RENDER_BACKEND_URL or "127.0.0.1" in RENDER_BACKEND_URL or "localhost" in RENDER_BACKEND_URL:
+    if not _cloud_sync_enabled():
         return
-    def _run():
-        try:
-            snapshot = bot_db.export_db_snapshot()
-            url = f"{RENDER_BACKEND_URL}/api/sync_db"
-            res = requests.post(url, json=snapshot, timeout=5)
-            if res.status_code == 200:
-                logger.info("✅ 已成功將本地持倉與自選資料庫同步至 Render 雲端！")
-        except Exception as e:
-            logger.debug(f"雲端資料庫同步略過: {e}")
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=push_snapshot_to_cloud, daemon=True).start()
 
-# 啟動時背景觸發一次資料同步
-sync_to_cloud_async()
+
+def pull_snapshot_from_cloud():
+    """
+    （同步）自 Render 雲端節點拉回快照並合併進本地資料庫。
+
+    本機非常駐時，離線期間的訊息由 Worker 改派 Render 處理，那段時間新增的持倉／自選
+    只存在雲端。本機同步原本是單向（只推不拉），開機後本機視野會缺這些資料，
+    導致「持倉」查詢漏列、盤中停損巡邏也不會監控它們。
+    合併規則由 bot_db.import_db_snapshot 決定（以 line_user_id 對映用戶、updated_at 較新者為準）。
+    """
+    if not _cloud_sync_enabled():
+        return False
+    try:
+        # Render 免費方案可能處於休眠，讀取逾時放寬到 40 秒容許冷啟動
+        res = requests.get(f"{RENDER_BACKEND_URL}/api/sync_db", timeout=(5, 40))
+        if res.status_code != 200:
+            logger.warning(f"自雲端拉回快照失敗：HTTP {res.status_code}（沒沿用本地資料庫）")
+            return False
+        snapshot = res.json()
+        if not isinstance(snapshot, dict) or not any(snapshot.get(k) for k in ("users", "positions", "watchlist")):
+            logger.info("雲端節點回傳空快照，無需合併")
+            return False
+        stats = bot_db.import_db_snapshot(snapshot)
+        if not stats:
+            logger.warning("雲端快照合併失敗（格式不符）")
+            return False
+        logger.info(
+            "✅ 已自 Render 雲端拉回快照並合併（接受筆數，含內容相同的重寫）："
+            f"users={stats.get('users', 0)} positions={stats.get('positions', 0)} "
+            f"watchlist={stats.get('watchlist', 0)} skipped={stats.get('skipped', 0)}"
+        )
+        return True
+    except Exception as e:
+        logger.warning(f"自雲端拉回快照失敗（沒沿用本地資料庫）: {e}")
+        return False
+
+
+def bootstrap_db_sync():
+    """
+    開機一次性雙向對帳：先「拉回」雲端資料再「推送」本地快照。
+    順序固定——先拉後推，本機的舊資料才不會在雲端較新資料還沒合併進來前就被推上去。
+    整段在背景執行緒進行，避免 Render 冷啟動拖慢 uvicorn 啟動。
+    """
+    if not _cloud_sync_enabled():
+        return
+
+    def _run():
+        pull_snapshot_from_cloud()
+        push_snapshot_to_cloud()
+
+    threading.Thread(target=_run, daemon=True, name="db-bootstrap-sync").start()
+
+
+# 啟動時背景觸發一次雙向對帳（先拉回雲端資料，再推送本地快照）
+bootstrap_db_sync()
 
 
 # ── 記憶體快取機制（加速個股查詢與避免重複請求超時） ──
@@ -163,8 +235,10 @@ async def post_db_snapshot(req: Request):
     """供雙節點寫入資料庫快照"""
     try:
         data = await req.json()
-        ok = bot_db.import_db_snapshot(data)
-        return {"status": "ok" if ok else "error"}
+        stats = bot_db.import_db_snapshot(data)
+        if not stats:
+            return JSONResponse({"status": "error", "detail": "invalid snapshot"}, status_code=400)
+        return {"status": "ok", "merged": stats}
     except Exception as e:
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=400)
 
@@ -542,9 +616,55 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             return None  # 群組中非相關指令保持沉默，避免干擾常態聊天
         return f"未能辨識指令「{raw_text}」。\n請輸入「說明」查看指令範例，或直接輸入股票代號（如 2330）查詢行情。"
 
+# ── Webhook 背景處理執行緒池 ──
+# LINE reply token 為單次使用且效期極短；上游 Cloudflare Worker 又採瀑布式容錯，
+# 本機若未在 LOCAL_TIMEOUT_MS 內回應就會被改派 Render 雲端節點，token 遭雲端先用掉，
+# 本機事後回覆必然收到 400 Invalid reply token。
+# 因此 /callback 必須「先秒回 200，再於背景執行緒完成運算與回覆」。
+_WEBHOOK_POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="line-webhook")
+
+
+def _process_webhook_async(body_text: str, signature: str):
+    """在背景執行緒完成事件解析、量化運算與 LINE 回覆"""
+    try:
+        handler.handle(body_text, signature)
+    except InvalidSignatureError:
+        logger.error("Webhook 簽章驗證失敗（背景處理階段）")
+    except Exception as e:
+        logger.error(f"處理 Webhook 錯誤: {e}", exc_info=True)
+
+
+# safe_reply 回傳狀態
+REPLY_OK = "ok"                    # 回覆或 push 補送成功
+REPLY_TOKEN_DEAD = "token_dead"    # reply token 已失效（他節點用掉或逾期）且 push 補送亦失敗
+REPLY_FAILED = "failed"            # 其他原因失敗（如 Flex JSON 被 LINE 退回），token 仍可用，可改純文字重試
+
+
+def safe_reply(reply_token, messages, user_id=None, label=""):
+    """
+    以 reply_message 回覆；若 token 已被其他節點使用或逾期（400 Invalid reply token），
+    自動改用 push_message 補送，確保使用者不會收不到結果。
+    """
+    try:
+        line_bot_api.reply_message(reply_token, messages)
+        return REPLY_OK
+    except Exception as e:
+        msg = str(e)
+        logger.warning(f"reply_message 失敗（{label}）: {msg}")
+        token_dead = "Invalid reply token" in msg
+        if token_dead and user_id:
+            try:
+                line_bot_api.push_message(user_id, messages)
+                logger.info(f"reply token 已失效，改用 push_message 成功補送給 {user_id}")
+                return REPLY_OK
+            except Exception as pe:
+                logger.error(f"push_message 補送亦失敗: {pe}")
+        return REPLY_TOKEN_DEAD if token_dead else REPLY_FAILED
+
+
 @app.post("/callback")
 async def line_callback(request: Request):
-    """LINE Webhook 接收點"""
+    """LINE Webhook 接收點（秒回 200，運算交由背景執行緒）"""
     signature = request.headers.get("X-Line-Signature", "")
     body = await request.body()
     body_text = body.decode("utf-8")
@@ -553,14 +673,18 @@ async def line_callback(request: Request):
         logger.info(f"收到 Webhook 請求 (未設定 LINE 憑證): {body_text[:100]}")
         return JSONResponse(status_code=200, content={"message": "Server running in standby mode. Please configure LINE credentials."})
 
+    # 先做純 HMAC 簽章驗證（微秒級），僅簽章錯誤才回 400
     try:
-        handler.handle(body_text, signature)
-    except InvalidSignatureError:
-        raise HTTPException(status_code=400, detail="Invalid signature")
+        from linebot import SignatureValidator
+        if not SignatureValidator(CHANNEL_SECRET).validate(body_text, signature):
+            raise HTTPException(status_code=400, detail="Invalid signature")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"處理 Webhook 錯誤: {e}")
-        return JSONResponse(status_code=500, content={"error": str(e)})
+        logger.debug(f"獨立簽章驗證略過，改由背景 handler 驗證: {e}")
 
+    # 立即交付背景執行緒，主線程於數毫秒內回 200，避免 Worker 逾時改派雲端節點
+    _WEBHOOK_POOL.submit(_process_webhook_async, body_text, signature)
     return "OK"
 
 # 註冊 LINE 訊息事件監聽器
@@ -597,20 +721,26 @@ if handler:
 
         if isinstance(result, dict):
             # Flex Message 卡片回傳
+            header_text = "📊 個股多維量化診斷"
+            flex_msg = None
             try:
-                header_text = result.get("header", {}).get("contents", [{}])[0].get("text", "📊 個股多維量化診斷")
+                header_text = result.get("header", {}).get("contents", [{}])[0].get("text", header_text)
                 alt_txt = f"📊 {header_text}" if header_text else "📊 個股多維量化診斷"
                 flex_msg = FlexSendMessage(alt_text=alt_txt, contents=result)
-                line_bot_api.reply_message(reply_token, flex_msg)
             except Exception as fe:
-                logger.error(f"發送 Flex Message 失敗，啟動純文字備援: {fe}", exc_info=True)
-                # 若 LINE 客戶端或伺服器異常，自動降級以純文字回覆
+                logger.error(f"組建 Flex Message 失敗，啟動純文字備援: {fe}", exc_info=True)
+
+            status = safe_reply(reply_token, flex_msg, user_id=user_id, label="Flex 卡片") if flex_msg is not None else REPLY_FAILED
+            if status == REPLY_FAILED:
+                # 卡片組建失敗或被 LINE 退回（此時 token 仍可用），自動降級以純文字回覆
                 fallback_txt = f"📊 【量化診斷回報】\n{header_text}\n現價與指標已計算完成。"
-                line_bot_api.reply_message(reply_token, TextSendMessage(text=fallback_txt))
+                safe_reply(reply_token, TextSendMessage(text=fallback_txt), user_id=user_id, label="純文字備援")
+            elif status == REPLY_TOKEN_DEAD:
+                logger.error("reply token 已失效且 push 補送失敗，放棄本次回覆（請確認上游是否已重複派送給雲端節點）")
         else:
             # 純文字訊息回傳
             txt_msg = TextSendMessage(text=result)
-            line_bot_api.reply_message(reply_token, txt_msg)
+            safe_reply(reply_token, txt_msg, user_id=user_id, label="純文字回覆")
 
     @handler.add(JoinEvent)
     def handle_line_join_event(event):

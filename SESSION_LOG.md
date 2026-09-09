@@ -221,3 +221,115 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 - `README.md` Changelog 與功能說明已同步更新完畢。
 - 目前修改狀態：`app.py`, `bot_db.py`, `bot_flex.py`, `devapp.py`, `kline.py`, `line_server.py`, `monitor_worker.py`, `test_bot_logic.py`, `README.md`, `SESSION_LOG.md`。
 
+
+---
+
+## 2026-09-09（續）｜Session D：LINE Webhook `400 Invalid reply token` 根因與修復（`line_server.py`）
+
+**現象（實測）**：`python -m uvicorn line_server:app --port 8080` 期間，每則使用者訊息都在 `line_server.py` 的 `reply_message` 拋出
+`LineBotApiError status_code=400 {"message": "Invalid reply token"}`，`/callback` 隨後回 `500 Internal Server Error`（16:39:32、16:39:44 各一次）。
+
+**證據**
+
+| # | 類型 | 內容 |
+|---|---|---|
+| 1 | 實測 | `cloudflared.log` 在 `08:39:25Z`、`08:39:41Z`（＝本地 16:39:25／16:39:41，UTC+8）記錄 `Incoming request ended abruptly: context canceled`，originService `http://127.0.0.1:8080`。全檔累計 **1452 筆**同一錯誤，即幾乎每一筆進來的 webhook 都在本機回應前就被上游中斷。 |
+| 2 | 實測 | 直接計時 `handle_user_command(user_id, "2330")` ＝ **7.29 s**；`"持倉"` ＝ 0.11 s。 |
+| 3 | 程式碼事實 | `cloudflare_worker/worker.js`：`LOCAL_TIMEOUT_MS` 預設 **4200 ms**，逾時即 `AbortController.abort()` 並瀑布式改派下一節點（Render）。另 `res.status >= 200 && res.status < 500` 才算成功，故本機回 500 也會觸發改派。 |
+| 4 | 實測 | 錯誤發生時間點（:32）比上游中斷時間點（:25）晚約 7 s，與證據 2 的運算耗時一致。 |
+
+**根因（推論，尚未由 Render 端日誌獨立確認）**：本機處理個股查詢需約 7 s ＞ Worker 的 4.2 s 逾時 → Worker 中斷本機連線並改派 Render → Render 先行用掉該事件的 reply token（LINE reply token 為單次使用）→ 本機約 7 s 後才回覆，必然得到 `400 Invalid reply token`，`/callback` 再回 500，Worker 又把同一 payload 派給雲端，形成重複派送。
+上述四項證據彼此一致，但**未**檢查 Render 端日誌確認「是誰用掉 token」，此點仍為推論而非實測。
+
+**改了什麼**（`line_server.py`）
+
+| 位置 | 變更 |
+|---|---|
+| `/callback` | 改為「秒回 200」：先用 `linebot.SignatureValidator` 做純 HMAC 驗簽（簽章錯才回 400），再把 `handler.handle()` 丟到新增的 `_WEBHOOK_POOL`（`ThreadPoolExecutor(max_workers=4)`）背景處理。**不再回 500**，避免 Worker 誤判本機失敗而改派雲端。 |
+| 新增 `_process_webhook_async()` | 背景執行緒內完成事件解析、量化運算與回覆，例外只記錄不外洩到 HTTP 層。 |
+| 新增 `safe_reply()` ＋ 三態常數 `REPLY_OK` / `REPLY_TOKEN_DEAD` / `REPLY_FAILED` | `reply_message` 失敗時：若錯誤含 `Invalid reply token` 則自動改用 `push_message` 補送（使用者不會收不到結果）；其他原因（如 Flex JSON 被 LINE 退回、token 仍可用）則回 `REPLY_FAILED`，交由呼叫端改送純文字。 |
+| `handle_line_text_message()` | 三處 `line_bot_api.reply_message` 全部改走 `safe_reply`；Flex 卡片流程由「靠 raise 觸發備援」改為依 `safe_reply` 回傳狀態判斷，避免 token 已死時再對同一 token 徒勞重試並噴 traceback。 |
+| 同一函式 | 修正原本的 `NameError` 風險：`header_text` 先給預設值再進 `try`（原程式若在取 `result["header"]` 時就丟例外，except 區塊引用 `header_text` 會直接 NameError）。 |
+
+**驗證狀態**
+
+- 語法檢查 `ast.parse`：PASS。
+- 以真實 `LINE_CHANNEL_SECRET` 計算合法簽章，對 port 8098 送三筆 text event（`2330`／`持倉`／`說明`）：**ACK 皆 200，延遲 0.004 s／0.021 s／0.015 s**（原本為 4.2 s 逾時被中斷）。錯誤簽章 → 400。全程無 500、無 traceback。
+- 背景路徑確實執行；測試用的是假 replyToken 與假 userId，故 reply 與 push 皆如預期失敗，僅驗證了流程與降級順序，**未**驗證真實回覆成功。
+- **尚未在真實 LINE 流量上驗證**（需重啟 8080 本機服務＋隧道，實際在 LINE 發訊息確認卡片正常送達、且 cloudflared 不再出現 `context canceled`）。
+
+**尚未處理／待辦**
+
+1. 7.29 s 的個股查詢耗時本身未優化（目前僅靠秒回 200 規避逾時）。冷啟動無快取時的單股 4 合 1 運算仍是主要延遲來源。
+2. `worker.js` 未改、未重新部署。建議（未執行）：把 `LOCAL_TIMEOUT_MS` 調小已無意義，但可考慮讓非 5xx 也不算「成功接手」的判斷更嚴謹，避免本機異常時靜默吞事件。
+3. 未 `git commit`／`git push`（遵守 `GEMINI.md` 規則）。本次僅改 `line_server.py`；同時工作區另有他 session 的 `kline.py` 修改與未追蹤的 `hmm_regime.py`，本次未觸碰。
+
+---
+
+## 2026-09-09（續）｜Session D-2：補上雲端→本機拉回同步，並修正 UTC/GMT+8 時間戳混用造成的平倉回溯
+
+**動機**：Session D 確認本機非常駐可行（Render 節點實測活著），但同步是**單向**的 —— `sync_to_cloud_async()` 只推不拉，本機從不呼叫既有的 `GET /api/sync_db`。本機離線期間由 Render 接手記下的持倉／自選，開機後本機視野缺失（「持倉」漏列、盤中停損巡邏不監控）。
+
+### A. 改了什麼
+
+| 檔案 | 變更 |
+|---|---|
+| `line_server.py` | 新增 `pull_snapshot_from_cloud()`（`GET {RENDER}/api/sync_db`，讀取逾時 40 s 容許 Render 冷啟動）、`push_snapshot_to_cloud()`（原 `sync_to_cloud_async` 內層抽出的同步版）、`bootstrap_db_sync()`（開機一次性對帳，**固定先拉後推**，整段在背景執行緒避免拖慢 uvicorn 啟動）。模組載入處的 `sync_to_cloud_async()` 改為 `bootstrap_db_sync()`。 |
+| `line_server.py` | 新增 `IS_CLOUD_NODE`（`RENDER` 環境變數，或 `DISABLE_CLOUD_SYNC=1`）與 `_cloud_sync_enabled()`，雲端節點不對自己拉／推。`POST /api/sync_db` 改為回傳實際合併筆數。 |
+| `bot_db.py` | **重寫 `import_db_snapshot()`**：改以 `line_user_id` 對映用戶並取用本地自增 id，不再沿用來源節點的 `id`。回傳各表寫入筆數 dict（原本固定 `True`）。 |
+| `bot_db.py` | **修正 `close_position()` 與 `remove_from_watchlist()` 的時間戳來源**：由 `CURRENT_TIMESTAMP` 改為 `datetime.now(TW_TZ)`，與 `add_position()`／`add_to_watchlist()` 一致。 |
+
+### B. 兩個實測發現（皆為既有 bug，非本次改動引入）
+
+**B-1 主鍵撞號會把持倉掛到別人身上（原 `import_db_snapshot`）**
+
+快照帶著來源節點的 `id`，但 `ON CONFLICT` 只針對邏輯唯一鍵（`line_user_id`／`user_id,ticker`）。兩節點各自 AUTOINCREMENT，來源 `id` 直接寫入會撞號；更糟的是 `positions.user_id` 指向的是**來源節點**的 users.id，在本機可能對應到另一個用戶。
+
+臨時 DB 實測（本地 user `Uaaa` id=1；遠端 user `Ubbb` 也是 id=1）：
+- 新版：`Ubbb` 重新對映為本地 id=2，其 2454 正確掛在 `Ubbb`；`Uaaa` 的新倉 3042 併入；`Uaaa` 的 2330 因遠端版本較舊（08:00 < 本地 12:00）**未被覆蓋**；`user_id=99` 的孤兒列 skipped=1。
+- 舊版在同一輸入下會把 `Ubbb` 的 2454 寫到 `Uaaa` 名下（推論，依 SQL 語意；未實跑舊版對照）。
+
+**B-2 平倉時間戳比買進早 8 小時，導致平倉永遠同步不出去（實測）**
+
+`add_position` 寫 `datetime.now(TW_TZ)`（GMT+8），`close_position` 寫 `CURRENT_TIMESTAMP`（SQLite 為 **UTC**）。雙節點以 `updated_at >= ` 判勝負，故「賣」的時間戳恆比同一時刻的「買」早 8 小時。
+
+實測證據（第一次跑 pull 時觀察到，已還原）：
+- 本地 `positions(user=1, 2330)` = CLOSED @ `08:51:57`（＝UTC，真實時間 16:51:57 TW）
+- 雲端同列 = OPEN @ `16:51:49`（TW）
+- 真實順序是 16:51:49 買、16:51:57 賣（相隔 8 秒），但字串比較下 CLOSED 看起來早了 8 小時
+- 結果：(a) 該平倉**從來沒推上雲端**（雲端 import 判它較舊而拒收）；(b) 第一次 pull 把雲端的 OPEN 拉回本機，**把已平倉的部位復活**
+
+第一次 pull 實際回溯 3 列（`positions(1,2330)` CLOSED→OPEN、`watchlist(1,00708L)` 0→1、`watchlist(1,2330)` 0→1），全部屬同一個 bug。
+
+### C. 資料修復
+
+- pull 前已備份 `portfolio.db` → scratchpad `portfolio.db.before-pull`；再壓一份 `portfolio.db.before-restamp`。
+- 以備份**還原**被回溯的 3 列。
+- 修正時間戳：`status='CLOSED'` 的 positions 與 `active=0` 的 watchlist（這兩者的最後一次寫入必經上述兩個 buggy 路徑）各加 8 小時 —— 共 **2 筆 positions ＋ 5 筆 watchlist**。
+- 修正後推送雲端，雲端已收斂（實測 `GET /api/sync_db`：`2330 CLOSED 16:51:57`、`00708L CLOSED 14:46:34` 及 5 筆 `active=0` 均已同步，先前雲端拒收）。
+- 註：雲端 DB 的用戶皆為 `U_test_*`，因 `test_bot_logic.py` 會經 `handle_user_command` 觸發真實雲端同步 —— 測試資料會流進雲端節點。既有行為，本次未改。
+
+### D. 驗證狀態
+
+| 項目 | 結果 |
+|---|---|
+| `ast.parse` 語法 | PASS（`bot_db.py`／`line_server.py`） |
+| 臨時 DB 合併單元測試 | PASS（撞號重映、updated_at 守衛、孤兒列跳過，見 B-1） |
+| 真實雲端 pull | 第一次 users=11／positions=12／watchlist=29，skipped=0；修正時間戳後再跑 **pull 後有變動: False**（10／24 筆被正確判為較舊而拒收），不再回溯 |
+| 真實雲端 push | 成功，雲端狀態已與本機一致（見 C） |
+| `test_bot_logic.py` | **9 / 9 OK** (36.7s) |
+| `test_kline_logic.py` | **7 / 7 PASS** |
+| 真實 LINE 流量 | **尚未驗證**。`bootstrap_db_sync()` 只在程序啟動時跑一次，需重啟本機服務後確認開機日誌出現「已自 Render 雲端拉回並合併快照」。 |
+
+### E. 尚未處理
+
+1. `import_db_snapshot` 的 `COALESCE(?, CURRENT_TIMESTAMP)` 仍是 UTC 後援，但僅在來源列 `updated_at` 為 NULL 時觸發（`export_db_snapshot` 不會產生 NULL），暫不影響。
+2. `alert_logs` 不在快照內，兩節點各自去重；盤中若兩節點同時醒著，同一則告警可能各推一次（推論，未觀測到）。
+3. `bot_db.get_connection()` 的 `with` 只 commit 不 close，每次呼叫留下未關閉連線（既有行為，本次未動；Windows 上會鎖住 DB 檔）。
+4. 未 commit／push。本次改 `line_server.py`、`bot_db.py`；工作區另有他 session 的 `kline.py` 修改與未追蹤的 `hmm_regime.py`，未觸碰。
+
+**D-2 補注（同日 17:05）**：開機流程實測通過 —— 於 port 8097 重啟，`Application startup complete` 後約 270 ms 依序出現「拉回並合併」與「推送雲端」，未阻塞 uvicorn 啟動。
+另修正日誌用字：合併筆數是「接受寫入」筆數，`ON CONFLICT ... WHERE excluded.updated_at >= ...` 的 `>=` 會讓內容相同的列也算一次重寫，**筆數不等於實際變動列數**。真正的行為驗證是時間戳修好後那次 pull 的 `變動: False`。
+（17:04 那次 pull 又回報 12／29，是因為 17:02 跑 `test_bot_logic.py` 把測試列以較新 TW 時間戳推上雲端，拉回時時間戳相等而全部被接受，非資料回溯。）
+
+**同時工作區狀態**：另一個 session 於 16:45–16:50 修改 `hmm_regime.py`(新增)、`kline.py`、`app.py`、`bot_flex.py`、`monitor_worker.py`、`test_bot_logic.py`、`test_kline_logic.py`、`README.md`（HMM 市場狀態偵測）。本 session 只改 `line_server.py`、`bot_db.py`，無重疊。
