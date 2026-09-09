@@ -335,5 +335,42 @@ class TestLineBotCore(unittest.TestCase):
                 self.assertIn("逆日線弱彈", res_5m["action_tag"])
                 self.assertNotIn("建議偏多買進", res_5m["action_tag"])
 
+    def test_08_conformal_prediction_abstention(self):
+        """自動化驗證：Conformal Prediction 雜訊比與拒絕開倉門檻 (Abstention Gate)"""
+        import pandas as pd
+        import monitor_worker
+
+        # 1. 測試極端單日巨震 (當日振幅 > 2.5x ATR20) 時，觸發 Conformal 拒絕開倉
+        # 構造 ATR 約為 2.0，但當日高低差高達 8.0 元 (4倍 ATR) 的極端巨震日
+        fake_high = [100.0 + i * 0.5 for i in range(25)]
+        fake_low = [98.0 + i * 0.5 for i in range(25)]
+        fake_close = [99.0 + i * 0.5 for i in range(25)]
+        # 最後一天巨震
+        fake_high[-1] = 120.0
+        fake_low[-1] = 110.0
+        fake_close[-1] = 115.0
+
+        mock_extreme_vol_df = pd.DataFrame({
+            "high": fake_high,
+            "low": fake_low,
+            "close": fake_close,
+            "ema20": fake_close,
+            "vol_ma": [1000.0] * 25,
+            "volume": [800.0] * 25,
+            "bpa_h2": [False] * 24 + [True]
+        })
+
+        mock_res = {
+            "df": mock_extreme_vol_df,
+            "bpa_res": {"always_in_code": "AIL", "signals": ["🔥 High 2 (H2) 雙重底回踩買點"]},
+            "sr_levels": {"s1": 110.0},
+            "close_now": 115.0,
+            "stock_name": "極端波動股",
+            "inst_df": pd.DataFrame({"total": [100, 100, 100]})
+        }
+
+        res_conformal_blocked = monitor_worker.check_bottom_confirmation_signals("9999", analysis_res=mock_res)
+        self.assertFalse(res_conformal_blocked["triggered"], "當日極端巨震 (>2.5x ATR) 時，應啟動 Conformal 拒絕推播！")
+
 if __name__ == "__main__":
     unittest.main()

@@ -1255,6 +1255,8 @@ def build_5m_stock_flex(res5: dict) -> dict:
     whale_color = res5.get("whale_color", "#94a3b8")
     whale_advice = res5.get("whale_advice", "")
     mtf_status = res5.get("mtf_status", "中性整理")
+    conformal_status = res5.get("conformal_status", "充足 (合格)")
+    noise_ratio = float(res5.get("noise_ratio", 1.0))
 
     buy_stop = float(res5.get("buy_stop", close_now))
     sell_stop = float(res5.get("sell_stop", close_now))
@@ -1412,7 +1414,15 @@ def build_5m_stock_flex(res5: dict) -> dict:
                         },
                         {
                             "type": "text",
-                            "text": f"🎯 {whale_advice}",
+                            "text": f"🎯 置信度評估：{conformal_status}",
+                            "size": "xxs",
+                            "color": "#fbbf24" if ("過大" in conformal_status or "過低" in conformal_status) else "#34d399",
+                            "wrap": True,
+                            "margin": "xs"
+                        },
+                        {
+                            "type": "text",
+                            "text": f"📢 {whale_advice}",
                             "size": "xxs",
                             "color": "#94a3b8",
                             "wrap": True,

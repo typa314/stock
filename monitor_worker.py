@@ -11,6 +11,7 @@ import sys
 import time
 import logging
 from datetime import datetime
+import pandas as pd
 
 # 確保當前目錄在模組搜尋路徑第一位
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -145,6 +146,19 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
             inst_net_3d = int(inst_df["total"].tail(3).sum())
             if inst_net_3d < -300:
                 logger.info(f"【{ticker}】雖然可能浮現技術回測，但法人近3日大幅賣超 {inst_net_3d} 張，觸發籌碼硬門檻攔截！")
+                return {"triggered": False}
+
+        # ── Conformal 不確定性拒絕機制 (Extreme Volatility Abstention) ──
+        # 若當日波幅大於近 20 日平均真實波幅 (ATR) 的 2.5 倍，市場處於極端巨震混亂期，置信度不足，主動放棄開倉推播
+        if len(df) >= 5 and "high" in df.columns and "low" in df.columns and "close" in df.columns:
+            tr1 = df["high"] - df["low"]
+            tr2 = (df["high"] - df["close"].shift(1)).abs()
+            tr3 = (df["low"] - df["close"].shift(1)).abs()
+            daily_tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr20_d = float(daily_tr.tail(20).mean()) if len(daily_tr) >= 5 else 1.0
+            today_rng = float(df["high"].iloc[-1] - df["low"].iloc[-1])
+            if atr20_d > 0 and (today_rng / atr20_d) > 2.5:
+                logger.info(f"【{ticker}】當日振幅 ({today_rng:.2f}元) 超過 20 日 ATR ({atr20_d:.2f}元) 之 2.5 倍，觸發 Conformal 拒絕開倉門檻！")
                 return {"triggered": False}
 
         # 1. High 2 (H2) 雙重底推動確認

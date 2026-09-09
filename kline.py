@@ -1771,6 +1771,24 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
     rng = max(0.01, bar_h - bar_l)
     body = abs(bar_c - bar_o)
 
+    # ── Conformal Prediction 符合預測：動態真實波幅 (ATR20_5m) 與雜訊非對稱度 ──
+    # 計算近 20 根 5m 棒的真實波幅 True Range
+    if len(df) >= 2:
+        tr1 = df["high"] - df["low"]
+        tr2 = (df["high"] - df["close"].shift(1)).abs()
+        tr3 = (df["low"] - df["close"].shift(1)).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        atr20_5m = float(tr.tail(20).mean()) if len(tr) >= 5 else rng
+    else:
+        atr20_5m = rng
+    atr20_5m = max(0.01, atr20_5m)
+    
+    # 計算當前信號棒相對於常態波動的雜訊比 (Noise Ratio)
+    noise_ratio = round(rng / atr20_5m, 2)
+    # 置信度狀態評估 (Conformal Uncertainty Quantification)
+    is_noise_extreme = noise_ratio > 2.8   # 單根波幅大於均幅 2.8 倍：失控巨震，置信區間過寬
+    is_vol_dull = noise_ratio < 0.35      # 單根波幅小於均幅 0.35 倍：過度鈍化，假突破機率極高
+
     if body / rng >= 0.6:
         bar_type = "🟢 多頭趨勢棒 (Bull Trend)" if bar_c > bar_o else "🔴 空頭趨勢棒 (Bear Trend)"
     elif (min(bar_c, bar_o) - bar_l >= 0.5 * rng) and (bar_h - max(bar_c, bar_o) < 0.25 * rng):
@@ -1849,9 +1867,23 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
     # 日線是否處於多頭主控架構（AIL 且站穩日MA20）
     is_daily_bull = (daily_always_code == "AIL") and (close_now >= daily_ma20 * 0.995)
 
-    # 5m 當沖動作決策（多時框硬門檻對齊）
+    # ── 5m 當沖動作決策（多時框硬門檻 + Conformal 拒絕開倉機制） ──
     mtf_status = "中性整理"
-    if "多" in bpa_status:
+    conformal_status = "充足 (合格)"
+    
+    if is_noise_extreme:
+        # 情況 1: 雜訊波幅過大 (> 2.8x ATR)，置信區間發散，依符合預測原則主動拒絕交易
+        action_tag_5m = "🛑 拒絕開倉 (雜訊過大)"
+        action_sub_5m = f"當前 5m 波幅達均幅 {noise_ratio:.1f} 倍，隨機雜訊過大且置信區間發散，主動放棄開倉，嚴禁追價！"
+        action_color_5m = "#f43f5e"
+        conformal_status = f"⚠️ 雜訊過大 ({noise_ratio:.1f}x 均幅)"
+    elif is_vol_dull:
+        # 情況 2: 波動過度鈍化 (< 0.35x ATR)，動能不足，假突破風險高
+        action_tag_5m = "🛑 暫緩開倉 (動能不足)"
+        action_sub_5m = f"當前 5m 波幅僅均幅 {noise_ratio:.1f} 倍，波動極度鈍化缺乏推升動能，假突破機率高，建議觀望。"
+        action_color_5m = "#94a3b8"
+        conformal_status = f"💤 波動過低 ({noise_ratio:.1f}x 均幅)"
+    elif "多" in bpa_status:
         if is_daily_bear:
             # 日線空方架構下，5m 短彈禁止給出買進掛單，強制定調為逆勢弱彈，防誘多
             action_tag_5m = "⚠️ 逆日線弱彈 (觀望)"
@@ -2046,6 +2078,9 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         "daily_always_code": daily_always_code,
         "daily_ma20": daily_ma20,
         "inst_net_3d": inst_net_3d,
+        "noise_ratio": noise_ratio,
+        "atr20_5m": atr20_5m,
+        "conformal_status": conformal_status,
         "data_time_str": data_time_str
     }
 
