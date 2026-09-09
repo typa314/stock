@@ -36,22 +36,59 @@ export default {
 
     const backends = [];
 
-    // 若有設定本機穿透網址，列為第 1 順位
-    if (localUrl) {
-      backends.push({
-        id: "local_pc",
-        name: "💻 本地電腦 (高算力優先)",
-        baseUrl: localUrl,
-        timeoutMs: localTimeout,
-        isLocal: true
-      });
+    // ── 優先級配置（已切換為 Render 雲端優先） ──
+    const preferRender = env.PREFER_RENDER !== "false"; // 預設 Render 優先
+
+    if (preferRender) {
+      // ☁️ 第 1 順位：Render 雲端 (主力優先)
+      if (renderUrl) {
+        backends.push({
+          id: "render_cloud",
+          name: "☁️ Render 雲端 (主力優先)",
+          baseUrl: renderUrl,
+          timeoutMs: cloudTimeout,
+          isLocal: false
+        });
+      }
+
+      // 💻 第 2 順位：本地電腦 (備援節點)
+      if (localUrl) {
+        backends.push({
+          id: "local_pc",
+          name: "💻 本地電腦 (備援節點)",
+          baseUrl: localUrl,
+          timeoutMs: localTimeout,
+          isLocal: true
+        });
+      }
+    } else {
+      // 若 PREFER_RENDER="false"，還原為本機優先
+      if (localUrl) {
+        backends.push({
+          id: "local_pc",
+          name: "💻 本地電腦 (高算力優先)",
+          baseUrl: localUrl,
+          timeoutMs: localTimeout,
+          isLocal: true
+        });
+      }
+
+      if (renderUrl) {
+        backends.push({
+          id: "render_cloud",
+          name: "☁️ Render 雲端 (留守備援)",
+          baseUrl: renderUrl,
+          timeoutMs: cloudTimeout,
+          isLocal: false
+        });
+      }
     }
 
-    // 若有設定 Koyeb，列為 24/7 不休眠主力雲端
+    // 若有設定 Koyeb，列為備用雲端
     if (koyebUrl) {
       backends.push({
         id: "koyeb_cloud",
-        name: "⚡ Koyeb 雲端 (24/7 不休眠主力)",
+        name: "⚡ Koyeb 雲端 (備用)",
         baseUrl: koyebUrl,
         timeoutMs: cloudTimeout,
         isLocal: false
@@ -64,17 +101,6 @@ export default {
         id: "huggingface_cloud",
         name: "🤗 Hugging Face 旗艦雲端",
         baseUrl: hfUrl,
-        timeoutMs: cloudTimeout,
-        isLocal: false
-      });
-    }
-
-    // Render 雲端為備援守護
-    if (renderUrl) {
-      backends.push({
-        id: "render_cloud",
-        name: "☁️ Render 雲端 (留守備援)",
-        baseUrl: renderUrl,
         timeoutMs: cloudTimeout,
         isLocal: false
       });

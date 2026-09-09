@@ -1318,7 +1318,7 @@ def build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rati
     return fig
 
 # ── 6. 核心分析主函數 ─────────────────────────────────────────
-def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=True, print_report=True, quick_mode=False, display_months=None):
+def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=True, print_report=True, quick_mode=False, display_months=None, **kwargs):
     ticker = str(ticker).strip()
     market, auto_name = get_info(ticker)
     stock_name = custom_name if custom_name else auto_name
