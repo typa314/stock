@@ -1443,10 +1443,12 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
     bpa_ema_pb = np.zeros(N, dtype=bool)
     for i in range(8, N):
         if np.sum(close_arr[i-8:i] > ema20_arr[i-8:i]) >= 6:
-            if low_arr[i] <= ema20_arr[i] * 1.005 and close_arr[i] >= ema20_arr[i] * 0.985:
+            # 多頭回測守穩：低點碰到 EMA 附近（+0.5% 容差），收盤仍守住 EMA 上方（容忍 0.3% 跌穿）
+            if low_arr[i] <= ema20_arr[i] * 1.005 and close_arr[i] >= ema20_arr[i] * 0.997:
                 bpa_ema_pb[i] = True
         elif np.sum(close_arr[i-8:i] < ema20_arr[i-8:i]) >= 6:
-            if high_arr[i] >= ema20_arr[i] * 0.995 and close_arr[i] <= ema20_arr[i] * 1.015:
+            # 空頭反彈觸壓：高點觸到 EMA 附近（-0.5% 容差），收盤仍在 EMA 下方（容忍 0.3% 突穿）
+            if high_arr[i] >= ema20_arr[i] * 0.995 and close_arr[i] <= ema20_arr[i] * 1.003:
                 bpa_ema_pb[i] = True
     df["bpa_ema_pb"] = bpa_ema_pb
 
@@ -1740,14 +1742,16 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
     # 5m BPA Always-In 多空動態狀態
     c = df["close"]
     ema = df["ema20"]
-    slope = (ema.iloc[-1] - ema.iloc[-4]) / (ema.iloc[-4] + 1e-9) * 100 if len(ema) >= 4 else 0
+    # 使用 8 根棒（≈40分鐘）斜率，避免 4 根（15分鐘）過短導致多空頻繁翻轉
+    # 閾值提升至 ±0.15%，與日K evaluate_brooks_price_action 標準一致
+    slope = (ema.iloc[-1] - ema.iloc[-8]) / (ema.iloc[-8] + 1e-9) * 100 if len(ema) >= 8 else 0
 
-    if c.iloc[-1] > ema.iloc[-1] and slope > 0.05:
+    if c.iloc[-1] > ema.iloc[-1] and slope > 0.15:
         bpa_status = "多頭主控（拉回逢低做多）"
         bpa_status_color = "#4ade80"
         bpa_bg = "rgba(34, 197, 94, 0.2)"
         bpa_guide = f"目前 5 分K 處於順勢多方軌道，站穩 20 EMA（{ema_now:.2f} 元）之上，拉回守穩可順勢佈局。"
-    elif c.iloc[-1] < ema.iloc[-1] and slope < -0.05:
+    elif c.iloc[-1] < ema.iloc[-1] and slope < -0.15:
         bpa_status = "空方主導（反彈逢高做空）"
         bpa_status_color = "#f87171"
         bpa_bg = "rgba(239, 68, 68, 0.2)"
@@ -1769,9 +1773,11 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
 
     if body / rng >= 0.6:
         bar_type = "🟢 多頭趨勢棒 (Bull Trend)" if bar_c > bar_o else "🔴 空頭趨勢棒 (Bear Trend)"
-    elif min(bar_c, bar_o) - bar_l >= 0.5 * rng:
+    elif (min(bar_c, bar_o) - bar_l >= 0.5 * rng) and (bar_h - max(bar_c, bar_o) < 0.25 * rng):
+        # 長下影線 + 短上影線，確認是真正的多頭反轉棒（排除 Spinning Top）
         bar_type = "🔨 多頭反轉下影棒 (Bull Reversal)"
-    elif bar_h - max(bar_c, bar_o) >= 0.5 * rng:
+    elif (bar_h - max(bar_c, bar_o) >= 0.5 * rng) and (min(bar_c, bar_o) - bar_l < 0.25 * rng):
+        # 長上影線 + 短下影線，確認是真正的空頭反轉棒（排除 Spinning Top）
         bar_type = "☄️ 空頭反轉上影棒 (Bear Reversal)"
     elif body / rng <= 0.2:
         bar_type = "⚖️ 十字猶豫棒 (Doji)"
@@ -1857,7 +1863,8 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
             whale_color = "#ef4444"
             whale_bg = "rgba(239, 68, 68, 0.16)"
             whale_advice = "大單摜壓長黑破線，空方動能強烈，嚴格落實風控停損。"
-        elif (lower_sh / rng >= 0.45) and (abs(bar_l - ema_now) / (ema_now + 1e-9) < 0.008 or (not df_today.empty and bar_l <= df_today["low"].min())):
+        elif (lower_sh / rng >= 0.45) and (abs(bar_l - ema_now) / (ema_now + 1e-9) < 0.015 or (not df_today.empty and bar_l <= df_today["low"].min())):
+            # 接近 EMA 容差 0.8%→1.5%，5分K 尺度波幅更大，需要更寬的護盤識別窗口
             whale_tag = "🔨 主力爆量護盤"
             whale_color = "#22c55e"
             whale_bg = "rgba(34, 197, 94, 0.16)"

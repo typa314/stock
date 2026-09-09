@@ -139,9 +139,11 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
         last_bar = bpa_res.get("last_bar_type", "")
 
         # 1. High 2 (H2) 雙重底推動確認
-        is_h2 = any("High 2" in s or "H2" in s for s in signals) or (
-            "bpa_h2" in df.columns and bool(df["bpa_h2"].tail(2).any()) and always_code in ["AIL", "TR"]
-        )
+        # 時效過濾：bpa_h2 必須在最近 5 根日K 棒內（避免過期訊號觸發推播）
+        h2_recent = "bpa_h2" in df.columns and bool(df["bpa_h2"].tail(5).any()) and always_code in ["AIL", "TR"]
+        is_h2 = any("High 2" in s or "H2" in s for s in signals) and h2_recent
+        if not is_h2:
+            is_h2 = h2_recent  # signals 未含關鍵字時，改用 df 欄位判斷（仍需時效過濾）
         if is_h2:
             return {
                 "triggered": True,
@@ -198,7 +200,9 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
             vol_ma = float(df["vol_ma"].iloc[-1])
             prev_c = float(df["close"].iloc[-2])
             chg_p = (close_now - prev_c) / prev_c * 100
-            if -2.5 <= chg_p < 0 and vol_ma > 0 and cur_vol <= 0.65 * vol_ma and close_now >= ema20_val * 0.99 and always_code in ["AIL", "TR"]:
+            # 最低量能護欄：cur_vol > vol_ma * 0.15，避免盤前/盤後極低量誤觸發
+            wyckoff_vol_ok = vol_ma > 0 and cur_vol <= 0.65 * vol_ma and cur_vol > vol_ma * 0.15
+            if -2.5 <= chg_p < 0 and wyckoff_vol_ok and close_now >= ema20_val * 0.99 and always_code in ["AIL", "TR"]:
                 return {
                     "triggered": True,
                     "signal_name": "💤 價跌量縮良性洗盤守穩",
