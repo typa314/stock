@@ -431,7 +431,8 @@ def build_dashboard_stock_flex(
     comp: dict,
     sr: dict,
     mtf_status: str = None,
-    conformal_status: str = None
+    conformal_status: str = None,
+    regime_status: str = None
 ):
     """
     建立 1:1 復刻 Web 儀表板的旗艦級 4合1 多維綜合評鑑 Flex Bubble
@@ -535,6 +536,13 @@ def build_dashboard_stock_flex(
                 conformal_status = f"雜訊比 {ratio_d:.2f}x (合格 🛡️)"
         else:
             conformal_status = "雜訊比合格 🛡️"
+
+    if not regime_status:
+        regime_info = comp.get("regime_info") if isinstance(comp, dict) else None
+        if regime_info and isinstance(regime_info, dict):
+            regime_status = regime_info.get("regime_name", "🟢 順勢波段環境")
+        else:
+            regime_status = "🟢 順勢波段環境"
 
     s1 = float(sr.get("s1", close_now * 0.98)) if sr else close_now * 0.98
     r1 = float(sr.get("r1", close_now * 1.02)) if sr else close_now * 1.02
@@ -660,7 +668,7 @@ def build_dashboard_stock_flex(
                             "contents": [
                                 {
                                     "type": "text",
-                                    "text": f"🌐 {mtf_status} ｜ 🎯 {conformal_status}",
+                                    "text": f"🌐 {mtf_status} ｜ 🌊 {regime_status} ｜ 🎯 {conformal_status}",
                                     "size": "xxs",
                                     "color": "#38bdf8",
                                     "wrap": True
@@ -1100,7 +1108,8 @@ def build_buy_signal_alert_flex(
     target_1r: float,
     target_2r: float,
     inst_status: str = "法人籌碼安全 (未見大額拋售)",
-    conformal_status: str = "Conformal 雜訊合格 (波動受控)"
+    conformal_status: str = "Conformal 雜訊合格 (波動受控)",
+    regime_status: str = "🟢 順勢波段環境"
 ):
     """
     建立觀察名單觸發高勝率底部回測確認買點的專屬綠色推播 Flex Bubble
@@ -1201,7 +1210,7 @@ def build_buy_signal_alert_flex(
                     "contents": [
                         {
                             "type": "text",
-                            "text": f"🛡️ {inst_status} ｜ 🎯 {conformal_status}",
+                            "text": f"🛡️ {inst_status} ｜ 🎯 {conformal_status} ｜ 🌊 {regime_status}",
                             "size": "xxs",
                             "color": "#6ee7b7",
                             "align": "center",

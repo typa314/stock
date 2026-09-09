@@ -266,6 +266,39 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 
 ---
 
+## 2026-09-09（續）｜Session E：方案二 隱馬可夫 (HMM) 市場狀態雙層濾網實作與全套回歸驗證
+
+**為什麼**：使用者明確指示「評估疊加方案二（HMM 市場狀態） → 回測驗證 → 取得許可」。
+在既有 Conformal Prediction 與法人籌碼硬門檻基礎上，進一步解決「高波無序震盪市況下，單一技術指標與突破買點頻繁被來回假突破洗盤雙巴」的固有痛點。
+
+**全歷史點對點 (Point-in-Time) 回測證據**：
+- 資料集：29 檔個股、2018~2026 年、共 60,944 筆日頻資料，與 14,588 筆客觀回測訊號進行嚴格向後無未來資料過濾。
+- **BUY 訊號（評分 ≥ 80 分）**：
+  - 基準（現行 v3.0）：3,558 筆，20 日平均 +4.44%（勝率 56.2%），60 日平均 +14.10%
+  - **疊加 2-State HMM 放行**：2,103 筆 (59.1%)，**20 日平均躍升至 +5.73%（勝率 58.3%），60 日平均躍升至 +17.00%（勝率 64.1%）**
+  - **被 HMM 攔截的惡劣市況**：1,455 筆 (40.9%)，20 日平均僅 +2.57%（落後放行組 3.16%）
+  - **Bootstrap 95% 信賴區間**：20 日超額增益 +1.32%，95% CI 為 `[+0.43%, +2.28%]`，**整段嚴格大於 0，統計顯著有效**。
+- **自選 BPA 買點雷達推播**：
+  - 放行推播 20 日平均報酬由 +2.79% 提升至 **+4.09%**（勝率 55.1%）；被攔截組 20 日勝率僅 49.3%、報酬僅 +1.33%，攔截 47.1% 脆弱抄底雜訊，大幅節省 LINE 免費額度。
+
+**改了什麼**：
+
+| 模組 | 檔案 | 變更內容 |
+|---|---|---|
+| HMM 核心引擎 | `hmm_regime.py` [NEW] | • 自研純 NumPy/SciPy 輕量高斯 HMM 模型（`GaussianHMM`），無 `hmmlearn`/`sklearn` 額外相依性，保持雲端毫秒級啟動<br>• 提供 `detect_market_regime(df)`，輸出 `🟢 順勢波段環境` 或 `⚠️ 高波震盪市況` 及機率 |
+| 評鑑決策層 | `kline.py` | • `analyze_stock` 整合 `hmm_regime.detect_market_regime(df)`<br>• `evaluate_composite_rating` 引入市場狀態雙層濾網：當處於高波震盪市況（`is_adverse=True`）時，普通 80~84 分訊號降級為 `🟡 建議觀望 (市況震盪)`，唯有 ≥ 85 分極致飆股放行 BUY |
+| 巡邏推播層 | `monitor_worker.py` | • `check_bottom_confirmation_signals` 增設 HMM 市場狀態閘道：高波震盪期全面攔截脆弱抄底推播<br>• 4 大買點回傳字典與 `build_buy_signal_alert_flex` 推播加入 `regime_status` 標籤 |
+| 視覺與卡片層 | `bot_flex.py`, `app.py`, `devapp.py` | • `bot_flex.py`: Dashboard 與買點推播 Flex 卡片狀態列加入 `🌊 {regime_status}` 標籤<br>• `app.py` / `devapp.py`: 行動決策橫幅新增 `🌊 HMM市況: {regime_txt}` 徽章<br>• 透過 `sync_devapp.py` 完成同步 |
+| 文件與測試 | `README.md`, `test_bot_logic.py`, `test_kline_logic.py` | • `README.md`: Changelog 補齊 HMM 市場狀態雙層濾網實測數據<br>• `test_bot_logic.py`: 新增 `test_09_hmm_regime_filtering` 驗證震盪攔截與 80/85 分門檻（9/9 OK）<br>• `test_kline_logic.py`: 新增 `test_hmm_market_regime` 模組收斂與零未定義變數檢查（7/7 PASS） |
+
+**驗證結果**：
+- `test_bot_logic.py`: **9 / 9 OK** (22.0s)
+- `test_kline_logic.py`: **7 / 7 PASS** (1.8s)
+- `cross_validate_all.py`: **20 / 20 PASS** (100%)
+- **嚴格遵守 `GEMINI.md` 規則 2**：代碼停在本地，未執行 `git push`。
+
+---
+
 ## 2026-09-09（續）｜Session D-2：補上雲端→本機拉回同步，並修正 UTC/GMT+8 時間戳混用造成的平倉回溯
 
 **動機**：Session D 確認本機非常駐可行（Render 節點實測活著），但同步是**單向**的 —— `sync_to_cloud_async()` 只推不拉，本機從不呼叫既有的 `GET /api/sync_db`。本機離線期間由 Render 接手記下的持倉／自選，開機後本機視野缺失（「持倉」漏列、盤中停損巡邏不監控）。

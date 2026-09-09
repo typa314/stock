@@ -524,11 +524,23 @@ inst_gate_txt = f"賣超 {abs(inst_3d_sum)}張 (警戒 ⚠️)" if inst_blocked 
 inst_gate_color = "#ef4444" if inst_blocked else "#38bdf8"
 inst_gate_bg = "rgba(239, 68, 68, 0.2)" if inst_blocked else "rgba(56, 189, 248, 0.15)"
 
+# 方案二：HMM 市場狀態徽章 (Two-Stage Regime Gate)
+regime_info = res.get("regime_info") or comp.get("regime_info")
+if regime_info and isinstance(regime_info, dict):
+    regime_txt = regime_info.get("regime_name", "🟢 順勢波段環境")
+    regime_color = regime_info.get("color", "#22c55e")
+    regime_bg = "rgba(34, 197, 94, 0.15)" if not regime_info.get("is_adverse") else "rgba(234, 179, 8, 0.15)"
+else:
+    regime_txt = "🟢 順勢波段環境"
+    regime_color = "#22c55e"
+    regime_bg = "rgba(34, 197, 94, 0.15)"
+
 st.markdown(f"""
 <div style="background: rgba(0,0,0,0.3); border: 1.5px solid {action_border}; border-left: 6px solid {action_border}; padding: 10px 16px; border-radius: 8px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
         <span style="font-size: 1.25rem; font-weight: 800; color: {action_color}; background: {action_bg}; padding: 4px 12px; border-radius: 6px; border: 1px solid {action_border}; letter-spacing: 0.5px;">{action_tag}</span>
         <span style="font-size: 0.90rem; color: #f1f5f9; font-weight: 600;">{action_sub}</span>
+        <span style="font-size: 0.80rem; background: {regime_bg}; color: {regime_color}; border: 1px solid {regime_color}; padding: 2px 8px; border-radius: 4px; font-weight: 700;">🌊 HMM市況: {regime_txt}</span>
         <span style="font-size: 0.80rem; background: {conformal_badge_bg}; color: {conformal_badge_color}; border: 1px solid {conformal_badge_color}; padding: 2px 8px; border-radius: 4px; font-weight: 700;">🎯 Conformal: {conformal_txt}</span>
         <span style="font-size: 0.80rem; background: {inst_gate_bg}; color: {inst_gate_color}; border: 1px solid {inst_gate_color}; padding: 2px 8px; border-radius: 4px; font-weight: 700;">🏛️ 法人門檻: {inst_gate_txt}</span>
     </div>

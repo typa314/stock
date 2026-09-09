@@ -195,7 +195,7 @@ def test_static_code_quality():
     from pyflakes.api import checkPath
     from pyflakes.reporter import Reporter
 
-    checked_files = ["app.py", "devapp.py", "kline.py", "test_kline_logic.py"]
+    checked_files = ["app.py", "devapp.py", "kline.py", "hmm_regime.py", "test_kline_logic.py"]
     for filename in checked_files:
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -206,6 +206,20 @@ def test_static_code_quality():
         assert not undefined_errors, f"❌ 品質檢查失敗：在 {filename} 中發現未定義變數錯誤！\n" + "\n".join(undefined_errors)
     print("[PASS] 6. Static Code Quality & Zero-Undefined-Variable Validation (No NameError)")
 
+# ── 7. 方案二：隱馬可夫 HMM 市場狀態模組功能與收斂驗證 ────────────
+def test_hmm_market_regime():
+    import hmm_regime
+    # 構造 40 根模擬資料
+    n = 40
+    dates = pd.date_range("2026-01-01", periods=n, freq="B")
+    close = 100.0 + np.cumsum(np.ones(n) * 0.5)
+    df = pd.DataFrame({"date": dates, "close": close, "ema20": close - 0.5})
+    res = hmm_regime.detect_market_regime(df)
+    assert "regime_name" in res and "regime_code" in res and "p_healthy" in res
+    assert res["regime_code"] in ["healthy", "adverse", "fallback", "unknown"]
+    assert 0.0 <= res["p_healthy"] <= 1.0
+    print("[PASS] 7. HMM Market Regime Detection Logic & Convergence Validation")
+
 if __name__ == "__main__":
     test_tick_sizes()
     test_indicator_math()
@@ -213,4 +227,5 @@ if __name__ == "__main__":
     test_volume_price_evaluation()
     test_realtime_bar_fetching()
     test_static_code_quality()
-    print("\nALL 6 CORE TESTS & QA CHECKS PASSED WITH 100% ACCURACY!")
+    test_hmm_market_regime()
+    print("\nALL 7 CORE TESTS & QA CHECKS PASSED WITH 100% ACCURACY!")

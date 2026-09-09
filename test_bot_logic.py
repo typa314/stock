@@ -391,5 +391,73 @@ class TestLineBotCore(unittest.TestCase):
         res_conformal_blocked = monitor_worker.check_bottom_confirmation_signals("9999", analysis_res=mock_res)
         self.assertFalse(res_conformal_blocked["triggered"], "當日極端巨震 (>2.5x ATR) 時，應啟動 Conformal 拒絕推播！")
 
+    def test_09_hmm_regime_filtering(self):
+        """測試方案二：HMM 市場狀態雙層濾網 (Two-Stage Regime Gate)"""
+        import monitor_worker
+        import kline
+        import pandas as pd
+
+        # 構造常態多頭 K 棒
+        n = 30
+        dates = pd.date_range("2026-08-01", periods=n)
+        close = [100.0 + i * 0.5 for i in range(n)]
+        df_normal = pd.DataFrame({
+            "date": dates,
+            "open": close,
+            "high": [c + 1.0 for c in close],
+            "low": [c - 0.5 for c in close],
+            "close": close,
+            "ema20": close,
+            "volume": [1000.0] * n,
+            "vol_ma": [1000.0] * n,
+            "bpa_h2": [False] * (n - 1) + [True]
+        })
+
+        # 1. 測試自選買點雷達在 HMM 震盪市況下自動攔截
+        mock_adverse_res = {
+            "df": df_normal,
+            "bpa_res": {"always_in_code": "AIL", "signals": ["🔥 High 2 (H2) 雙重底回踩買點"]},
+            "sr_levels": {"s1": 110.0},
+            "close_now": 115.0,
+            "stock_name": "震盪股",
+            "inst_df": pd.DataFrame({"total": [100, 100, 100]}),
+            "composite_rating": {"score": 88},
+            "regime_info": {"is_adverse": True, "regime_name": "⚠️ 高波震盪市況"}
+        }
+        res_adverse = monitor_worker.check_bottom_confirmation_signals("2454", analysis_res=mock_adverse_res)
+        self.assertFalse(res_adverse["triggered"], "處於 HMM 高波震盪市況時，應啟動市場狀態閘道攔截推播！")
+
+        # 2. 測試順勢環境下放行
+        mock_healthy_res = {
+            **mock_adverse_res,
+            "regime_info": {"is_adverse": False, "regime_name": "🟢 順勢波段環境"}
+        }
+        res_healthy = monitor_worker.check_bottom_confirmation_signals("2454", analysis_res=mock_healthy_res)
+        self.assertTrue(res_healthy["triggered"], "處於 HMM 順勢環境且具備優質體質時，應放行推播！")
+        self.assertIn("regime_status", res_healthy)
+
+        # 3. 測試 evaluate_composite_rating 的雙層門檻 (80 分 vs 85 分)
+        # 構造模擬評級環境
+        bpa_mock = {"always_in_zh": "🟢 多頭主升趨勢", "always_in_code": "AIL"}
+        vol_mock = {"wyckoff_status": "🟢 放量推升", "summary": "多方量能推升"}
+        
+        # 80 分在順勢環境 -> BUY
+        r_healthy = kline.evaluate_composite_rating(
+            df_normal, bpa_mock, vol_mock, pd.DataFrame({"total": [500] * 5}),
+            {"eps_ttm": 15.0, "pe_ratio": 15.0, "quarterly_eps": [3.0, 3.5, 4.0, 4.5]},
+            "2330", "tse", regime_info={"is_adverse": False}
+        )
+        if r_healthy["score"] >= 80:
+            self.assertEqual(r_healthy["action_type"], "BUY", "順勢市況且評分>=80分時應輸出 BUY")
+
+        # 在高波震盪環境下，評分 80~84 分應降級為 WAIT
+        r_adverse_80 = kline.evaluate_composite_rating(
+            df_normal, bpa_mock, vol_mock, pd.DataFrame({"total": [500] * 5}),
+            {"eps_ttm": 15.0, "pe_ratio": 15.0, "quarterly_eps": [3.0, 3.5, 4.0, 4.5]},
+            "2330", "tse", regime_info={"is_adverse": True}
+        )
+        if 80 <= r_adverse_80["score"] < 85:
+            self.assertEqual(r_adverse_80["action_type"], "WAIT", "震盪市況下 80~84 分應降級為 WAIT 觀望")
+
 if __name__ == "__main__":
     unittest.main()

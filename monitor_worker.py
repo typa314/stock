@@ -183,6 +183,15 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                 logger.info(f"【{ticker}】當日振幅 ({today_rng:.2f}元) 超過 20 日 ATR ({atr20_d:.2f}元) 之 2.5 倍，觸發 Conformal 拒絕開倉門檻！")
                 return {"triggered": False}
 
+        # ── 方案二：HMM 市場狀態雙層濾網 (Two-Stage Regime Gate) ──
+        # 回測實證：處於 HMM 高波震盪洗盤 (Adverse/Churn) 期間，底部訊號 20 日勝率僅 49.3%、平均報酬僅 +1.33%
+        # 徹底攔截惡劣市況下的脆弱抄底推播，大幅節省 LINE 免費推播額度
+        regime_info = res.get("regime_info")
+        if regime_info and regime_info.get("is_adverse", False):
+            logger.info(f"【{ticker}】當前處於 HMM 高波震盪市況 (避開震盪抄底)，觸發市場狀態硬閘道攔截推播！")
+            return {"triggered": False}
+        regime_status = regime_info.get("regime_name", "🟢 順勢波段環境") if regime_info else "🟢 順勢波段環境"
+
         # ── 籌碼與雜訊指標標籤 ──
         inst_status = "法人籌碼安全 (未見大額拋售)"
         if inst_df is not None and not inst_df.empty and "total" in inst_df.columns:
@@ -219,7 +228,8 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                 "stock_name": sname,
                 "market": market,
                 "inst_status": inst_status,
-                "conformal_status": conformal_status
+                "conformal_status": conformal_status,
+                "regime_status": regime_status
             }
 
         # 2. 20 EMA 動態支撐回測守穩
@@ -239,7 +249,8 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                 "stock_name": sname,
                 "market": market,
                 "inst_status": inst_status,
-                "conformal_status": conformal_status
+                "conformal_status": conformal_status,
+                "regime_status": regime_status
             }
 
         # 3. S1 關鍵支撐多頭反轉棒 (Bull Reversal at S1)
@@ -259,7 +270,8 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                     "stock_name": sname,
                     "market": market,
                     "inst_status": inst_status,
-                    "conformal_status": conformal_status
+                    "conformal_status": conformal_status,
+                    "regime_status": regime_status
                 }
 
         # 4. 價跌量縮良性洗盤守穩 (Wyckoff / VPA)
@@ -283,7 +295,8 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                     "stock_name": sname,
                     "market": market,
                     "inst_status": inst_status,
-                    "conformal_status": conformal_status
+                    "conformal_status": conformal_status,
+                    "regime_status": regime_status
                 }
     except Exception as e:
         logger.error(f"檢查標的 {ticker} 回測買點信號異常: {e}")
@@ -336,7 +349,8 @@ def run_watchlist_patrol_cycle(force_test=False):
                 sname, t, sig_name, sig_desc, close_now,
                 buy_stop, sell_stop, t1, t2,
                 inst_status=sig.get("inst_status", "法人籌碼安全 (未見大額拋售)"),
-                conformal_status=sig.get("conformal_status", "Conformal 雜訊合格 (波動受控)")
+                conformal_status=sig.get("conformal_status", "Conformal 雜訊合格 (波動受控)"),
+                regime_status=sig.get("regime_status", "🟢 順勢波段環境")
             )
 
             for u in user_items:

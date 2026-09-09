@@ -932,9 +932,9 @@ def get_rating_badge(s):
     if s >= -5:  return "🔴 溫和偏空（空頭承壓，反彈宜減碼）"
     return            "🔴 強烈空頭（主跌段，切勿盲目接刀）"
 
-def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market):
+def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market, regime_info=None):
     """
-    多維綜合評級：融合 Minervini 趨勢樣板 + CANSLIM 成長動能 + BPA 價格行為 + 法人量價結構
+    多維綜合評級：融合 Minervini 趨勢樣板 + CANSLIM 成長動能 + BPA 價格行為 + 法人量價結構 + HMM 市場狀態
     保持乾淨精簡，輸出高訊號比之綜合評級卡片資料
     """
     c = df["close"]
@@ -1075,14 +1075,32 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         b_bg = "rgba(239, 68, 68, 0.2)"
         summary_advice = "跌破中長期均線，空方主導，持股逢反彈嚴格風控，嚴禁盲目猜底。"
 
-    # 5. 核心操盤動作決策（依回測實證優化：80 分為超額報酬顯著分水嶺）
+    # 5. 核心操盤動作決策（依回測實證優化：80 分為基準，疊加 HMM 市場狀態雙層濾網）
+    is_adverse_regime = bool(regime_info.get("is_adverse", False)) if regime_info else False
+
     if total_score >= 80 and ("多" in bpa_zh or "主升" in badge):
-        action_tag = "🟢 建議買入"
-        action_type = "BUY"
-        action_color = "#22c55e"
-        action_bg = "rgba(34, 197, 94, 0.18)"
-        action_border = "#22c55e"
-        action_sub = f"主升動能強勁，逢 20 EMA（{ema_val:.2f} 元）拉回守穩或放量突破順勢買進"
+        if is_adverse_regime:
+            if total_score >= 85:
+                action_tag = "🟢 建議買入"
+                action_type = "BUY"
+                action_color = "#22c55e"
+                action_bg = "rgba(34, 197, 94, 0.18)"
+                action_border = "#22c55e"
+                action_sub = f"具備 ≥85 分極致飆股體質，雖處震盪市況仍可順應 20 EMA（{ema_val:.2f} 元）守穩嚴設風控佈局"
+            else:
+                action_tag = "🟡 建議觀望 (市況震盪)"
+                action_type = "WAIT"
+                action_color = "#fbbf24"
+                action_bg = "rgba(245, 158, 11, 0.18)"
+                action_border = "#fbbf24"
+                action_sub = f"綜合評分達 {total_score} 分，但處於 HMM 高波震盪市況，未達 85 分極致飆股標準，建議防守觀望"
+        else:
+            action_tag = "🟢 建議買入"
+            action_type = "BUY"
+            action_color = "#22c55e"
+            action_bg = "rgba(34, 197, 94, 0.18)"
+            action_border = "#22c55e"
+            action_sub = f"主升動能強勁，逢 20 EMA（{ema_val:.2f} 元）拉回守穩或放量突破順勢買進"
     elif total_score >= 60 and "空" not in bpa_zh:
         action_tag = "🟡 建議持有"
         action_type = "HOLD"
@@ -1128,7 +1146,8 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         "chip_zh": chip_zh,
         "chip_sub": chip_sub,
         "chip_color": chip_color,
-        "summary_advice": summary_advice
+        "summary_advice": summary_advice,
+        "regime_info": regime_info
     }
 
 def build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rating_badge, r1, r2, s1, s2, stop_loss, display_months=None):
@@ -1634,12 +1653,15 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
 
     vol_eval = evaluate_volume_price(df)
     bpa_res = evaluate_brooks_price_action(df)
+    import hmm_regime
+    regime_info = hmm_regime.detect_market_regime(df)
+
     if quick_mode:
         fundamentals = {}
         composite_rating = None
     else:
         fundamentals = fetch_fundamentals(ticker, market=market)
-        composite_rating = evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market)
+        composite_rating = evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market, regime_info=regime_info)
 
     trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df, bpa_res, vol_eval)
     rating_badge = get_rating_badge(trend_score)
@@ -1774,6 +1796,7 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
         "sr_levels": {
             "r2": r2, "r1": r1, "s1": s1, "s2": s2, "stop_loss": stop_loss, "close_now": close_now
         },
+        "regime_info": regime_info,
         "display_months": display_months,
         "output_html": output if generate_html else None
     }
