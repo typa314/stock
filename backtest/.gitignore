@@ -1,0 +1,10 @@
+# 工作快取與中間產物：不進版控，避免數十 MB 二進位檔永久寫入 git 歷史
+data/cache/
+data/*.parquet
+_cache/
+*.log
+*.csv
+!data/coverage.csv
+
+# data/MANIFEST.md 與 data/coverage.csv 刻意納入版控：
+# 即使資料本身未隨 repo 散佈，也查得到本來有哪些資料、涵蓋到哪、如何重抓。

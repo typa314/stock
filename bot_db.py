@@ -6,7 +6,10 @@ bot_db.py - SQLite 個人持倉與風控告警資料庫模組
 
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 台股標準時區 (GMT+8)
+TW_TZ = timezone(timedelta(hours=8))
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "portfolio.db")
 
@@ -107,7 +110,7 @@ def add_or_update_position(line_user_id, ticker, cost_price, shares=1000, stock_
     t = str(ticker).strip()
     c_p = float(cost_price)
     sh = int(shares)
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
@@ -165,20 +168,32 @@ def get_all_active_positions(db_path=None):
         """)
         return [dict(r) for r in cursor.fetchall()]
 
-def should_send_alert(user_id, ticker, alert_type, alert_date=None, db_path=None):
-    """判斷今日該用戶的該標的是否已發過同類型告警（單日單股冷卻去重）"""
-    today_str = alert_date or datetime.now().strftime("%Y-%m-%d")
+def should_send_alert(user_id, ticker, alert_type, alert_date=None, db_path=None, cooldown_days=1):
+    """判斷今日（或近 N 日內）該用戶的該標的是否已發過同類型告警（冷卻去重）"""
+    if alert_date:
+        today = datetime.strptime(alert_date, "%Y-%m-%d").date()
+    else:
+        today = datetime.now(TW_TZ).date()
+    today_str = today.strftime("%Y-%m-%d")
+
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-        SELECT id FROM alert_logs
-        WHERE user_id = ? AND ticker = ? AND alert_type = ? AND alert_date = ?
-        """, (user_id, str(ticker).strip(), alert_type, today_str))
+        if cooldown_days <= 1:
+            cursor.execute("""
+            SELECT id FROM alert_logs
+            WHERE user_id = ? AND ticker = ? AND alert_type = ? AND alert_date = ?
+            """, (user_id, str(ticker).strip(), alert_type, today_str))
+        else:
+            start_date_str = (today - timedelta(days=cooldown_days - 1)).strftime("%Y-%m-%d")
+            cursor.execute("""
+            SELECT id FROM alert_logs
+            WHERE user_id = ? AND ticker = ? AND alert_type = ? AND alert_date >= ? AND alert_date <= ?
+            """, (user_id, str(ticker).strip(), alert_type, start_date_str, today_str))
         return cursor.fetchone() is None
 
 def record_alert_log(user_id, ticker, alert_type, trigger_price, alert_date=None, db_path=None):
     """記錄已發出的告警"""
-    today_str = alert_date or datetime.now().strftime("%Y-%m-%d")
+    today_str = alert_date or datetime.now(TW_TZ).strftime("%Y-%m-%d")
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -196,7 +211,7 @@ def add_to_watchlist(line_user_id, ticker, stock_name=None, note=None, max_limit
     user = get_or_create_user(line_user_id, db_path=db_path)
     user_id = user["id"]
     t = str(ticker).strip().upper()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection(db_path) as conn:
         cursor = conn.cursor()

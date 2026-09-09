@@ -1,0 +1,223 @@
+# SESSION_LOG — 跨 session 變更紀錄
+
+本檔為多 session／多模型共用的變更流水紀錄。**動手改動任何與既有條目同一區域的程式前，先讀最近的條目**，避免重複發現同一問題、或把別人剛修好的東西改回去。
+
+**寫入規則**
+- 每次改動後立即追加，不要留到收尾才補寫。
+- 每條必含三件事：**改了什麼**（檔案／函式／常數）、**為什麼**（根因、使用者指令、或待驗證的假設）、**驗證狀態**（只過語法？跑過單元測試？跑過歷史回測？實際觀測到什麼結果）。
+- 遵循專案 `GEMINI.md`「嚴禁臆測原則」：**實測事實**、**推論**、**假設**三者不得混寫在同一句而不標明。尚未驗證就寫「待驗證」，不要寫成已確認。
+- 若某條推翻或取代了先前條目，明確寫出並指回該條目，不要讓兩條紀錄互相矛盾。
+
+---
+
+## 2026-09-09 ｜準確度 point-in-time 回測驗證 ＋ 依實證修正
+
+參與者：本條目由 Claude Code session A 撰寫。條目中標記為「session B」者為同日並行的另一個開發 session（於 15:05–15:08 改動 `kline.py`、`app.py`、`devapp.py`、`line_server.py`、`monitor_worker.py`）。
+
+完整證據與方法論：`ACCURACY_BACKTEST_REPORT.md`（同一份也放在 `F:\DOC\finance\stock-system-accuracy-backtest.md`）
+回測工具：`backtest/`（可重複執行，見本條目末段）
+
+### A. 驗證方法（實測基礎，非模擬近似）
+
+不修改 production 程式，以 monkeypatch 把 `kline.py` 的 6 個抓取函式（`fetch_twse`／`fetch_from_yfinance`／`fetch_otc`／`fetch_realtime_bar`／`fetch_institutional`／`fetch_fundamentals`）與 `yf.download` 換成「只回傳 cutoff 當日（含）以前」的歷史切片，再逐日呼叫**真正的** `analyze_stock()`。記錄的是引擎在那一天實際會輸出的評分與決策。
+
+- 期間 2020-01-02 ~ 2026-06，28 檔個股。基本面採公告落後期過濾（月營收 +10 天、財報 Q1~Q3 +45 天、Q4 +90 天）。
+- 前瞻報酬用還原（含息）價，進場價為訊號日**次一交易日開盤**。
+- 基準一律為「同一批樣本的無條件平均報酬」（＝隨機任一天買進），所有結論以超額表示。
+- 信賴區間採 (個股 × 月份) 區塊 bootstrap（日頻訊號與 20 日前瞻報酬高度重疊，一般 t 檢定不適用）。
+
+三項前置稽核（皆為實測）：
+1. **無未來資料洩漏**：資料截斷在 T 與 T+10 各跑一次，重疊區間全部 45 個欄位完全一致。
+2. **資料源保真**：yfinance 的 OHLC 與 TWSE 官方 49/49 日零誤差；成交量僅為 TWSE 的 85%（Yahoo 未計盤後定價／零股／鉅額），但以同一引擎分別餵兩種成交量比對 189 個交易日，**決策一致率 99.7%、評分平均差 0.07 分** → 量能來源差異不影響結論。
+3. **可重現**：同一組態獨立跑兩次 14,067 筆，`score`／`action`／`trend_score`／`minervini`／`bpa` 一致率 100.0000%。
+
+### B. 修正前的實測發現（修正的依據）
+
+| 發現 | 實測數據 |
+|---|---|
+| BUY 決策有顯著但薄的超額 | 20 日 +4.16%，基準 +2.25%，超額 +1.91%，95% CI [+1.27%, +2.60%] |
+| 「高勝率」與實際落差大 | 看多 20 日命中率 56.2%，基準 54.1% → 增益僅 2.1 個百分點 |
+| SELL 不預測下跌 | SELL 後 20 日仍 52.0% 上漲、平均 +1.05%（正報酬），僅顯著劣於基準 |
+| 訊號資訊集中在長天期 | 綜合評分橫斷面 IC：5 日 0.046 → 60 日 0.140 |
+| BUY 門檻 75 分未校準 | 75~79 分區間 20 日 +2.19%（≈ 基準 +2.25%）；80 分以上 +4.40% |
+| BPA 買點雷達推播為負 | 20 日超額 **-0.52%**，95% CI [-0.96%, -0.08%]（顯著劣於基準），觸發率 21.8%（每檔每年約 56.5 次） |
+| -7% 固定停損為淨損失 | 持有 60 日時 53% 交易被掃出，每筆平均 +6.54%；不停損為 +9.83%。停損幅度掃描單調：-7% 6.54% < 2.0×ATR 6.60% < 2.5×ATR 7.60% < 3.0×ATR 7.98% < 不停損 9.83% |
+| BUY 訊號不降低下檔風險 | BUY 後 20 日內先觸 -7% 的機率 30.8%，全樣本基準 29.0%（BUY 略高） |
+| `trend_score` 近乎雜訊 | 20 日合併 IC 0.020；餵足 12 個月歷史的對照組為 **-0.012** |
+| 逐檔不穩定 | 28 檔中僅 14 檔（50%）贏過自身基準 |
+| production 指標暖身不足 | `months=1` 實際只餵 15~43 根 K 棒（中位數 30）。與 `months=12` 同日比對：MA60 平均誤差 5.10%（最大 27.86%）、RSI 平均差 5.4 點（最大 27.3）、**MACD 柱體平均誤差 116.75% 且會變號**；Weinstein 趨勢階段僅 67.4% 相符。最終 action 一致率 96.8%（決策本身受影響小） |
+
+> 「BUY 門檻 75 分未校準」「-7% 停損為淨損失」「雷達推播為負」三項為**實測統計結果**。
+> 至於「為何逢回買不如平常日買進」屬**推論**（可能與 2020~2026 動能主導市況有關），本次未做因子拆解驗證。
+
+### C. 已實作的修正
+
+| # | 改動 | 檔案／位置 | 為什麼 | 誰改的 |
+|---|---|---|---|---|
+| 1 | BUY 門檻 `total_score >= 75` → `>= 80` | `kline.py` `evaluate_composite_rating` | 75~79 分區間報酬與基準無異，斷點在 80 分（見 B） | session B |
+| 2 | `fetch_months = max(months, 12)`；新增 `display_months` 參數，讓圖表顯示範圍與指標運算視窗分離 | `kline.py` `analyze_stock` / `build_stock_chart`；呼叫端 `app.py`、`devapp.py`、`line_server.py`、`monitor_worker.py` 改用 `months=12` | 修正 MACD／RSI／MA60 暖身不足導致的顯示錯誤（見 B 最後一列） | session B |
+| 3 | BPA 買點雷達加綜合評分品質門檻：一般形態需 ≥ 80 分，價跌量縮需 ≥ 65 分 | `monitor_worker.py` `check_bottom_confirmation_signals` | 未過濾的雷達訊號 20 日超額顯著為負 | session B |
+| 4 | 新增 `compute_atr_pct()` 與 `compute_risk_stop()`：警戒價 = `成本 − 3 × ATR20`，夾在 -8% ~ -15%，取不到 ATR 退回 -7%，`positions.stop_loss_pct` 非預設值時優先採用；同一檔同一天只算一次（記憶體快取，僅在成功算出時快取） | `kline.py`（新增於 `get_tw_tick` 之後）；呼叫端 `monitor_worker.py` `run_patrol_cycle`、`line_server.py` 買進回覆與持倉總覽卡 | 三處各自硬寫 `cost_p * 0.93`，且完全忽略 DB 的 `stop_loss_pct`（該欄位形同死碼）。固定 -7% 經回測為淨損失 | session A |
+| 5 | 警戒卡文案：標頭「🚨 強制停損緊急告警」→「⚠️ 浮虧警戒通知」；動態顯示實際幅度與依據；風控指引改為「確認進場理由是否消失再決定」，移除「絕不凹單」等機械式砍出指示 | `bot_flex.py` `build_stop_loss_alert_flex`（新增 `stop_pct`／`stop_basis` 參數）、持倉總覽卡每檔文字與頁尾 | 原文案宣稱固定 -7% 為「Minervini 資本保護鐵律」，與回測結果矛盾 | session A |
+| 6 | `logger.debug(...)` → `print("  [WARN] ...")` | `kline.py` `analyze_stock_5m` 的 except 區塊（原 1891 行） | **HEAD 既有 bug，非 session B 造成**：`kline.py` 從未引入 logging，該行會在 except 區塊拋 `NameError`，反而蓋掉真正的例外。`test_kline_logic.py` 的靜態檢查本來就在 FAIL | session A |
+| 7 | 修正 3 處 -7% 強制停損敘述；新增「🔬 回測實證」章節，含實測數據與三點使用前提，並註明 ⭐ 星級徽章的 `trend_score` IC 僅 0.027 屬參考資訊 | `README.md` | 文件與程式行為不符；原「經典高勝率交易設定」無數據支撐 | session A |
+
+> **關於 #1~#3 的驗證範圍宣告**：session A 已讀過 `monitor_worker.py` 品質門檻與 `kline.py` 門檻／`months` 改動的 diff，並以回測**端到端驗證其效果**（見 D）。但 `app.py`／`devapp.py` 的改動 session A 未逐行 review。
+
+### D. 驗證結果（實測，同條件前後對照）
+
+前後皆為 28 檔、每 3 個交易日取樣、14,588 筆訊號的同條件比較。
+
+**綜合評分決策**
+
+| 指標 | 修正前 | 修正後 |
+|---|---|---|
+| BUY 20 日平均報酬 | +4.16% | **+4.44%** |
+| BUY 20 日超額（vs 基準） | +1.91% | **+2.19%** |
+| 95% CI | [+1.27%, +2.60%] | **[+1.46%, +2.98%]** |
+| BUY 60 日平均報酬 | +12.87%※ | **+14.10%** |
+| BUY 訊號筆數（佔比） | 3,999（27.4%） | 3,558（24.4%） |
+| 逐檔贏過自身基準 | 14 / 28 | **15 / 28** |
+| 綜合評分 60 日橫斷面 IC | 0.140 | 0.140（未變，評分公式未動） |
+
+※ 取自 step=2 的擴大樣本，其餘為 step=3 同條件對照。
+
+**BPA 買點雷達推播**
+
+| 指標 | 修正前 | 修正後 |
+|---|---|---|
+| 觸發率 | 21.8% | **9.9%** |
+| 平均每檔每年推播 | 約 56.5 次 | **約 8.0 次** |
+| 20 日平均報酬 | +1.73% | **+2.79%** |
+| 20 日超額 | **-0.52%** | **+0.54%** |
+| 95% CI | [-0.96%, -0.08%] ❌ 顯著劣於基準 | [-0.32%, +1.35%] ⚪ 與基準無顯著差異 |
+
+→ 結論以實測表述：**從「顯著傷害」修正為「與基準無顯著差異」，尚未達到「顯著有益」**。不要把它記成「已修好且有效」。
+
+**停損改動**（以實作公式 3×ATR20 夾 8~15% 重跑，修正後 BUY 訊號、來回成本 0.471%）
+
+| 配置 | 交易數 | 勝率 | 每筆平均 | 停損誤觸出場比 |
+|---|---|---|---|---|
+| 持有 20 日｜舊：固定 -7% | 917 | 44.8% | +2.67% | 37% |
+| 持有 20 日｜新：3×ATR20 夾 8~15% | 858 | **50.8%** | **+3.03%** | **23%** |
+| 持有 20 日｜參考：不設價格停損 | 830 | 53.5% | +3.60% | 0% |
+| 持有 60 日｜舊：固定 -7% | 482 | 40.0% | +7.51% | 53% |
+| 持有 60 日｜新：3×ATR20 夾 8~15% | 427 | **47.8%** | **+8.78%** | **40%** |
+| 持有 60 日｜參考：不設價格停損 | 372 | 59.1% | +11.36% | 0% |
+
+新公式回收「固定 -7%」與「完全不停損」之間約 1/3 的差距。保留上下界是**取捨判斷**（不設停損時單筆風險僅由持有期上限控制），非實測最優解 —— 實測最優為不設價格停損。
+
+**迴歸測試**
+
+| 測試 | 結果 |
+|---|---|
+| `test_kline_logic.py` | **6 / 6 PASS**（修正 #6 之前因 `logger` 未定義而 FAIL） |
+| `test_bot_logic.py` | **8 / 8 OK** |
+
+`test_bot_logic.py` 的停損卡斷言已更新為新文案，並新增兩項斷言（`-9.3%`、`3×ATR20` 須出現在卡片、且不得出現「強制停損底線」），防止日後退回硬寫 -7%。持倉卡測試資料補上 `stop_pct`。
+
+**實機觀測**：巡邏測試對 2330 算出日波動 1.57% → 3×ATR = 4.7% → 夾到下界 **-8%**，警戒價 184.0（舊制固定 -7% 為 186.0）。行為符合設計。
+
+### E. 尚未處理（給下一個接手的人）
+
+| 項目 | 現況與實測數據 | 可行下一步 |
+|---|---|---|
+| `trend_score` 仍是雜訊 | 修正後 20 日合併 IC 0.027、60 日 0.074（修正前 0.023／0.071，無變化）。餵足 12 個月歷史仍為 -0.012 → **實測顯示非資料不足所致，是因子設計問題**（此為兩組數據交叉比對的結論，非推測） | 重新設計 `evaluate_professional_trend` 的因子權重，或把 ⭐ 星級徽章從卡片顯著位置移除。README 已加註為參考資訊，但 UI 未動 |
+| 推播觸發器仍是「雷達＋評分門檻」 | 實測：在 score ≥ 80 的樣本內，雷達觸發日 20 日報酬 +3.42%，未觸發日 +4.95%，差異 95% CI [-2.86%, -0.20%]（整段為負）→ **雷達觸發本身仍是負面資訊**，這是保留它當觸發器的固有上限 | 已驗證的替代方案：改以「BUY 狀態 + 5 交易日冷卻」當觸發器，20 日超額 +1.12%，95% CI [+0.14%, +2.11%]（顯著），每檔每年 17.8 次。需在 `bot_db.should_send_alert` 加 `cooldown_days` 參數。**未實作**（會改變該功能性質，屬產品決定） |
+| 冷卻天數的取捨 | 實測：1 日冷卻超額 +1.34%（68.4 次/年，會爆 LINE 額度）；5 日 +1.12%（17.8 次/年，顯著）；10 日 +1.00%（10.3 次/年，CI 跨 0）；20 日 +1.12%（6.1 次/年，CI 跨 0） | 若採上一列方案，建議 5 日 |
+| 版號不一致 | `kline.__version__ = "2.6.1"`，但 `README.md` 更新紀錄已到 `v2.9.0` | 本次刻意未動以免與 session B 撞版號。依 `GEMINI.md` 規則，push 前須一併處理並補 Changelog |
+| 市況單一 | 驗證期間 2020~2026 為強多頭（樣本基準 20 日平均 +2.25%） | 「停損放寬有利」的結論在深度空頭可能反轉，尚無反例驗證。若要補，需 2008／2022 級別的空頭樣本 |
+| BPA 雷達僅驗證收盤確認版 | production 是盤中每 60 秒評估，本次以盤後定盤 K 棒評估 | 盤中版觸發率會更高、品質可能更低（此為**推論**，未量測） |
+
+### F. Git 狀態
+
+**未 commit、未 push**（依 `GEMINI.md` 規則 2）。working tree 已修改：
+`README.md`、`app.py`、`bot_db.py`、`bot_flex.py`、`devapp.py`、`kline.py`、`line_server.py`、`monitor_worker.py`、`test_bot_logic.py`
+新增未追蹤：`ACCURACY_BACKTEST_REPORT.md`、`SESSION_LOG.md`、`backtest/`
+
+> `bot_db.py` 的改動時間為 11:27，早於本次作業，非 session A／B 於本條目所述工作中產生。
+
+### G. 重跑驗證的方式
+
+```powershell
+cd F:\stock\backtest
+python fetch_history.py                 # 首次抓資料；FinMind 免費額度會回 402 限速，本腳本可重複執行補齊
+python backtest_accuracy.py --months 1 --step 3 --with-alert --out signals_new.csv
+python analyze_results.py signals_new.csv
+python simulate_strategy.py signals_new.csv --action BUY --hold 60 --stop-atr 3.0 --stop-floor 0.08 --stop-cap 0.15
+python check_lookahead.py 2330          # 未來資料洩漏稽核
+python check_volume_fidelity.py 2330    # 資料源保真度稽核
+```
+
+`backtest/data/cache/` 內已有 2018 年起的價格／三大法人／月營收／財報快取，重跑不需重新抓取（見下一條目）。
+
+---
+
+## 2026-09-09（續）｜測試資料歸檔
+
+**為什麼**：使用者指示「已下載的測試資料可以重複使用，請歸檔放好方便查找」。
+原本資料放在 `backtest/_cache/`（`_` 前綴、被 gitignore、pickle 格式），既不易查找也不易被其他工具或 session 使用；
+且 FinMind 免費額度會突發回 HTTP 402 限速，**重抓一次要分批等額度恢復**，這是必須保存的實際理由
+（本次作業中即遇到，`1101` 的法人資料當時被擋、稍後才補齊）。
+
+**改了什麼**
+
+| 項目 | 內容 |
+|---|---|
+| 新增 `backtest/archive_data.py` | 歸檔工具：搬移快取、產出 Parquet 與 coverage、自動生成 MANIFEST；`--rebuild-cache` 可由 Parquet 反向重建 pickle |
+| 資料位置 | `backtest/_cache/` → **`backtest/data/cache/`** |
+| 新增開放格式歸檔 | `data/twstock_prices.parquet`（61,544 筆）、`twstock_institutional.parquet`（61,033 筆）、`twstock_monthly_revenue.parquet`（3,036 筆）、`twstock_financial_statements.parquet`（16,283 筆） |
+| 新增查找索引 | `data/coverage.csv`（每檔涵蓋範圍、筆數、`backtest_ready` 旗標）、`data/MANIFEST.md`（來源、口徑注意事項、載入範例、擴充方式） |
+| 路徑預設值 | `fetch_history.py`／`backtest_accuracy.py`／`simulate_strategy.py` 的 `CACHE` 預設改指 `data/cache`（`BT_CACHE` 環境變數仍可覆寫） |
+| `backtest/.gitignore` | 改為排除 `data/cache/`、`data/*.parquet`、`signals_*.csv`、`sim_*.csv`、`*.log`；**`data/MANIFEST.md` 與 `data/coverage.csv` 刻意納入版控**，即使資料未隨 repo 散佈也查得到本來有哪些資料 |
+| 補齊 `1101` | 前次因 FinMind 402 缺法人資料，本次補回 2,112 筆 |
+
+**資料集現況（實測）**：30 檔、2018-01-02 ~ 2026-09-09，其中 **29 檔四類資料齊全可直接回測**。
+唯一未齊全的是 `7768`（2025-04 才上市，僅 354 個交易日，短於回測所需的 300 根暖身 + 60 根前瞻）。
+Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
+
+**口徑注意事項已寫入 MANIFEST**（避免下一個人誤用）：
+- 價格 `open/high/low/close` 為原始價，與 TWSE 官方實測 49/49 日零誤差；報酬計算要用 `adj_close`。
+- `volume` 已換成**張**，但 yfinance 成交量僅為 TWSE 官方的約 85%（Yahoo 未計盤後定價／零股／鉅額）。
+  實測對決策一致率 99.7%、評分平均差 0.07 分 → 不影響研判結論，但**不可當精確成交量引用**。
+- 月營收 `date` 已是公告月；財報 `date` 是**季末日非公告日**，做 point-in-time 過濾必須自行加落後期。
+
+**驗證狀態**
+- `backtest_accuracy.py` 冒煙測試：讀到 `F:\stock\backtest\data\cache`（30 檔），2330 產生 8 筆訊號，最後一筆 2025-10-09 score 85 BUY，行為正常。
+- Parquet 獨立讀取驗證（不經回測腳本）：prices 61,544 筆／30 檔／2018-01-02~2026-09-09；2330 近四季 EPS 讀出 17.44、19.51、22.08、27.25，數值合理。
+- `--rebuild-cache` 反向重建已實測：寫入暫存目錄重建 30 檔後與原始 pickle 逐項比對 ——
+  2330 的 price DataFrame 數值全等（2110×7）、inst 2113 筆且 `total` 加總相同、revenue 104 筆、
+  fs 611 筆且 EPS 值集合相同。**Parquet ↔ pickle 為無損 round-trip。**
+
+---
+
+## 2026-09-09（續）｜Session C：回測建議全面落地、版號統一 v3.0.0 與全套回歸驗證
+
+**為什麼**：接續執行前次回測報告 (`stock-system-accuracy-backtest.md` / `ACCURACY_BACKTEST_REPORT.md`) 與 `SESSION_LOG.md` 區段 E 所列待辦事項：
+1. `trend_score` (IC ≈ 0.027) 雜訊在 UI / Flex 卡片降級為輔助參考。
+2. 5 日告警冷卻 (`cooldown_days=5`) 實裝至自選買點雷達推播。
+3. 全系統版本號統一至 `v3.0.0`，並補齊 `README.md` Changelog。
+4. 補齊單元測試並執行完整回歸驗證。
+
+**改了什麼**
+
+| 模組 | 檔案 | 變更內容 |
+|---|---|---|
+| 動能評級輔助化 | `app.py`, `bot_flex.py`, `devapp.py` | • `app.py`: `k3` 評級卡標題更新為「技術動能評級 (參考)」，副標明確標註 `IC 0.03`；Tab 2 標題更新為「技術動能評級（輔助參考，IC ≈ 0.03）」，明確提示用戶此因子預測力極低，引導決策回歸 80 分多維綜合評鑑<br>• `bot_flex.py`: Line 721 文字由「多維量化評級」降級調整為「動能評級 (參考)」<br>• `devapp.py`: 使用 `sync_devapp.py` 同步最新變更 |
+| 5 日冷卻機制 | `bot_db.py`, `monitor_worker.py` | • `bot_db.py`: `should_send_alert` 新增 `cooldown_days=1` 參數，若 `cooldown_days > 1` 則檢查 `today - (cooldown_days - 1)` 至 `today` 區間內是否已有紀錄<br>• `monitor_worker.py`: 自選巡邏的 `BPA_BUY_SETUP` 推播正式傳入 `cooldown_days=5`，依回測實測可獲 +1.12% 超額報酬、減少 70% 盤整重複推播，守護 LINE 官方帳號免費額度 |
+| 版本號全域統一 | `kline.py`, `line_server.py`, `README.md` | • `kline.py`: `__version__ = "3.0.0"`（原 2.6.1）<br>• `line_server.py`: `FastAPI(..., version="3.0.0")`<br>• `README.md`: Changelog 表格最上方新增 `v3.0.0` 完整里程碑記錄（運算與圖表時框分離、BUY/雷達 80 分門檻、動態 3×ATR20 停損、5 日冷卻、動能評級輔助化） |
+| 單元測試更新 | `test_bot_logic.py` | 於 `test_02_alert_throttle_deduplication` 新增 `cooldown_days=5` 測試用例：驗證第 1~4 天攔截（返回 False），第 5 天冷卻期滿恢復允許（返回 True） |
+
+**驗證結果**
+
+| 測試腳本 | 執行結果 | 備註 |
+|---|---|---|
+| `test_bot_logic.py` | **8 / 8 OK** (26.7s) | 涵蓋觀察名單、告警去重（含 1 日與 5 日冷卻）、Flex 卡片生成、持倉風控（3×ATR20 停損計算）、自選 BPA 雷達巡邏、法人籌碼硬門檻、Conformal 拒絕退避機制 |
+| `test_kline_logic.py` | **6 / 6 PASS** (1.8s) | 涵蓋 TWSE Tick 級距、指標數學精度（EMA20/RSI14）、BPA K 棒形態分類、VPA 量價、即時行情抓取、靜態語法與零未定義變數檢查 |
+| `devapp.py` 雙向同步 | **PASS** | `devapp.py successfully synced from app.py` |
+
+**Git 狀態與合規檢查**
+- **未執行 `git push`**（嚴格遵守 `GEMINI.md` 規則 2）。
+- `README.md` Changelog 與功能說明已同步更新完畢。
+- 目前修改狀態：`app.py`, `bot_db.py`, `bot_flex.py`, `devapp.py`, `kline.py`, `line_server.py`, `monitor_worker.py`, `test_bot_logic.py`, `README.md`, `SESSION_LOG.md`。
+

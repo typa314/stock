@@ -26,7 +26,7 @@ import requests
 
 import bot_db
 import bot_flex
-from kline import get_info, fetch_realtime_bar, analyze_stock, analyze_stock_5m
+from kline import get_info, fetch_realtime_bar, analyze_stock, analyze_stock_5m, compute_risk_stop
 
 # 設定記錄檔
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -62,7 +62,7 @@ import time
 _STOCK_CACHE = {}  # ticker -> (timestamp, analysis_dict)
 CACHE_TTL_SEC = 60  # 快取有效時間 60 秒
 
-def get_cached_stock_analysis(ticker: str, months: int = 1, quick_mode: bool = False):
+def get_cached_stock_analysis(ticker: str, months: int = 12, quick_mode: bool = False):
     """
     獲取個股多維度量化數據，支援 60s 記憶體快取
     """
@@ -127,7 +127,7 @@ try:
 except Exception as e:
     logger.warning(f"LINE SDK 初始化警告: {e}")
 
-app = FastAPI(title="Stock Quantitative LINE Bot Server", version="1.0.0")
+app = FastAPI(title="Stock Quantitative LINE Bot Server", version="3.0.0")
 
 @app.on_event("startup")
 def startup_event():
@@ -204,16 +204,17 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
         market, sname = get_info(ticker)
         bot_db.add_or_update_position(user_id, ticker, cost_p, shares, sname)
         sync_to_cloud_async()
-        stop_7 = round(cost_p * 0.93, 2)
-        stop_8 = round(cost_p * 0.92, 2)
+        stop_7, stop_pct, stop_basis = compute_risk_stop(ticker, cost_p, market=market)
+        stop_10 = round(cost_p * (1 - stop_pct - 0.03), 2)
 
         reply_msg = (
             f"✅ 已成功記錄持股【{sname} ({ticker})】！\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"• 買進成本：{cost_p:.2f} 元\n"
             f"• 持有股數：{shares:,} 股\n"
-            f"• 強制停損 (-7%)：{stop_7:.2f} 元\n"
-            f"• 極限斷頭 (-8%)：{stop_8:.2f} 元\n"
+            f"• 浮虧警戒 (-{stop_pct*100:.1f}%)：{stop_7:.2f} 元\n"
+            f"• 寬幅防守停損 (-{(stop_pct+0.03)*100:.1f}%)：{stop_10:.2f} 元\n"
+            f"• 警戒依據：{stop_basis}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"🛡️ 系統將於平日盤中自動巡邏風控！\n"
             f"隨時輸入「持倉」即可查看即時損益。"
@@ -258,7 +259,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             else:
                 # 備援：若非盤中抓取近期日K最新收盤
                 try:
-                    res_alt = get_cached_stock_analysis(t, months=1)
+                    res_alt = get_cached_stock_analysis(t, months=12)
                     cur_p = float(res_alt["close_now"]) if res_alt and "close_now" in res_alt else cost_p
                 except Exception:
                     cur_p = cost_p
@@ -266,18 +267,20 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             diff = cur_p - cost_p
             pnl_pct = (diff / cost_p) * 100 if cost_p > 0 else 0.0
             pnl_amt = diff * shares
-            stop_7 = round(cost_p * 0.93, 2)
-            stop_8 = round(cost_p * 0.92, 2)
+            stop_7, stop_pct, stop_basis = compute_risk_stop(
+                t, cost_p, market=market, user_pct=p.get("stop_loss_pct")
+            )
+            stop_10 = round(cost_p * (1 - stop_pct - 0.03), 2)
             buf_7 = cur_p - stop_7
 
             total_cost += cost_p * shares
             total_val += cur_p * shares
 
-            if cur_p <= stop_8:
-                tag = "🚨 極限斷頭"
+            if cur_p <= stop_10:
+                tag = "🚨 防守停損"
                 tag_color = "#ef4444"
             elif cur_p <= stop_7:
-                tag = "⚠️ 強制停損"
+                tag = "⚠️ 浮虧警戒"
                 tag_color = "#f59e0b"
             elif diff < 0:
                 tag = "🟡 浮虧防守"
@@ -296,6 +299,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
                 "pnl_pct": pnl_pct,
                 "pnl_amount": pnl_amt,
                 "stop_7": stop_7,
+                "stop_pct": stop_pct,
                 "buf_7": buf_7,
                 "tag": tag,
                 "tag_color": tag_color
@@ -391,7 +395,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
                 chg_pct = (chg_val / float(rt["open"])) * 100 if rt.get("open") else 0.0
             else:
                 try:
-                    res_alt = get_cached_stock_analysis(t, months=1, quick_mode=True)
+                    res_alt = get_cached_stock_analysis(t, months=12, quick_mode=True)
                     cur_p = float(res_alt["close_now"]) if res_alt and "close_now" in res_alt else 0.0
                     df_alt = res_alt.get("df")
                     prev_c = float(df_alt["close"].iloc[-2]) if (df_alt is not None and len(df_alt) >= 2) else cur_p
@@ -404,7 +408,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
 
             # 取得市場狀態與 20 EMA 距離
             try:
-                res_alt = get_cached_stock_analysis(t, months=1, quick_mode=True)
+                res_alt = get_cached_stock_analysis(t, months=12, quick_mode=True)
                 bpa_res = res_alt.get("bpa_res", {})
                 bpa_zh = bpa_res.get("always_in_zh", "箱型震盪")
                 bpa_color = "#4ade80" if "多" in bpa_zh else ("#f87171" if "空" in bpa_zh else "#fbbf24")
@@ -478,7 +482,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
 
         try:
             import math
-            res = get_cached_stock_analysis(ticker, months=1)
+            res = get_cached_stock_analysis(ticker, months=12)
             sname = res.get("stock_name", ticker)
             df = res["df"]
             bpa_res = res.get("bpa_res", {})

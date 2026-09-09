@@ -19,15 +19,19 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from dateutil.relativedelta import relativedelta
 
-__version__ = "2.6.1"
+# 台股標準時區 (GMT+8)
+TW_TZ = timezone(timedelta(hours=8))
+
+__version__ = "3.0.0"
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 MA_DAYS   = [5, 20, 60]
 VOL_MA    = 20
 MA_COLORS = ["#f59e0b", "#6366f1", "#ec4899"]
+MIN_SWING_R_PCT = 0.018  # 1.8% 最低健康波段空間門檻
 
 # ── 1. 判斷市場 & 取股票名稱 ────────────────────────────────
 def get_info(ticker):
@@ -43,7 +47,7 @@ def get_info(ticker):
 
 # ── 2. 抓歷史資料 ────────────────────────────────────────────
 def fetch_twse(ticker, months):
-    now   = datetime.now()
+    now   = datetime.now(TW_TZ)
     start = now - relativedelta(months=months)
     records = []
     cur = start
@@ -76,7 +80,7 @@ def fetch_twse(ticker, months):
     return records
 
 def fetch_from_yfinance(sym, months):
-    end   = datetime.now()
+    end   = datetime.now(TW_TZ)
     start = end - relativedelta(months=months)
     try:
         raw = yf.download(sym,
@@ -163,13 +167,13 @@ def fetch_realtime_bar(ticker, market):
             open_p = float(meta.get("chartPreviousClose", price))
             vol    = float(meta.get("regularMarketVolume", 0)) / 1000.0
             return {
-                "date": pd.Timestamp.now().normalize(),
+                "date": pd.Timestamp.now(tz=TW_TZ).normalize().tz_localize(None),
                 "open": open_p,
                 "high": high_p,
                 "low": low_p,
                 "close": price,
                 "volume": vol,
-                "time": datetime.now().strftime("%H:%M:%S"),
+                "time": datetime.now(TW_TZ).strftime("%H:%M:%S"),
                 "is_realtime": True,
                 "source": "Yahoo Finance 即時"
             }
@@ -205,7 +209,7 @@ def fetch_realtime_bar(ticker, market):
 # ── 4. 三大法人資料（近5個交易日，支援上市TSE與上櫃OTC） ───────────
 def fetch_inst_finmind(ticker, days=5):
     """自 FinMind 取得近 N 日三大法人買賣超（支援上市 TSE 與上櫃 OTC，免 Token，防機房 IP 阻擋）"""
-    start = (datetime.now() - relativedelta(days=days * 3)).strftime("%Y-%m-%d")
+    start = (datetime.now(TW_TZ) - relativedelta(days=days * 3)).strftime("%Y-%m-%d")
     url = f"https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockInstitutionalInvestorsBuySell&data_id={ticker}&start_date={start}"
     try:
         r = requests.get(url, headers=HEADERS, timeout=6)
@@ -246,7 +250,7 @@ def fetch_institutional(ticker, market, days=5):
     # ── 第二軌：TWSE 官方 T86 備援（僅上市 TSE） ──
     if market == "tse":
         records = []
-        d = datetime.now()
+        d = datetime.now(TW_TZ)
         if d.hour < 15:
             d -= relativedelta(days=1)
         fetched = 0
@@ -286,7 +290,7 @@ def fetch_institutional(ticker, market, days=5):
 # ── 4.1 基本面與財報獲利數據（FinMind CDN + Yahoo 雙軌極速備援） ──
 def fetch_fundamentals(ticker, market="tse"):
     """取得台股個股基本面數據（近四季 EPS、本益比、殖利率、淨值比、雙率與月營收 YoY）"""
-    now = datetime.now()
+    now = datetime.now(TW_TZ)
     start_1y = (now - relativedelta(years=1, months=6)).strftime("%Y-%m-%d")
     start_recent = (now - relativedelta(days=15)).strftime("%Y-%m-%d")
     start_rev = (now - relativedelta(months=14)).strftime("%Y-%m-%d")
@@ -424,6 +428,80 @@ def get_tw_tick(price):
         return 1.00
     else:
         return 5.00
+
+# ── 4.2 風控警戒價位（波動度自適應停損） ─────────────────────────
+# 回測實證（2020-01~2026-06，28 檔、21,896 筆訊號）：
+#   固定 -7% 停損在本系統的 BUY 訊號下為淨損失 —— 持有 60 日時有 53% 的交易被掃出場，
+#   每筆平均報酬從不停損的 +9.83% 腰斬至 +6.54%；持有 20 日為 +2.69% vs +2.12%。
+#   主因是台股個股 20 日內本來就有約 29% 機率隨機晃到 -7%（與訊號好壞無關）。
+#   停損幅度掃描結果（每筆平均報酬，持有 60 日）：
+#     -7% 6.54% < 2.0xATR 6.60% < 2.5xATR 7.60% < 3.0xATR 7.98% < 不設價格停損 9.83%
+#   故改以 20 日 ATR 縮放，並限制上下界：低波動股不被雜訊掃出、高波動股不至於風控失效。
+STOP_ATR_MULT = 3.0
+STOP_PCT_MIN = 0.08          # 最緊 -8%
+STOP_PCT_MAX = 0.15          # 最寬 -15%
+STOP_PCT_FALLBACK = 0.07     # 無法取得 ATR 時沿用原本的 -7%
+STOP_PCT_DB_DEFAULT = -7.0   # positions.stop_loss_pct 的預設值，視為「自動」而非使用者自訂
+_STOP_LEVEL_CACHE = {}
+
+
+def compute_atr_pct(df, period=20):
+    """以 True Range 的 N 日均值除以現價，得到「每日波動佔股價的比例」"""
+    if df is None or len(df) < 5:
+        return None
+    need = {"high", "low", "close"}
+    if not need.issubset(df.columns):
+        return None
+    tr = pd.concat([
+        df["high"] - df["low"],
+        (df["high"] - df["close"].shift(1)).abs(),
+        (df["low"] - df["close"].shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    atr = float(tr.tail(period).mean())
+    close_now = float(df["close"].iloc[-1])
+    if not np.isfinite(atr) or atr <= 0 or close_now <= 0:
+        return None
+    return atr / close_now
+
+
+def compute_risk_stop(ticker, cost_price, market="tse", user_pct=None, analysis_res=None):
+    """
+    計算持倉的浮虧警戒價位（取代原本三處各自硬寫的 cost * 0.93）。
+
+    回傳 (警戒價, 警戒幅度小數, 依據說明)：
+      - user_pct 若為使用者自訂（不等於 STOP_PCT_DB_DEFAULT）則優先採用
+      - 否則以 3 x ATR20 縮放，夾在 -8% ~ -15% 之間
+      - 取不到 ATR 時退回 -7%
+    同一檔股票同一天只計算一次（記憶體快取），供 60 秒巡邏迴圈重複呼叫。
+    """
+    cost_price = float(cost_price)
+    if user_pct is not None:
+        try:
+            up = float(user_pct)
+        except (TypeError, ValueError):
+            up = STOP_PCT_DB_DEFAULT
+        if abs(up - STOP_PCT_DB_DEFAULT) > 1e-6:
+            pct = abs(up) / 100.0
+            return round(cost_price * (1 - pct), 2), pct, f"使用者自訂 -{pct * 100:.1f}%"
+
+    key = (str(ticker).strip(), datetime.now(TW_TZ).strftime("%Y-%m-%d"))
+    if key in _STOP_LEVEL_CACHE:
+        pct, basis = _STOP_LEVEL_CACHE[key]
+    else:
+        pct, basis = STOP_PCT_FALLBACK, f"固定 -{STOP_PCT_FALLBACK * 100:.0f}%（無法取得 ATR）"
+        try:
+            res = analysis_res or analyze_stock(ticker, months=12, generate_html=False,
+                                                print_report=False, quick_mode=True)
+            atr_pct = compute_atr_pct(res.get("df") if res else None)
+            if atr_pct:
+                pct = min(STOP_PCT_MAX, max(STOP_PCT_MIN, STOP_ATR_MULT * atr_pct))
+                basis = f"{STOP_ATR_MULT:.0f}×ATR20（日波動 {atr_pct * 100:.2f}%）"
+                # 僅在成功算出波動度時快取；暫時性失敗不鎖住整天的警戒價位
+                _STOP_LEVEL_CACHE[key] = (pct, basis)
+        except Exception as e:
+            print(f"  [WARN] {ticker} 波動度停損計算失敗，沿用固定 -7%：{e}")
+    return round(cost_price * (1 - pct), 2), pct, basis
+
 
 def evaluate_brooks_price_action(df):
     """
@@ -997,8 +1075,8 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         b_bg = "rgba(239, 68, 68, 0.2)"
         summary_advice = "跌破中長期均線，空方主導，持股逢反彈嚴格風控，嚴禁盲目猜底。"
 
-    # 5. 核心操盤動作決策（建議買入 / 建議持有 / 建議觀望 / 建議賣出）
-    if total_score >= 75 and ("多" in bpa_zh or "主升" in badge):
+    # 5. 核心操盤動作決策（依回測實證優化：80 分為超額報酬顯著分水嶺）
+    if total_score >= 80 and ("多" in bpa_zh or "主升" in badge):
         action_tag = "🟢 建議買入"
         action_type = "BUY"
         action_color = "#22c55e"
@@ -1053,7 +1131,16 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         "summary_advice": summary_advice
     }
 
-def build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rating_badge, r1, r2, s1, s2, stop_loss):
+def build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rating_badge, r1, r2, s1, s2, stop_loss, display_months=None):
+    # 依使用者需求切片圖表顯示範圍（預設呈現近 1 個月，底層所有指標維持 12 個月完整運算無誤差）
+    if display_months is not None and display_months > 0:
+        cutoff = df["date"].iloc[-1] - pd.DateOffset(months=display_months)
+        df_chart = df[df["date"] >= cutoff].copy()
+        if len(df_chart) < 5:
+            df_chart = df.tail(max(5, int(display_months * 22))).copy()
+    else:
+        df_chart = df
+
     row_heights = [0.46, 0.20, 0.18, 0.16]
     subplot_titles = ["K 線 + 20 EMA(BPA) + 均線 + 布林帶", "MACD(12,26,9)", "RSI(14)", "成交量（張）"]
 
@@ -1063,27 +1150,27 @@ def build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rati
 
     # Row 1：K 線 + EMA20 + 均線 + 布林帶
     fig.add_trace(go.Candlestick(
-        x=df["date"], open=df["open"], high=df["high"],
-        low=df["low"], close=df["close"],
+        x=df_chart["date"], open=df_chart["open"], high=df_chart["high"],
+        low=df_chart["low"], close=df_chart["close"],
         increasing_line_color="#ef4444", decreasing_line_color="#22c55e",
         name="K 線"), row=1, col=1)
 
     # 20 EMA (Al Brooks 核心基準線)
-    fig.add_trace(go.Scatter(x=df["date"], y=df["ema20"],
+    fig.add_trace(go.Scatter(x=df_chart["date"], y=df_chart["ema20"],
         mode="lines", line=dict(color="#06b6d4", width=1.8), name="EMA20 (BPA核心)"), row=1, col=1)
 
     for n_ma, color in zip(MA_DAYS, MA_COLORS):
-        fig.add_trace(go.Scatter(x=df["date"], y=df[f"ma{n_ma}"],
+        fig.add_trace(go.Scatter(x=df_chart["date"], y=df_chart[f"ma{n_ma}"],
             mode="lines", line=dict(color=color, width=1.1, dash="dash" if n_ma==20 else "solid"),
             name=f"MA{n_ma}"), row=1, col=1)
 
     # 布林帶
     fig.add_trace(go.Scatter(
-        x=df["date"], y=df["bb_upper"], mode="lines",
+        x=df_chart["date"], y=df_chart["bb_upper"], mode="lines",
         line=dict(color="rgba(148,163,184,0.45)", width=1, dash="dot"),
         name="BB上軌"), row=1, col=1)
     fig.add_trace(go.Scatter(
-        x=df["date"], y=df["bb_lower"], mode="lines",
+        x=df_chart["date"], y=df_chart["bb_lower"], mode="lines",
         line=dict(color="rgba(148,163,184,0.45)", width=1, dash="dot"),
         fill="tonexty", fillcolor="rgba(148,163,184,0.07)",
         name="BB下軌"), row=1, col=1)
@@ -1093,57 +1180,57 @@ def build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rati
             annotation_text=f"持股成本 {cost:.1f}", annotation_position="right", row=1, col=1)
 
     # BPA 與量價形態標註
-    for _, row in df[df["breakout"]].iterrows():
+    for _, row in df_chart[df_chart["breakout"]].iterrows():
         fig.add_annotation(x=row["date"], y=row["high"], text="▲ 放量突破",
             showarrow=True, arrowhead=2, ax=0, ay=-35,
             bgcolor="#fef08a", font=dict(size=10, color="#92400e"), row=1, col=1)
-    for _, row in df[df["bpa_h2"]].iterrows():
+    for _, row in df_chart[df_chart["bpa_h2"]].iterrows():
         fig.add_annotation(x=row["date"], y=row["low"], text="★ H2 買點",
             showarrow=True, arrowhead=2, ax=0, ay=35,
             bgcolor="#10b981", font=dict(size=10, color="#ffffff"), row=1, col=1)
-    for _, row in df[df["bpa_l2"]].iterrows():
+    for _, row in df_chart[df_chart["bpa_l2"]].iterrows():
         fig.add_annotation(x=row["date"], y=row["high"], text="▼ L2 賣點",
             showarrow=True, arrowhead=2, ax=0, ay=-35,
             bgcolor="#ef4444", font=dict(size=10, color="#ffffff"), row=1, col=1)
-    for _, row in df[df["bpa_bull_gap"]].iterrows():
+    for _, row in df_chart[df_chart["bpa_bull_gap"]].iterrows():
         fig.add_annotation(x=row["date"], y=row["low"], text="🚀 EMA 缺口棒",
             showarrow=True, arrowhead=2, ax=0, ay=45,
             bgcolor="#0284c7", font=dict(size=10, color="#ffffff"), row=1, col=1)
-    for _, row in df[df["bpa_bear_gap"]].iterrows():
+    for _, row in df_chart[df_chart["bpa_bear_gap"]].iterrows():
         fig.add_annotation(x=row["date"], y=row["high"], text="⚠️ EMA 缺口棒",
             showarrow=True, arrowhead=2, ax=0, ay=-45,
             bgcolor="#b91c1c", font=dict(size=10, color="#ffffff"), row=1, col=1)
-    for _, row in df[df["double_inside"]].iterrows():
+    for _, row in df_chart[df_chart["double_inside"]].iterrows():
         fig.add_annotation(x=row["date"], y=row["high"], text="⚑ ii 突破",
             showarrow=True, arrowhead=2, ax=0, ay=-25,
             bgcolor="#8b5cf6", font=dict(size=10, color="#ffffff"), row=1, col=1)
-    for _, row in df[df["bull_div"]].iterrows():
+    for _, row in df_chart[df_chart["bull_div"]].iterrows():
         fig.add_annotation(x=row["date"], y=row["low"], text="★ 底背離",
             showarrow=True, arrowhead=2, ax=0, ay=35,
             bgcolor="#bbf7d0", font=dict(size=10, color="#166534"), row=1, col=1)
-    for _, row in df[df["bear_div"]].iterrows():
+    for _, row in df_chart[df_chart["bear_div"]].iterrows():
         fig.add_annotation(x=row["date"], y=row["high"], text="⚠ 頂背離",
             showarrow=True, arrowhead=2, ax=0, ay=-35,
             bgcolor="#fecdd3", font=dict(size=10, color="#991b1b"), row=1, col=1)
-    for _, row in df[df["churn"]].iterrows():
+    for _, row in df_chart[df_chart["churn"]].iterrows():
         fig.add_annotation(x=row["date"], y=row["high"], text="⚡ 爆量滯漲",
             showarrow=True, arrowhead=2, ax=0, ay=-35,
             bgcolor="#fed7aa", font=dict(size=10, color="#9a3412"), row=1, col=1)
 
     # Row 2：MACD 子圖
     macd_row = 2
-    hist_colors = np.where(df["macd_hist"].values >= 0, "#ef4444", "#22c55e")
-    fig.add_trace(go.Bar(x=df["date"], y=df["macd_hist"],
+    hist_colors = np.where(df_chart["macd_hist"].values >= 0, "#ef4444", "#22c55e")
+    fig.add_trace(go.Bar(x=df_chart["date"], y=df_chart["macd_hist"],
         marker_color=hist_colors, name="MACD 柱", showlegend=False, opacity=0.7), row=macd_row, col=1)
-    fig.add_trace(go.Scatter(x=df["date"], y=df["macd"],
+    fig.add_trace(go.Scatter(x=df_chart["date"], y=df_chart["macd"],
         mode="lines", line=dict(color="#f59e0b", width=1.5), name="MACD"), row=macd_row, col=1)
-    fig.add_trace(go.Scatter(x=df["date"], y=df["macd_signal"],
+    fig.add_trace(go.Scatter(x=df_chart["date"], y=df_chart["macd_signal"],
         mode="lines", line=dict(color="#a78bfa", width=1.5), name="Signal"), row=macd_row, col=1)
     fig.add_hline(y=0, line=dict(color="rgba(255,255,255,0.2)", width=1), row=macd_row, col=1)
 
     # Row 3：RSI 子圖
     rsi_row = 3
-    fig.add_trace(go.Scatter(x=df["date"], y=df["rsi"],
+    fig.add_trace(go.Scatter(x=df_chart["date"], y=df_chart["rsi"],
         mode="lines", line=dict(color="#38bdf8", width=1.5), name="RSI(14)"), row=rsi_row, col=1)
     fig.add_hline(y=70, line=dict(color="#f87171", width=1, dash="dash"),
         annotation_text="超買 70", annotation_position="right", row=rsi_row, col=1)
@@ -1154,10 +1241,10 @@ def build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rati
 
     # Row 4：成交量子圖
     vol_row = 4
-    vol_colors = np.where(df["close"].values >= df["open"].values, "#ef4444", "#22c55e")
-    fig.add_trace(go.Bar(x=df["date"], y=df["volume"], marker_color=vol_colors,
+    vol_colors = np.where(df_chart["close"].values >= df_chart["open"].values, "#ef4444", "#22c55e")
+    fig.add_trace(go.Bar(x=df_chart["date"], y=df_chart["volume"], marker_color=vol_colors,
         name="成交量", showlegend=False), row=vol_row, col=1)
-    fig.add_trace(go.Scatter(x=df["date"], y=df["vol_ma"], mode="lines",
+    fig.add_trace(go.Scatter(x=df_chart["date"], y=df_chart["vol_ma"], mode="lines",
         line=dict(color="#f59e0b", width=1, dash="dot"), name=f"VOL MA{VOL_MA}"), row=vol_row, col=1)
 
     # ── 支撐與壓力矩陣（S/R 水平線）可視化 ────────────────────────────
@@ -1212,32 +1299,39 @@ def build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rati
     return fig
 
 # ── 6. 核心分析主函數 ─────────────────────────────────────────
-def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=True, print_report=True, quick_mode=False):
+def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=True, print_report=True, quick_mode=False, display_months=None):
     ticker = str(ticker).strip()
     market, auto_name = get_info(ticker)
     stock_name = custom_name if custom_name else auto_name
+
+    # 確保技術指標載入充足歷史資料（固定至少 12 個月以避免 MA60/MACD/RSI 計算失真）
+    fetch_months = max(months, 12) if months else 12
+    # 若未指定 display_months，則預設 display_months 為 1（圖表只顯示近 1 個月保持清爽）
+    if display_months is None:
+        display_months = months if (months and months <= 6) else 1
+
     if print_report:
         print(f"[INFO] {ticker}（{stock_name}）| {'上市(TSE)' if market=='tse' else '上櫃(OTC)'}")
-        print(f"下載近 {months} 個月歷史資料中...")
+        print(f"下載近 {fetch_months} 個月歷史資料運算指標（圖表呈現近 {display_months} 個月）...")
 
     records = []
     if market == "tse":
-        records = fetch_twse(ticker, months)
+        records = fetch_twse(ticker, fetch_months)
         if not records:
             if print_report:
                 print(f"[WARN] TWSE 官方 API 未能取得 {ticker} 資料，啟動 yfinance (.TW) 備援...")
-            records = fetch_from_yfinance(f"{ticker}.TW", months)
+            records = fetch_from_yfinance(f"{ticker}.TW", fetch_months)
     else:
-        records = fetch_otc(ticker, months)
+        records = fetch_otc(ticker, fetch_months)
         if not records:
             if print_report:
                 print(f"[WARN] yfinance (.TWO) 未能取得 {ticker} 資料，嘗試 (.TW)...")
-            records = fetch_from_yfinance(f"{ticker}.TW", months)
+            records = fetch_from_yfinance(f"{ticker}.TW", fetch_months)
 
     # 交叉最後備援：若仍無資料，嘗試對向市場代號
     if not records:
         alt_sym = f"{ticker}.TWO" if market == "tse" else f"{ticker}.TW"
-        records = fetch_from_yfinance(alt_sym, months)
+        records = fetch_from_yfinance(alt_sym, fetch_months)
         if records:
             market = "otc" if alt_sym.endswith(".TWO") else "tse"
 
@@ -1279,8 +1373,8 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
     # ── 4. 技術指標計算 ───────────────────────────────────────────
     # 移動平均線
     for n in MA_DAYS:
-        df[f"ma{n}"] = df["close"].rolling(n, min_periods=1).mean()
-    df["vol_ma"] = df["volume"].rolling(VOL_MA, min_periods=1).mean()
+        df[f"ma{n}"] = df["close"].rolling(n, min_periods=min(n, 20)).mean()
+    df["vol_ma"] = df["volume"].rolling(VOL_MA, min_periods=min(VOL_MA, 5)).mean()
 
     # 20 EMA（Al Brooks 唯一指定核心基準線）
     df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
@@ -1560,7 +1654,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
     # ── 8. Plotly 互動圖表繪製 ──────────────────────────────────
     fig = None
     if not quick_mode:
-        fig = build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rating_badge, r1, r2, s1, s2, stop_loss)
+        fig = build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rating_badge, r1, r2, s1, s2, stop_loss, display_months=display_months)
 
     output = f"{ticker}_kline.html"
     if generate_html and fig is not None:
@@ -1680,6 +1774,7 @@ def analyze_stock(ticker, months=1, cost=None, custom_name=None, generate_html=T
         "sr_levels": {
             "r2": r2, "r1": r1, "s1": s1, "s2": s2, "stop_loss": stop_loss, "close_now": close_now
         },
+        "display_months": display_months,
         "output_html": output if generate_html else None
     }
 
@@ -1802,41 +1897,49 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
     else:
         bar_type = "⚪ 普通震盪棒 (Trading Bar)"
 
-    # 台股 Tick 級風控與掛單建議（結合真實波幅與防噪音緩衝）
+    # 台股 Tick 級風控與結構性波段掛單建議（結合波段擺動低點與防高頻超短線摩擦保護）
     tick = get_tw_tick(close_now)
     buy_stop = round(bar_h + tick, 2)
     sell_stop = round(bar_l - tick, 2)
     
-    # 計算防隨機雜訊掃停損的最小合理緩衝（至少 2 個 Tick 或 0.5%）
-    min_buffer = max(2 * tick, round(close_now * 0.005, 2))
+    # 嚴防高頻微幅刷單（Anti-Scalping Protection）：
+    # 台股交易摩擦成本（手續費+證交稅）約 0.45%~0.585%，單筆波段 R 空間必須至少為 1.8%，
+    # 以確保扣除交易成本與滑價後仍具備健康正期望值，徹底拒絕 0.5%~0.71% 之微小高頻噪音。
+    MIN_SWING_R_PCT = 0.018  # 1.8% 最低健康波段空間門檻
+    min_buffer = max(3 * tick, round(close_now * MIN_SWING_R_PCT, 2))
+
+    # 取得近 12 根 5m 棒（約 1 小時）之結構性波段低點 (Swing Low) 與高點 (Swing High)
+    sw_len = min(len(df), 12)
+    recent_sw_l = float(df["low"].tail(sw_len).min()) if sw_len > 0 else bar_l
+    recent_sw_h = float(df["high"].tail(sw_len).max()) if sw_len > 0 else bar_h
 
     if "多" in bpa_status:
-        # 多方防守停損：設於信號棒低點下方，並確保至少有防洗盤緩衝
-        raw_stop = bar_l - tick
+        # 多方防守停損：錨定結構性波段低點 (Swing Low)，並確保至少有 1.8% 波段防護空間
+        raw_stop = min(bar_l - tick, recent_sw_l - tick)
         stop_loss = round(min(raw_stop, close_now - min_buffer), 2)
         r_val = round(max(min_buffer, close_now - stop_loss), 2)
         target_1r = round(close_now + r_val, 2)
         target_2r = round(close_now + 2 * r_val, 2)
-        stop_type = "做多防守停損 (跌破下方認賠)"
+        stop_type = "做多波段防守停損 (跌破結構低點認賠)"
         stop_direction = "-"
         entry_type = "突破買進價位 (Buy Stop)"
     elif "空" in bpa_status:
-        # 空方防守停損：設於信號棒高點上方，並確保至少有防洗盤緩衝
-        raw_stop = bar_h + tick
+        # 空方防守停損：錨定結構性波段高點 (Swing High)，並確保至少有 1.8% 波段防護空間
+        raw_stop = max(bar_h + tick, recent_sw_h + tick)
         stop_loss = round(max(raw_stop, close_now + min_buffer), 2)
         r_val = round(max(min_buffer, stop_loss - close_now), 2)
         target_1r = round(close_now - r_val, 2)
         target_2r = round(close_now - 2 * r_val, 2)
-        stop_type = "放空防守停損 (突破上方停損)"
+        stop_type = "放空波段防守停損 (突破結構高點停損)"
         stop_direction = "+"
         entry_type = "跌破放空價位 (Sell Stop)"
     else:
-        # 震盪整理：以今日低點或前棒低點防守
+        # 震盪整理：以波段低點或最小緩衝防守
         stop_loss = round(close_now - min_buffer, 2)
         r_val = round(min_buffer, 2)
         target_1r = round(close_now + r_val, 2)
         target_2r = round(close_now + 2 * r_val, 2)
-        stop_type = "區間防守停損 (跌破下緣停損)"
+        stop_type = "區間波段防守停損 (跌破下緣停損)"
         stop_direction = "-"
         entry_type = "區間高出低進價位"
 
@@ -1860,7 +1963,9 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
             if inst_df is not None and not inst_df.empty and "total" in inst_df.columns:
                 inst_net_3d = int(inst_df["total"].tail(3).sum())
     except Exception as e:
-        logger.debug(f"5分K多時框讀取日線異常: {e}")
+        # kline.py 未引入 logging，統一沿用本檔既有的 print 警示風格；
+        # 原本誤用未定義的 logger 會在此拋出 NameError，反而蓋掉真正的例外。
+        print(f"  [WARN] 5分K多時框讀取日線異常：{e}")
 
     # 日線是否處於空方破線架構（AIS 或跌破日MA20達0.5%以上，或波段評分 <= -2）
     is_daily_bear = (daily_always_code == "AIS") or (close_now < daily_ma20 * 0.995) or (daily_trend_score <= -2)
@@ -1878,9 +1983,9 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         action_color_5m = "#f43f5e"
         conformal_status = f"⚠️ 雜訊過大 ({noise_ratio:.1f}x 均幅)"
     elif is_vol_dull:
-        # 情況 2: 波動過度鈍化 (< 0.35x ATR)，動能不足，假突破風險高
-        action_tag_5m = "🛑 暫緩開倉 (動能不足)"
-        action_sub_5m = f"當前 5m 波幅僅均幅 {noise_ratio:.1f} 倍，波動極度鈍化缺乏推升動能，假突破機率高，建議觀望。"
+        # 情況 2: 波動過度鈍化 (< 0.35x ATR)，動能不足，假突破風險高，波段空間狹窄
+        action_tag_5m = "🛑 暫緩開倉 (動能不足/空間狹窄)"
+        action_sub_5m = f"當前 5m 波幅僅均幅 {noise_ratio:.1f} 倍且波動過窄，扣除摩擦成本期望值偏低，拒絕高頻刷單，建議觀望。"
         action_color_5m = "#94a3b8"
         conformal_status = f"💤 波動過低 ({noise_ratio:.1f}x 均幅)"
     elif "多" in bpa_status:

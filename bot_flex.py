@@ -101,7 +101,7 @@ def build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct):
                         "contents": [
                             {
                                 "type": "text",
-                                "text": f"強制停損: {item['stop_7']:.2f} 元 (-7%)",
+                                "text": f"浮虧警戒: {item['stop_7']:.2f} 元 (-{item.get('stop_pct', 0.07) * 100:.1f}%)",
                                 "size": "xxs",
                                 "color": "#f59e0b",
                                 "flex": 3
@@ -137,7 +137,7 @@ def build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct):
                 },
                 {
                     "type": "text",
-                    "text": f"用戶: {user_name} ｜ 遵循 Minervini -7% 資本保護鐵律",
+                    "text": f"用戶: {user_name} ｜ 警戒幅度依個股 20 日波動度自動調整",
                     "size": "xxs",
                     "color": "#64748b",
                     "margin": "xs"
@@ -191,8 +191,15 @@ def build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct):
     }
     return flex_bubble
 
-def build_stop_loss_alert_flex(stock_name, ticker, current_price, cost_price, stop_price, pnl_pct):
-    """建立觸發 -7% 強制停損的紅色高警戒 Flex Bubble"""
+def build_stop_loss_alert_flex(stock_name, ticker, current_price, cost_price, stop_price, pnl_pct,
+                               stop_pct=0.07, stop_basis="固定 -7%"):
+    """
+    建立跌破浮虧警戒線的紅色高警戒 Flex Bubble。
+
+    stop_pct / stop_basis 由 kline.compute_risk_stop 提供（波動度自適應）。
+    回測實證：固定 -7% 執行停損在本系統訊號下為淨損失，故本卡片定位為風險提示，
+    不再宣稱為必須執行的鐵律。
+    """
     diff_pct = (current_price - cost_price) / cost_price * 100
 
     flex_bubble = {
@@ -206,14 +213,14 @@ def build_stop_loss_alert_flex(stock_name, ticker, current_price, cost_price, st
             "contents": [
                 {
                     "type": "text",
-                    "text": "🚨 強制停損緊急告警",
+                    "text": "⚠️ 浮虧警戒通知",
                     "weight": "bold",
                     "size": "lg",
                     "color": "#fecaca"
                 },
                 {
                     "type": "text",
-                    "text": "觸發 Minervini 資本保護鐵律，請嚴格執行紀律！",
+                    "text": f"已跌破 {stop_basis} 計算之警戒線，請重新評估持有理由。",
                     "size": "xs",
                     "color": "#fca5a5",
                     "margin": "xs"
@@ -275,7 +282,7 @@ def build_stop_loss_alert_flex(stock_name, ticker, current_price, cost_price, st
                     "contents": [
                         {
                             "type": "text",
-                            "text": "🛡️ 風控指引：\n已跌破 -7% 強制停損底線！強烈建議立即分批減碼或出清離場，嚴防虧損失控，絕不凹單！",
+                            "text": f"🛡️ 風控指引：\n已跌破 -{stop_pct * 100:.1f}% 浮虧警戒線（依據 {stop_basis}）。\n回測顯示固定 -7% 立即停損在本系統訊號下反而降低期望報酬，因此本通知不建議機械式砍出；請確認當初的進場理由是否已消失（跌破月線、法人轉賣超、評分掉出 80 分），再決定減碼或退出。",
                             "size": "xs",
                             "color": "#fca5a5",
                             "wrap": True
@@ -422,7 +429,9 @@ def build_dashboard_stock_flex(
     trend_stage: str,
     rating_badge: str,
     comp: dict,
-    sr: dict
+    sr: dict,
+    mtf_status: str = None,
+    conformal_status: str = None
 ):
     """
     建立 1:1 復刻 Web 儀表板的旗艦級 4合1 多維綜合評鑑 Flex Bubble
@@ -500,6 +509,32 @@ def build_dashboard_stock_flex(
     chip_color = comp.get("chip_color", "#94a3b8")
 
     summary_advice = comp.get("summary_advice", "中期架構穩健，順應 20 EMA 支撐防守操作。")
+
+    # 多時框位階 (MTF) 與 Conformal 雜訊評估
+    if not mtf_status:
+        if "多" in ai_zh:
+            mtf_status = f"日線順勢多方 ({ai_zh})"
+        elif "空" in ai_zh:
+            mtf_status = f"日線偏空防守 ({ai_zh})"
+        else:
+            mtf_status = f"日線箱型區間 ({ai_zh})"
+
+    if not conformal_status:
+        if df is not None and hasattr(df, "columns") and len(df) >= 5 and "high" in df.columns and "low" in df.columns and "close" in df.columns:
+            import pandas as pd
+            tr1 = df["high"] - df["low"]
+            tr2 = (df["high"] - df["close"].shift(1)).abs()
+            tr3 = (df["low"] - df["close"].shift(1)).abs()
+            daily_tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr20_d = float(daily_tr.tail(20).mean()) if len(daily_tr) >= 5 else 1.0
+            today_rng = float(df["high"].iloc[-1] - df["low"].iloc[-1])
+            ratio_d = today_rng / (atr20_d + 1e-9)
+            if ratio_d > 2.5:
+                conformal_status = f"雜訊比 {ratio_d:.2f}x (巨震 ⚠️)"
+            else:
+                conformal_status = f"雜訊比 {ratio_d:.2f}x (合格 🛡️)"
+        else:
+            conformal_status = "雜訊比合格 🛡️"
 
     s1 = float(sr.get("s1", close_now * 0.98)) if sr else close_now * 0.98
     r1 = float(sr.get("r1", close_now * 1.02)) if sr else close_now * 1.02
@@ -617,6 +652,20 @@ def build_dashboard_stock_flex(
                             "color": "#f1f5f9",
                             "wrap": True,
                             "margin": "xs"
+                        },
+                        {
+                            "type": "box",
+                            "layout": "horizontal",
+                            "margin": "xs",
+                            "contents": [
+                                {
+                                    "type": "text",
+                                    "text": f"🌐 {mtf_status} ｜ 🎯 {conformal_status}",
+                                    "size": "xxs",
+                                    "color": "#38bdf8",
+                                    "wrap": True
+                                }
+                            ]
                         }
                     ]
                 },
@@ -669,7 +718,7 @@ def build_dashboard_stock_flex(
                             "paddingAll": "8px",
                             "flex": 1,
                             "contents": [
-                                {"type": "text", "text": "多維量化評級", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": "動能評級 (參考)", "size": "xxs", "color": "#94a3b8"},
                                 {"type": "text", "text": f"{trend_score:+d} 分", "weight": "bold", "size": "sm", "color": "#38bdf8", "margin": "xs"},
                                 {"type": "text", "text": rating_short, "size": "xxs", "color": "#64748b", "margin": "xs"}
                             ]
@@ -1049,7 +1098,9 @@ def build_buy_signal_alert_flex(
     buy_stop: float,
     sell_stop: float,
     target_1r: float,
-    target_2r: float
+    target_2r: float,
+    inst_status: str = "法人籌碼安全 (未見大額拋售)",
+    conformal_status: str = "Conformal 雜訊合格 (波動受控)"
 ):
     """
     建立觀察名單觸發高勝率底部回測確認買點的專屬綠色推播 Flex Bubble
@@ -1135,6 +1186,26 @@ def build_buy_signal_alert_flex(
                             "size": "xs",
                             "color": "#cbd5e1",
                             "margin": "xs",
+                            "wrap": True
+                        }
+                    ]
+                },
+                # 雙重風控驗證標籤（法人籌碼硬門檻 + Conformal 雜訊過濾）
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "backgroundColor": "#022c22",
+                    "cornerRadius": "6px",
+                    "paddingAll": "6px",
+                    "margin": "xs",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"🛡️ {inst_status} ｜ 🎯 {conformal_status}",
+                            "size": "xxs",
+                            "color": "#6ee7b7",
+                            "align": "center",
+                            "weight": "bold",
                             "wrap": True
                         }
                     ]
@@ -1414,9 +1485,9 @@ def build_5m_stock_flex(res5: dict) -> dict:
                         },
                         {
                             "type": "text",
-                            "text": f"🎯 置信度評估：{conformal_status}",
+                            "text": f"🎯 Conformal 雜訊比：{noise_ratio:.2f}x ATR ｜ {conformal_status}",
                             "size": "xxs",
-                            "color": "#fbbf24" if ("過大" in conformal_status or "過低" in conformal_status) else "#34d399",
+                            "color": "#fbbf24" if ("過大" in conformal_status or "不足" in conformal_status or "過低" in conformal_status) else "#34d399",
                             "wrap": True,
                             "margin": "xs"
                         },

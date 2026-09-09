@@ -10,8 +10,11 @@ import os
 import sys
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import pandas as pd
+
+# 台股標準時區 (GMT+8)
+TW_TZ = timezone(timedelta(hours=8))
 
 # 確保當前目錄在模組搜尋路徑第一位
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -23,7 +26,7 @@ load_dotenv(os.path.join(current_dir, ".env"))
 
 import bot_db
 import bot_flex
-from kline import get_info, fetch_realtime_bar, analyze_stock
+from kline import get_info, fetch_realtime_bar, analyze_stock, compute_risk_stop
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("monitor_worker")
@@ -41,10 +44,10 @@ except Exception as e:
     logger.warning(f"巡邏 Worker: LINE SDK 未設定憑證，執行模擬告警模式: {e}")
 
 def is_market_open(force_test=False):
-    """判斷當前是否為台股開盤時段 (平日 09:00 ~ 13:35)"""
+    """判斷當前是否為台股開盤時段 (平日 09:00 ~ 13:35，嚴格鎖定台股 GMT+8 時區)"""
     if force_test:
         return True
-    now = datetime.now()
+    now = datetime.now(TW_TZ)
     if now.weekday() >= 5:  # 週六日休市
         return False
     now_min = now.hour * 60 + now.minute
@@ -83,31 +86,36 @@ def run_patrol_cycle(force_test=False):
 
         cur_p = price_cache[t]
         cost_p = float(p["cost_price"])
-        stop_7 = round(cost_p * 0.93, 2)
+        mkt, sname_map = ticker_market_map.get(t, ("tse", t))
+        # 波動度自適應警戒價位（回測實證固定 -7% 為淨損失，詳見 kline.compute_risk_stop）
+        stop_7, stop_pct, stop_basis = compute_risk_stop(
+            t, cost_p, market=mkt, user_pct=p.get("stop_loss_pct")
+        )
         user_id = p["user_id"]
         line_user_id = p["line_user_id"]
-        _, sname = ticker_market_map.get(t, ("tse", t))
+        sname = sname_map
 
-        # 判定是否跌破 -7%
+        # 判定是否跌破浮虧警戒線
         if cur_p <= stop_7:
             # 檢查今日是否已發送過告警（去重防騷擾）
             if bot_db.should_send_alert(user_id, t, "STOP_LOSS_7"):
                 diff_pct = (cur_p - cost_p) / cost_p * 100
-                logger.warning(f"🚨 觸發強制停損！用戶 {line_user_id} 標的 {t} 現價 {cur_p} 跌破停損線 {stop_7}")
+                logger.warning(f"⚠️ 觸發浮虧警戒！用戶 {line_user_id} 標的 {t} 現價 {cur_p} 跌破警戒線 {stop_7}（-{stop_pct*100:.1f}%，依據 {stop_basis}）({diff_pct:.2f}%)")
 
                 alert_flex = bot_flex.build_stop_loss_alert_flex(
-                    sname, t, cur_p, cost_p, stop_7, diff_pct
+                    sname, t, cur_p, cost_p, stop_7, diff_pct,
+                    stop_pct=stop_pct, stop_basis=stop_basis
                 )
 
                 if line_bot_api:
                     try:
-                        msg = FlexSendMessage(alt_text=f"🚨【強制停損告警】{sname} ({t}) 跌破 -7%", contents=alert_flex)
+                        msg = FlexSendMessage(alt_text=f"⚠️【浮虧警戒告警】{sname} ({t}) 跌破 -{stop_pct*100:.1f}% 警戒線", contents=alert_flex)
                         line_bot_api.push_message(line_user_id, msg)
                         logger.info(f"已發送 Push 推播至 LINE 用戶 {line_user_id}")
                     except Exception as e:
                         logger.error(f"發送 LINE Push 失敗: {e}")
                 else:
-                    logger.info(f"[模擬推播] 發送緊急停損卡至用戶 {line_user_id}")
+                    logger.info(f"[模擬推播] 發送浮虧警戒卡至用戶 {line_user_id}")
 
                 # 記錄已發送日誌（今日不再重複通知）
                 bot_db.record_alert_log(user_id, t, "STOP_LOSS_7", cur_p)
@@ -124,7 +132,7 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
     4. 價跌量縮良性洗盤守穩 (Wyckoff / VPA)
     """
     try:
-        res = analysis_res or analyze_stock(ticker, months=1, generate_html=False, print_report=False)
+        res = analysis_res or analyze_stock(ticker, months=12, generate_html=False, print_report=False)
         df = res.get("df")
         bpa_res = res.get("bpa_res", {})
         sr = res.get("sr_levels", {})
@@ -133,6 +141,20 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
 
         if df is None or df.empty or close_now <= 0:
             return {"triggered": False}
+
+        # ── 綜合評分品質門檻 (Composite Quality Gate) ──
+        # 回測實證顯示：未過濾之底部訊號 20 日超額為負 (-0.52%)，勝率低於基準。
+        # 必須在整體大格局偏多且體質優良之標的方能觸發買點推播。
+        comp = res.get("composite_rating")
+        if comp is not None and isinstance(comp, dict):
+            comp_score = comp.get("score", 0)
+            # 價跌量縮良性洗盤 (唯一具正向超額訊號) 要求 >= 65；其餘形態 (H2, EMA PB, S1 反轉) 要求 >= 80
+            min_score = 65 if (
+                len(df) >= 2 and "vol_ma" in df.columns and float(df["volume"].iloc[-1]) <= 0.65 * float(df["vol_ma"].iloc[-1])
+            ) else 80
+            if comp_score < min_score:
+                logger.info(f"【{ticker}】雖有局部技術形態，但綜合評分 {comp_score} 分未達品質門檻 ({min_score} 分)，攔截推播！")
+                return {"triggered": False}
 
         always_code = bpa_res.get("always_in_code", "TR")
         signals = bpa_res.get("signals", [])
@@ -161,6 +183,23 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                 logger.info(f"【{ticker}】當日振幅 ({today_rng:.2f}元) 超過 20 日 ATR ({atr20_d:.2f}元) 之 2.5 倍，觸發 Conformal 拒絕開倉門檻！")
                 return {"triggered": False}
 
+        # ── 籌碼與雜訊指標標籤 ──
+        inst_status = "法人籌碼安全 (未見大額拋售)"
+        if inst_df is not None and not inst_df.empty and "total" in inst_df.columns:
+            inst_net_3d = int(inst_df["total"].tail(3).sum())
+            inst_status = f"法人籌碼安全 (近3日累計 {inst_net_3d:+d}張)"
+
+        conformal_status = "Conformal 雜訊合格 (波動受控)"
+        if len(df) >= 5 and "high" in df.columns and "low" in df.columns and "close" in df.columns:
+            tr1 = df["high"] - df["low"]
+            tr2 = (df["high"] - df["close"].shift(1)).abs()
+            tr3 = (df["low"] - df["close"].shift(1)).abs()
+            daily_tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            atr20_d = float(daily_tr.tail(20).mean()) if len(daily_tr) >= 5 else 1.0
+            today_rng = float(df["high"].iloc[-1] - df["low"].iloc[-1])
+            if atr20_d > 0:
+                conformal_status = f"Conformal 雜訊合格 ({today_rng / atr20_d:.2f}x ATR)"
+
         # 1. High 2 (H2) 雙重底推動確認
         # 時效過濾：bpa_h2 必須在最近 5 根日K 棒內（避免過期訊號觸發推播）
         h2_recent = "bpa_h2" in df.columns and bool(df["bpa_h2"].tail(5).any()) and always_code in ["AIL", "TR"]
@@ -178,7 +217,9 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                 "target_2r": bpa_res.get("target_long_2r", round(close_now * 1.06, 2)),
                 "close_now": close_now,
                 "stock_name": sname,
-                "market": market
+                "market": market,
+                "inst_status": inst_status,
+                "conformal_status": conformal_status
             }
 
         # 2. 20 EMA 動態支撐回測守穩
@@ -196,7 +237,9 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                 "target_2r": bpa_res.get("target_long_2r", round(close_now * 1.06, 2)),
                 "close_now": close_now,
                 "stock_name": sname,
-                "market": market
+                "market": market,
+                "inst_status": inst_status,
+                "conformal_status": conformal_status
             }
 
         # 3. S1 關鍵支撐多頭反轉棒 (Bull Reversal at S1)
@@ -214,7 +257,9 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                     "target_2r": bpa_res.get("target_long_2r", round(close_now * 1.06, 2)),
                     "close_now": close_now,
                     "stock_name": sname,
-                    "market": market
+                    "market": market,
+                    "inst_status": inst_status,
+                    "conformal_status": conformal_status
                 }
 
         # 4. 價跌量縮良性洗盤守穩 (Wyckoff / VPA)
@@ -236,7 +281,9 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
                     "target_2r": bpa_res.get("target_long_2r", round(close_now * 1.06, 2)),
                     "close_now": close_now,
                     "stock_name": sname,
-                    "market": market
+                    "market": market,
+                    "inst_status": inst_status,
+                    "conformal_status": conformal_status
                 }
     except Exception as e:
         logger.error(f"檢查標的 {ticker} 回測買點信號異常: {e}")
@@ -259,8 +306,8 @@ def run_watchlist_patrol_cycle(force_test=False):
     for item in active_items:
         t = item["ticker"]
         uid = item["user_id"]
-        # 檢查今日是否已發送過買點通知（單日單股冷卻去重）
-        if bot_db.should_send_alert(uid, t, "BPA_BUY_SETUP") or force_test:
+        # 檢查 5 日內是否已發送過買點通知（5日冷卻去重，經回測實證可創造顯著超額並降低推播頻率）
+        if bot_db.should_send_alert(uid, t, "BPA_BUY_SETUP", cooldown_days=5) or force_test:
             if t not in ticker_users_map:
                 ticker_users_map[t] = []
             ticker_users_map[t].append(item)
@@ -287,14 +334,16 @@ def run_watchlist_patrol_cycle(force_test=False):
 
             alert_flex = bot_flex.build_buy_signal_alert_flex(
                 sname, t, sig_name, sig_desc, close_now,
-                buy_stop, sell_stop, t1, t2
+                buy_stop, sell_stop, t1, t2,
+                inst_status=sig.get("inst_status", "法人籌碼安全 (未見大額拋售)"),
+                conformal_status=sig.get("conformal_status", "Conformal 雜訊合格 (波動受控)")
             )
 
             for u in user_items:
                 uid = u["user_id"]
                 l_uid = u["line_user_id"]
 
-                if bot_db.should_send_alert(uid, t, "BPA_BUY_SETUP") or force_test:
+                if bot_db.should_send_alert(uid, t, "BPA_BUY_SETUP", cooldown_days=5) or force_test:
                     if line_bot_api:
                         try:
                             msg = FlexSendMessage(

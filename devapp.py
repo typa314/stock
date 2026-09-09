@@ -15,7 +15,10 @@ if current_dir not in sys.path:
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 台股標準時區 (GMT+8)
+TW_TZ = timezone(timedelta(hours=8))
 
 try:
     from kline import analyze_stock, analyze_stock_5m, get_info, get_tw_tick, __version__
@@ -136,16 +139,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── 2. 快取分析結果（避免重複計算，手機切換極速流暢） ───────────
-# 平日盤中 (09:00~13:35) 設為 20 秒極速更新即時行情，盤後維持 300 秒以省頻寬
+# 平日盤中 (09:00~13:35，時區嚴格鎖定台股 GMT+8) 設為 20 秒極速更新即時行情，盤後維持 300 秒以省頻寬
 def _get_cache_ttl():
-    now = datetime.now()
+    now = datetime.now(TW_TZ)
     if now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) <= (13, 35):
         return 20
     return 300
 
 @st.cache_data(ttl=_get_cache_ttl(), show_spinner=False)
 def get_cached_analysis(ticker, months, cost, version=__version__):
-    return analyze_stock(ticker=ticker, months=months, cost=cost, generate_html=False, print_report=False)
+    return analyze_stock(ticker=ticker, months=12, display_months=months, cost=cost, generate_html=False, print_report=False)
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_cached_5m(ticker, days=3, version=__version__):
@@ -276,7 +279,7 @@ for i, (qname, qtick) in enumerate(quick_tickers):
 with st.expander("⚙️ 搜尋股票與自訂參數", expanded=False):
     c1, c2, c3 = st.columns([2, 1, 1])
     input_ticker = c1.text_input("股票代號（上市/上櫃）", key="ticker_input", on_change=on_ticker_change).strip()
-    months_opt = c2.selectbox("歷史分析月數", options=[1, 2, 3, 6, 12], index=0)
+    months_opt = c2.selectbox("日K圖表顯示範圍", options=[1, 2, 3, 6, 12], index=0, format_func=lambda m: f"近 {m} 個月 (預設1個月)", help="系統底層固定以完整 12 個月歷史精準運算季線與各項指標，此選項控制日K圖表的顯示時間視窗。")
 
     # 確保切換股票時，成本輸入欄位即時歸零清除
     curr_t = st.session_state.get("ticker_input", "").strip()
@@ -312,12 +315,20 @@ if timeframe_mode == "⚡ 5分K（日內當沖）":
     stock_name_5m = res5["stock_name"]
     market_txt_5m = "上市 (TSE)" if res5["market"] == "tse" else "上櫃 (OTC)"
 
+    mtf_5m_txt = res5.get("mtf_status", "中性整理")
+    conf_5m_txt = res5.get("conformal_status", "合格")
+    conf_noise = float(res5.get("noise_ratio", 1.0))
+    conf_5m_color = "#ef4444" if ("拒絕" in res5.get("action_tag", "") or "過大" in conf_5m_txt or "過低" in conf_5m_txt or "不足" in conf_5m_txt) else "#34d399"
+    conf_5m_bg = "rgba(239, 68, 68, 0.2)" if conf_5m_color == "#ef4444" else "rgba(52, 211, 153, 0.15)"
+
     st.markdown(f"""
     <div style="background: rgba(0,0,0,0.3); border: 1.5px solid {res5.get('action_color', '#38bdf8')}; border-left: 6px solid {res5.get('action_color', '#38bdf8')}; padding: 10px 16px; border-radius: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-        <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
             <span style="font-size: 1.25rem; font-weight: 800; color: {res5.get('action_color', '#38bdf8')}; background: {res5.get('bpa_bg', 'rgba(0,0,0,0.2)')}; padding: 4px 12px; border-radius: 6px; border: 1px solid {res5.get('action_color', '#38bdf8')}; letter-spacing: 0.5px;">{res5.get('action_tag', '🟡 建議觀望')}</span>
             <span style="font-size: 0.88rem; color: #f1f5f9; font-weight: 600;">{res5.get('action_sub', '')}</span>
             <span style="font-size: 0.80rem; background: {res5.get('whale_bg', 'rgba(0,0,0,0.2)')}; color: {res5.get('whale_color', '#94a3b8')}; border: 1px solid {res5.get('whale_color', '#94a3b8')}; padding: 2px 8px; border-radius: 4px; font-weight: 700;">{res5.get('whale_tag', '')}</span>
+            <span style="font-size: 0.80rem; background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid #38bdf8; padding: 2px 8px; border-radius: 4px; font-weight: 700;">🌐 MTF: {mtf_5m_txt}</span>
+            <span style="font-size: 0.80rem; background: {conf_5m_bg}; color: {conf_5m_color}; border: 1px solid {conf_5m_color}; padding: 2px 8px; border-radius: 4px; font-weight: 700;">🎯 Conformal: {conf_noise:.2f}x ({conf_5m_txt})</span>
         </div>
         <div style="font-size: 0.78rem; color: #94a3b8;">
             ⚡ <b>5分K 當沖架構</b>（{stock_name_5m} {current_ticker}）｜ 資料時間：{res5['data_time_str']}
@@ -406,6 +417,12 @@ if timeframe_mode == "⚡ 5分K（日內當沖）":
         <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px; border-left: 3px solid {res5.get('whale_color', '#94a3b8')};">
             <b>⚡ 主力量能：</b><span style="color: {res5.get('whale_color', '#94a3b8')}; font-weight: 700;">{res5.get('whale_tag', '')}</span> ｜ {res5.get('whale_advice', '')}
         </div>
+        <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px; border-left: 3px solid #38bdf8;">
+            <b>🌐 多時框與 Conformal 雜訊防護：</b>
+            <span style="color: #38bdf8; font-weight: 700;">MTF 位階：{mtf_5m_txt}</span> ｜ 
+            <span style="color: {conf_5m_color}; font-weight: 700;">Conformal 雜訊比：{conf_noise:.2f}x ATR ({conf_5m_txt})</span>
+            <span style="font-size: 0.75rem; color: #94a3b8; margin-left: 6px;">[0.35x ~ 2.8x 合格區間]</span>
+        </div>
         <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px;">
             <b>🎯 當沖指引：</b>{res5['bpa_guide']}
         </div>
@@ -492,14 +509,40 @@ action_bg = comp.get("action_bg", "rgba(245, 158, 11, 0.16)")
 action_border = comp.get("action_border", "#fbbf24")
 action_sub = comp.get("action_sub", "多空拉鋸，靜待方向")
 
+# Conformal 日線波動雜訊比與法人籌碼硬門檻狀態
+daily_tr = pd.concat([
+    df["high"] - df["low"],
+    (df["high"] - df["close"].shift(1)).abs(),
+    (df["low"] - df["close"].shift(1)).abs()
+], axis=1).max(axis=1) if (len(df) >= 5 and "high" in df.columns and "low" in df.columns and "close" in df.columns) else pd.Series([1.0])
+atr20_d = float(daily_tr.tail(20).mean()) if len(daily_tr) >= 5 else 1.0
+today_rng = float(df["high"].iloc[-1] - df["low"].iloc[-1]) if (len(df) >= 1 and "high" in df.columns and "low" in df.columns) else 0.0
+conformal_ratio_d = today_rng / (atr20_d + 1e-9)
+conformal_extreme = conformal_ratio_d > 2.5
+conformal_txt = f"{conformal_ratio_d:.2f}x (極端巨震 ⚠️)" if conformal_extreme else f"{conformal_ratio_d:.2f}x (常態波幅 🛡️)"
+conformal_badge_color = "#ef4444" if conformal_extreme else "#34d399"
+conformal_badge_bg = "rgba(239, 68, 68, 0.2)" if conformal_extreme else "rgba(52, 211, 153, 0.15)"
+
+# 法人籌碼硬門檻狀態
+inst_3d_sum = int(inst_df["total"].tail(3).sum()) if (inst_df is not None and not inst_df.empty and "total" in inst_df.columns) else 0
+inst_blocked = inst_3d_sum < -300
+inst_gate_txt = f"賣超 {abs(inst_3d_sum)}張 (警戒 ⚠️)" if inst_blocked else f"累計 {inst_3d_sum:+d}張 (安全 🛡️)"
+inst_gate_color = "#ef4444" if inst_blocked else "#38bdf8"
+inst_gate_bg = "rgba(239, 68, 68, 0.2)" if inst_blocked else "rgba(56, 189, 248, 0.15)"
+
 st.markdown(f"""
 <div style="background: rgba(0,0,0,0.3); border: 1.5px solid {action_border}; border-left: 6px solid {action_border}; padding: 10px 16px; border-radius: 8px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-    <div style="display: flex; align-items: center; gap: 10px;">
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
         <span style="font-size: 1.25rem; font-weight: 800; color: {action_color}; background: {action_bg}; padding: 4px 12px; border-radius: 6px; border: 1px solid {action_border}; letter-spacing: 0.5px;">{action_tag}</span>
         <span style="font-size: 0.90rem; color: #f1f5f9; font-weight: 600;">{action_sub}</span>
+        <span style="font-size: 0.80rem; background: {conformal_badge_bg}; color: {conformal_badge_color}; border: 1px solid {conformal_badge_color}; padding: 2px 8px; border-radius: 4px; font-weight: 700;">🎯 Conformal: {conformal_txt}</span>
+        <span style="font-size: 0.80rem; background: {inst_gate_bg}; color: {inst_gate_color}; border: 1px solid {inst_gate_color}; padding: 2px 8px; border-radius: 4px; font-weight: 700;">🏛️ 法人門檻: {inst_gate_txt}</span>
     </div>
     <div style="font-size: 0.8rem; color: #94a3b8;">
         綜合評分：<b style="color: {action_color}; font-size: 1.05rem;">{comp.get('score', 0)}</b> / 100 ｜ 體質：<span style="color: {comp.get('badge_color', '#60a5fa')}; font-weight: 600;">{comp.get('badge', '').split('（')[0]}</span>
+    </div>
+    <div style="font-size: 0.75rem; color: #94a3b8; width: 100%; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 4px; margin-top: 2px;">
+        💡 實證統計：BUY 訊號 20日勝率 55.5%、60日勝率 62.6% ｜ 資訊優勢集中於 60 日波段，短線請留意市場洗盤波動
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -540,9 +583,9 @@ with k2:
 with k3:
     st.markdown(f"""
     <div class="metric-card">
-        <div class="metric-title">多維量化評級</div>
+        <div class="metric-title">技術動能評級 (參考)</div>
         <div class="metric-value" style="font-size: 1.05rem;">{trend_score:+d} 分</div>
-        <div class="metric-sub">{badge.split('（')[0]}</div>
+        <div class="metric-sub">{badge.split('（')[0]} ｜ IC 0.03</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -745,7 +788,8 @@ with col_vol:
         </div>
         <div style="font-size: 0.8rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 10px; border-radius: 6px; margin-top: 6px;">
             <b>量價診斷：</b>{v_desc}<br>
-            <b>操盤應對：</b><span style="color: {vol_badge_color};">{v_advice}</span>
+            <b>操盤應對：</b><span style="color: {vol_badge_color};">{v_advice}</span><br>
+            <b>🎯 Conformal 波動比：</b>當日振幅 {today_rng:.2f} 元 ｜ 20日 ATR {atr20_d:.2f} 元 ｜ 雜訊比 <b style="color: {conformal_badge_color};">{conformal_ratio_d:.2f}x</b> ({'極端巨震 ⚠️' if conformal_extreme else '波幅受控 🛡️'})
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -925,7 +969,7 @@ with tab1:
         st.markdown(f"- **防守停損線**：`{sr['stop_loss']:.2f} 元`")
 
 with tab2:
-    st.write(f"**綜合評級：** `{badge}` ｜ **總得分：** `{trend_score:+d} 分`")
+    st.write(f"**技術動能評級（輔助參考，IC ≈ 0.03）：** `{badge}` ｜ **得分：** `{trend_score:+d} 分`")
     for factor in res["trend_factors"]:
         st.markdown(f"- {factor}")
 

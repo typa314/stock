@@ -5,6 +5,7 @@ test_bot_logic.py - LINE Bot 業務邏輯、資料庫、自然語言指令與 Fl
 
 import os
 import sys
+import json
 import unittest
 import tempfile
 import shutil
@@ -108,6 +109,15 @@ class TestLineBotCore(unittest.TestCase):
         # 隔天應恢復允許發送 (True)
         self.assertTrue(bot_db.should_send_alert(uid, "2330", "STOP_LOSS_7", "2026-09-08", db_path=self.test_db))
 
+        # 測試多日冷卻機制 (cooldown_days=5)
+        # 在 2026-09-08 記錄 BPA 買點告警
+        bot_db.record_alert_log(uid, "2454", "BPA_BUY_SETUP", 1450.0, "2026-09-08", db_path=self.test_db)
+        # 於第 1~4 天內 (2026-09-09 至 2026-09-12) 應被攔截
+        self.assertFalse(bot_db.should_send_alert(uid, "2454", "BPA_BUY_SETUP", "2026-09-09", db_path=self.test_db, cooldown_days=5))
+        self.assertFalse(bot_db.should_send_alert(uid, "2454", "BPA_BUY_SETUP", "2026-09-12", db_path=self.test_db, cooldown_days=5))
+        # 於第 5 天 (2026-09-13) 冷卻期滿，應允許發送 (True)
+        self.assertTrue(bot_db.should_send_alert(uid, "2454", "BPA_BUY_SETUP", "2026-09-13", db_path=self.test_db, cooldown_days=5))
+
     def test_03_flex_message_structures(self):
         """測試 LINE Flex Message 結構生成正確性"""
         items = [{
@@ -120,6 +130,7 @@ class TestLineBotCore(unittest.TestCase):
             "pnl_pct": 4.08,
             "pnl_amount": 40000.0,
             "stop_7": 911.40,
+            "stop_pct": 0.07,
             "buf_7": 108.60,
             "tag": "🟢 獲利持有",
             "tag_color": "#22c55e"
@@ -130,9 +141,17 @@ class TestLineBotCore(unittest.TestCase):
         self.assertIn("body", portfolio_flex)
 
         # 測試停損警報 Flex
-        alert_flex = bot_flex.build_stop_loss_alert_flex("晶技", "3042", 160.0, 175.0, 162.75, -8.57)
+        alert_flex = bot_flex.build_stop_loss_alert_flex(
+            "晶技", "3042", 160.0, 175.0, 162.75, -8.57,
+            stop_pct=0.093, stop_basis="3×ATR20（日波動 3.10%）"
+        )
         self.assertEqual(alert_flex["type"], "bubble")
-        self.assertIn("🚨 強制停損緊急告警", alert_flex["header"]["contents"][0]["text"])
+        self.assertIn("浮虧警戒通知", alert_flex["header"]["contents"][0]["text"])
+        # 動態警戒幅度與依據必須實際帶進卡片，防止退回硬寫 -7%
+        alert_text = json.dumps(alert_flex, ensure_ascii=False)
+        self.assertIn("-9.3%", alert_text)
+        self.assertIn("3×ATR20", alert_text)
+        self.assertNotIn("強制停損底線", alert_text)
 
         # 測試單股 BPA Flex
         single_flex = bot_flex.build_single_stock_flex(
