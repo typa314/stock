@@ -249,7 +249,7 @@ def run_watchlist_patrol_cycle(force_test=False):
         if sig.get("triggered"):
             sname = sig.get("stock_name", t)
             close_now = sig.get("close_now", 0.0)
-            sig_name = sig.get("signal_name", "BPA 高勝率買點")
+            sig_name = sig.get("signal_name", "高勝率買點")
             sig_desc = sig.get("signal_desc", "")
             buy_stop = sig.get("buy_stop", close_now)
             sell_stop = sig.get("sell_stop", close_now)
@@ -271,7 +271,7 @@ def run_watchlist_patrol_cycle(force_test=False):
                     if line_bot_api:
                         try:
                             msg = FlexSendMessage(
-                                alt_text=f"🎯【BPA買點通知】{sname} ({t}) 觸發 {sig_name}",
+                                alt_text=f"🎯【買點通知】{sname} ({t}) 觸發 {sig_name}",
                                 contents=alert_flex
                             )
                             line_bot_api.push_message(l_uid, msg)

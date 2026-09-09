@@ -206,7 +206,7 @@ def build_stop_loss_alert_flex(stock_name, ticker, current_price, cost_price, st
             "contents": [
                 {
                     "type": "text",
-                    "text": "🚨 BPA 強制停損緊急告警",
+                    "text": "🚨 強制停損緊急告警",
                     "weight": "bold",
                     "size": "lg",
                     "color": "#fecaca"
@@ -288,7 +288,7 @@ def build_stop_loss_alert_flex(stock_name, ticker, current_price, cost_price, st
     return flex_bubble
 
 def build_single_stock_flex(stock_name, ticker, close_now, chg_val, chg_pct, ema20_val, action_tag, action_sub, s1, r1):
-    """建立單檔個股 BPA 即時診斷 Flex Bubble（輕量版相容接口）"""
+    """建立單檔個股即時診斷 Flex Bubble（輕量版相容接口）"""
     chg_color = get_tw_pnl_color(chg_val)
     chg_sign = "+" if chg_val > 0 else ""
 
@@ -429,8 +429,8 @@ def build_dashboard_stock_flex(
     包含：
     1. 頂部行情 + 盤中撮合標籤 + 漲跌幅
     2. 行動指引橫幅 (綜合評分 / 星級評等 / 操盤建議)
-    3. 4 大核心量化指標 (BPA市場狀態 / 20 EMA位階 / 多維量化評級 / 當前K線結構)
-    4. 巨星多維綜合評級 (Minervini趨勢樣板 / CANSLIM成長動能 / BPA價格行為 / 量能籌碼法人)
+    3. 4 大核心量化指標 (市場趨勢狀態 / 20 EMA位階 / 多維量化評級 / 當前K線結構)
+    4. 巨星多維綜合評級 (Minervini趨勢樣板 / CANSLIM成長動能 / 價格行為Price Action / 量能籌碼法人)
     5. 操盤方針指引與支撐壓力 S1/R1
     6. 一鍵下單買進與持倉查詢按鈕
     """
@@ -635,7 +635,7 @@ def build_dashboard_stock_flex(
                             "paddingAll": "8px",
                             "flex": 1,
                             "contents": [
-                                {"type": "text", "text": "BPA 市場狀態", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": "市場趨勢狀態", "size": "xxs", "color": "#94a3b8"},
                                 {"type": "text", "text": ai_zh, "weight": "bold", "size": "sm", "color": ai_color, "margin": "xs"},
                                 {"type": "text", "text": ai_desc, "size": "xxs", "color": "#64748b", "margin": "xs"}
                             ]
@@ -746,7 +746,7 @@ def build_dashboard_stock_flex(
                             "paddingAll": "8px",
                             "flex": 1,
                             "contents": [
-                                {"type": "text", "text": "價格行為 (BPA)", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": "價格行為 (Price Action)", "size": "xxs", "color": "#94a3b8"},
                                 {"type": "text", "text": b_zh, "weight": "bold", "size": "sm", "color": b_color, "margin": "xs"},
                                 {"type": "text", "text": b_sub, "size": "xxs", "color": "#64748b", "margin": "xs"}
                             ]
@@ -1052,7 +1052,7 @@ def build_buy_signal_alert_flex(
     target_2r: float
 ):
     """
-    建立觀察名單觸發 BPA 高勝率底部回測確認買點的專屬綠色推播 Flex Bubble
+    建立觀察名單觸發高勝率底部回測確認買點的專屬綠色推播 Flex Bubble
     """
     flex_bubble = {
         "type": "bubble",
@@ -1065,7 +1065,7 @@ def build_buy_signal_alert_flex(
             "contents": [
                 {
                     "type": "text",
-                    "text": "🎯 BPA 高勝率買點觸發！",
+                    "text": "🎯 高勝率買點觸發！",
                     "weight": "bold",
                     "size": "lg",
                     "color": "#6ee7b7"
@@ -1212,11 +1212,11 @@ def build_buy_signal_alert_flex(
 
 def build_5m_stock_flex(res5: dict) -> dict:
     """
-    建立 5 分鐘 K 線 (5m) BPA 日內當沖多維研判 Flex Bubble
+    建立 5 分鐘 K 線 (5m) 日內當沖多維研判 Flex Bubble
     包含：
     1. 行情報頭（現價、今日高低振幅、時間）
     2. 操盤方針 & 主力異動雷達橫幅
-    3. 4 大量化指標矩陣（5m BPA 狀態、20 EMA 乖離、最新 K 棒形態、量能倍數）
+    3. 4 大量化指標矩陣（5m 市場架構、20 EMA 乖離、最新 K 棒形態、量能倍數）
     4. 當沖風控掛單指引卡（Buy Stop、Sell Stop、硬停損、1R、2R）
     5. 快捷操作按鈕（日K 4合1診斷、關注、持倉，無買入按鈕）
     """
@@ -1426,7 +1426,7 @@ def build_5m_stock_flex(res5: dict) -> dict:
                             "paddingAll": "8px",
                             "flex": 1,
                             "contents": [
-                                {"type": "text", "text": "5m BPA 市場架構", "size": "xxs", "color": "#94a3b8"},
+                                {"type": "text", "text": "5m 市場多空架構", "size": "xxs", "color": "#94a3b8"},
                                 {"type": "text", "text": bpa_status, "weight": "bold", "size": "xs", "color": bpa_color, "margin": "xs", "wrap": True}
                             ]
                         },
@@ -1489,7 +1489,7 @@ def build_5m_stock_flex(res5: dict) -> dict:
                     "contents": [
                         {
                             "type": "text",
-                            "text": "⚡ 5分K 當沖風控掛單指引 (BPA)",
+                            "text": "⚡ 5分K 當沖風控掛單指引",
                             "weight": "bold",
                             "size": "xs",
                             "color": "#38bdf8"

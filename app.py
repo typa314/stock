@@ -27,7 +27,7 @@ except Exception as e:
 
 # ── 1. 頁面設定（手機版體驗最佳化） ─────────────────────────
 st.set_page_config(
-    page_title=f"[DEV] 台股 BPA 價格行為學 v{__version__}",
+    page_title=f"台股多維量化操盤系統 v{__version__}",
     page_icon="🛠️",
     layout="wide",
     initial_sidebar_state="collapsed"
@@ -223,7 +223,7 @@ def render_cost_stop_loss_card(cost_price, current_price):
     """, unsafe_allow_html=True)
 
 # ── 3. 頂部導覽與股票選擇區 ──────────────────────────────────
-st.markdown(f"### ⚡ 台股 Al Brooks BPA 價格行為研判 <span style='font-size: 0.8rem; color: #94a3b8; font-weight: normal;'>v{__version__}</span>", unsafe_allow_html=True)
+st.markdown(f"### ⚡ 台股多維量化操盤系統 <span style='font-size: 0.8rem; color: #94a3b8; font-weight: normal;'>v{__version__}</span>", unsafe_allow_html=True)
 
 # 快捷熱門股按鈕
 quick_tickers = [
@@ -297,7 +297,7 @@ timeframe_mode = st.radio(
 if timeframe_mode == "⚡ 5分K（日內當沖）":
     # ── 4. 5分K 日內價格行為分析 ──────────────────────────────
     try:
-        with st.spinner(f"正在分析 {current_ticker} 5 分鐘 K 線與 BPA 日內轉折..."):
+        with st.spinner(f"正在分析 {current_ticker} 5 分鐘 K 線與日內轉折..."):
             res5 = get_cached_5m(current_ticker, days=3, version=__version__)
     except Exception as e:
         st.error(f"⚠️ 無法取得股票代號【{current_ticker}】的 5 分鐘 K 線資料：{e}")
@@ -327,7 +327,7 @@ if timeframe_mode == "⚡ 5分K（日內當沖）":
     with k1:
         st.markdown(f"""
         <div class="metric-card">
-            <div class="metric-title">5m BPA 市場狀態</div>
+            <div class="metric-title">5m 市場結構狀態</div>
             <div class="metric-value" style="color: {res5['bpa_status_color']}; font-size: 1.02rem;">{res5['bpa_status'].split('（')[0]}</div>
             <div class="metric-sub">{res5['bpa_status'].split('（')[1].replace('）','')}</div>
         </div>
@@ -423,14 +423,14 @@ if timeframe_mode == "⚡ 5分K（日內當沖）":
 
     st.markdown(f"""
     <div style="text-align: center; color: #64748b; font-size: 0.76rem; margin-top: 2rem; padding: 14px 0; border-top: 1px solid rgba(255,255,255,0.06);">
-        台股 BPA 價格行為量化研判系統 <b>v{__version__}</b> ｜ 遵循 SemVer 語意化版本管理規範 ｜ Git Tag 發布管理
+        台股多維量化操盤研判系統 <b>v{__version__}</b> ｜ 遵循 SemVer 語意化版本管理規範 ｜ Git Tag 發布管理
     </div>
     """, unsafe_allow_html=True)
     st.stop()
 
 # ── 4. 日K 執行研判與展示（原既有邏輯） ────────────────────
 try:
-    with st.spinner(f"正在分析 {current_ticker} BPA 價格行為與位階..."):
+    with st.spinner(f"正在分析 {current_ticker} 4合1 多維量化指標..."):
         res = get_cached_analysis(current_ticker, months_opt, cost_val, version=__version__)
 except Exception as e:
     st.error(f"⚠️ 無法取得股票代號【{current_ticker}】的資料：{e}")
@@ -516,7 +516,7 @@ with k1:
 
     st.markdown(f"""
     <div class="metric-card">
-        <div class="metric-title">BPA 市場狀態</div>
+        <div class="metric-title">市場趨勢狀態</div>
         <div class="metric-value" style="font-size: 1.15rem; color: {ai_color}; font-weight: 800;">{ai_zh}</div>
         <div class="metric-sub">{ai_desc}</div>
     </div>
@@ -574,7 +574,7 @@ if comp:
                 <div class="cell-sub">{comp.get('canslim_sub', '')}</div>
             </div>
             <div class="grid-cell">
-                <div class="cell-label">價格行為 (BPA)</div>
+                <div class="cell-label">價格行為 (Price Action)</div>
                 <div class="cell-val" style="color: {comp.get('bpa_color', '#cbd5e1')};">{comp.get('bpa_zh', '--')}</div>
                 <div class="cell-sub">{comp.get('bpa_sub', '')}</div>
             </div>
@@ -841,7 +841,7 @@ with col_fund:
 
 # ── 4.3 完整互動 K 線圖表（下拉折疊選單，電腦端方便檢視，手機端預設收合保持清爽） ────
 if "fig" in res and res["fig"] is not None:
-    with st.expander("📈 展開完整互動 K 線圖表（含 BPA 支撐壓力線、20 EMA、布林通道與技術指標）", expanded=False):
+    with st.expander("📈 展開完整互動 K 線圖表（含關鍵支撐壓力線、20 EMA、布林通道與技術指標）", expanded=False):
         st.plotly_chart(
             res["fig"],
             use_container_width=True,
@@ -853,7 +853,7 @@ if "fig" in res and res["fig"] is not None:
         )
 
 # ── 4.4 Al Brooks 操盤掛單與風控指引 ─────────────────────────
-st.markdown("#### 🎯 Brooks 操盤訂單與停損指引")
+st.markdown("#### 🎯 操盤訂單與風控停損指引")
 if bpa_res['always_in_code'] == 'AIL':
     strat_title = "多頭主控策略 ── 順勢偏多操作"
     strat_desc = f"順應 20 EMA（{df['ema20'].iloc[-1]:.2f} 元）多頭架構，拉回逢低佈局，或以突破買進價 {bpa_res['buy_stop']:.2f} 元掛單進場"
@@ -903,7 +903,7 @@ if bpa_res["signals"]:
     st.info("💡 **近期觸發之關鍵訊號：** " + " ｜ ".join(bpa_res["signals"]))
 
 # ── 4.4 核心分析分頁（支撐壓力 / 趨勢與BPA細項 / 操盤行動指引） ────────
-tab1, tab2, tab3 = st.tabs(["🎯 支撐壓力矩陣", "🧭 趨勢與 BPA 評估明細", "💡 操盤行動指引"])
+tab1, tab2, tab3 = st.tabs(["🎯 支撐壓力矩陣", "🧭 趨勢與多維評估明細", "💡 操盤行動指引"])
 
 with tab1:
     s_col1, s_col2 = st.columns(2)
@@ -953,12 +953,12 @@ with st.expander("📱 如何在 iPhone 上將此頁面變成原生 App？", exp
     1. 在 **iPhone** 上使用 **Safari** 瀏覽器開啟此網頁。
     2. 點選螢幕底部的 **「分享」按鈕**（帶箭頭的方框圖示）。
     3. 向下滑動找到並點擊 **「加入主畫面」(Add to Home Screen)**。
-    4. 自訂名稱（例如：`台股BPA看盤`），點擊右上角 **「新增」**。
+    4. 自訂名稱（例如：`台股量化看盤`），點擊右上角 **「新增」**。
     5. 返回桌面即可看到專屬圖示，點開後將享有**極速、無網址列的全螢幕原生 App 體驗**！
     """)
 
 st.markdown(f"""
 <div style="text-align: center; color: #64748b; font-size: 0.76rem; margin-top: 2rem; padding: 14px 0; border-top: 1px solid rgba(255,255,255,0.06);">
-    台股 BPA 價格行為量化研判系統 <b>v{__version__}</b> ｜ 遵循 SemVer 語意化版本管理規範 ｜ Git Tag 發布管理
+    台股多維量化操盤研判系統 <b>v{__version__}</b> ｜ 遵循 SemVer 語意化版本管理規範 ｜ Git Tag 發布管理
 </div>
 """, unsafe_allow_html=True)

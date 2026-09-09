@@ -58,7 +58,7 @@ def generate_rich_menu_image():
         },
         {
             "tag": "HOT TSMC", "tag_bg": "#10b981",
-            "title": "📈 台積電 2330", "sub": "BPA 價格行為 ｜ 20 EMA",
+            "title": "📈 台積電 2330", "sub": "4合1多維診斷 ｜ 20 EMA",
             "border": "#34d399", "glow": "rgba(16, 185, 129, 0.15)"
         },
         {
@@ -188,8 +188,8 @@ def setup_rich_menu():
     rich_menu_to_create = RichMenu(
         size=RichMenuSize(width=2500, height=1686),
         selected=True,
-        name="BPA_Trading_Menu",
-        chat_bar_text="⚡ BPA 操盤選單",
+        name="Quant_Trading_Menu",
+        chat_bar_text="⚡ 智能操盤選單",
         areas=areas
     )
 
@@ -206,7 +206,7 @@ def setup_rich_menu():
     # 4. 設為預設選單
     print("📌 正在將選單設為所有用戶預設選單 (Default)...")
     line_bot_api.set_default_rich_menu(rich_menu_id)
-    print(f"🎉 大功告成！所有加入 LINE Bot 的用戶現在打開對話框，底部都會自動顯示「⚡ BPA 操盤選單」！")
+    print(f"🎉 大功告成！所有加入 LINE Bot 的用戶現在打開對話框，底部都會自動顯示「⚡ 智能操盤選單」！")
 
 if __name__ == "__main__":
     setup_rich_menu()

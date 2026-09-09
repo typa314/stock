@@ -90,7 +90,7 @@ CACHE_5M_TTL_SEC = 30  # 5分K 快取有效時間 30 秒
 
 def get_cached_5m_analysis(ticker: str, days: int = 3):
     """
-    獲取個股 5 分鐘 K 線當沖 BPA 多維量化數據，支援 30s 記憶體快取
+    獲取個股 5 分鐘 K 線當沖多維量化數據，支援 30s 記憶體快取
     """
     now = time.time()
     ticker_key = str(ticker).upper()
@@ -127,7 +127,7 @@ try:
 except Exception as e:
     logger.warning(f"LINE SDK 初始化警告: {e}")
 
-app = FastAPI(title="BPA Stock LINE Bot Webhook Server", version="1.0.0")
+app = FastAPI(title="Stock Quantitative LINE Bot Server", version="1.0.0")
 
 @app.on_event("startup")
 def startup_event():
@@ -149,7 +149,7 @@ def startup_event():
 def health_check():
     return {
         "status": "online",
-        "service": "BPA Stock LINE Bot",
+        "service": "Stock Quantitative LINE Bot",
         "line_sdk_configured": line_bot_api is not None
     }
 
@@ -175,7 +175,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     - 買 [代號] [成本] [股數]
     - 賣 [代號]
     - 持倉 / 庫存 / 損益
-    - [純代號] 查 BPA
+    - [純代號] 查 4合1 多維量化研判
     - 說明 / help
     """
     raw_text = text.strip()
@@ -337,7 +337,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             f"⭐ 已成功將【{sname} ({ticker})】加入自選觀察名單！\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"• 目前現價：{cur_p_str}\n"
-            f"• 監控模式：BPA 回測底部確認雷達\n"
+            f"• 監控模式：多維量化回測底部確認雷達\n"
             f"• 觸發條件：High 2 雙重底 / 20 EMA 支撐回踩 / S1 反轉\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"🛡️ 盤中一旦確認高勝率買點，系統將主動推播通知！\n"
@@ -402,7 +402,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
                     chg_val = 0.0
                     chg_pct = 0.0
 
-            # 取得 BPA 狀態與 20 EMA 距離
+            # 取得市場狀態與 20 EMA 距離
             try:
                 res_alt = get_cached_stock_analysis(t, months=1, quick_mode=True)
                 bpa_res = res_alt.get("bpa_res", {})
@@ -512,7 +512,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     # 5. 說明 / Help
     elif action in ["說明", "help", "?", "選單", "menu"]:
         return (
-            "🤖 【BPA 操盤秘書指令指南】\n"
+            "🤖 【量化操盤秘書指令指南】\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "📌 記錄買進：\n"
             "   買 2330 980 (預設1張)\n"
@@ -527,7 +527,7 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
             "   自選 或 清單 (查觀察名單)\n\n"
             "📌 5分K 日內當沖研判：\n"
             "   k2330 或 5k 2330 (查5分鐘K線與當沖掛單)\n\n"
-            "📌 單股 BPA 4合1 旗艦研判：\n"
+            "📌 單股 4合1 多維旗艦研判：\n"
             "   直接輸入代號，如「2330」或「00708L」\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "🛡️ 盤中跌破 -7% 停損或觸發高勝率買點時主動通知！"
@@ -594,14 +594,14 @@ if handler:
         if isinstance(result, dict):
             # Flex Message 卡片回傳
             try:
-                header_text = result.get("header", {}).get("contents", [{}])[0].get("text", "📊 BPA 操盤診斷")
-                alt_txt = f"📊 {header_text}" if header_text else "📊 BPA 操盤診斷"
+                header_text = result.get("header", {}).get("contents", [{}])[0].get("text", "📊 個股多維量化診斷")
+                alt_txt = f"📊 {header_text}" if header_text else "📊 個股多維量化診斷"
                 flex_msg = FlexSendMessage(alt_text=alt_txt, contents=result)
                 line_bot_api.reply_message(reply_token, flex_msg)
             except Exception as fe:
                 logger.error(f"發送 Flex Message 失敗，啟動純文字備援: {fe}", exc_info=True)
                 # 若 LINE 客戶端或伺服器異常，自動降級以純文字回覆
-                fallback_txt = f"📊 【BPA 診斷回報】\n{header_text}\n現價與指標已計算完成。"
+                fallback_txt = f"📊 【量化診斷回報】\n{header_text}\n現價與指標已計算完成。"
                 line_bot_api.reply_message(reply_token, TextSendMessage(text=fallback_txt))
         else:
             # 純文字訊息回傳
@@ -612,11 +612,11 @@ if handler:
     def handle_line_join_event(event):
         """當機器人被邀請加入群組時發送歡迎引導訊息"""
         welcome_text = (
-            "👋 大家好！我是【台股 BPA 操盤秘書】。\n"
+            "👋 大家好！我是【台股量化操盤秘書】。\n"
             "感謝邀請！已成功加入群組！\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "📌 群組快速看盤：\n"
-            "• 直接輸入股票代號（如 2330、3042）即可查即時行情與 BPA 價格行為分析\n"
+            "• 直接輸入股票代號（如 2330、3042）即可查即時行情與 4合1 多維量化研判\n"
             "• 輸入「說明」可查看完整功能指引\n"
             "• 群內日常閒聊我將保持安靜，不打擾大家！"
         )
