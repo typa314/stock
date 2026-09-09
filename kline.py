@@ -1822,19 +1822,68 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         stop_direction = "-"
         entry_type = "區間高出低進價位"
 
-    # 5m 當沖動作決策
+    # ── 多時框對齊 (Multi-Timeframe Alignment: MTF) ──
+    # 取得日K級別核心架構與籌碼，落實大時框箝制小時框，嚴禁逆大趨勢盲目做多
+    daily_res = None
+    daily_always_code = "TR"
+    daily_ma20 = close_now
+    daily_trend_score = 0
+    inst_net_3d = 0
+    try:
+        daily_res = analyze_stock(ticker, months=3, generate_html=False, print_report=False, quick_mode=True)
+        if daily_res:
+            b_res = daily_res.get("bpa_res", {})
+            daily_always_code = b_res.get("always_in_code", "TR")
+            daily_trend_score = daily_res.get("trend_score", 0)
+            df_d = daily_res.get("df")
+            if df_d is not None and not df_d.empty and "ma20" in df_d.columns:
+                daily_ma20 = float(df_d["ma20"].iloc[-1])
+            inst_df = daily_res.get("inst_df")
+            if inst_df is not None and not inst_df.empty and "total" in inst_df.columns:
+                inst_net_3d = int(inst_df["total"].tail(3).sum())
+    except Exception as e:
+        logger.debug(f"5分K多時框讀取日線異常: {e}")
+
+    # 日線是否處於空方破線架構（AIS 或跌破日MA20達0.5%以上，或波段評分 <= -2）
+    is_daily_bear = (daily_always_code == "AIS") or (close_now < daily_ma20 * 0.995) or (daily_trend_score <= -2)
+    # 日線是否處於多頭主控架構（AIL 且站穩日MA20）
+    is_daily_bull = (daily_always_code == "AIL") and (close_now >= daily_ma20 * 0.995)
+
+    # 5m 當沖動作決策（多時框硬門檻對齊）
+    mtf_status = "中性整理"
     if "多" in bpa_status:
-        action_tag_5m = "🟢 建議偏多買進"
-        action_sub_5m = f"順應 5m 20 EMA（{ema_now:.2f} 元）支撐拉回逢低買進"
-        action_color_5m = "#22c55e"
+        if is_daily_bear:
+            # 日線空方架構下，5m 短彈禁止給出買進掛單，強制定調為逆勢弱彈，防誘多
+            action_tag_5m = "⚠️ 逆日線弱彈 (觀望)"
+            action_sub_5m = f"5m 短線雖在均線上，但受制日線空方架構 (日MA20: {daily_ma20:.2f}元)，嚴防假突破，切忌搶反彈！"
+            action_color_5m = "#f59e0b"
+            mtf_status = "⚠️ 逆日線弱彈（空方趨勢中的反彈）"
+        elif is_daily_bull:
+            action_tag_5m = "🔥 建議順勢做多"
+            action_sub_5m = f"日線與 5m 雙時框多方共振！站穩 5m 20 EMA（{ema_now:.2f}元），拉回守穩可順勢佈局"
+            action_color_5m = "#22c55e"
+            mtf_status = "🟢 雙時框多方共振 (高勝率)"
+        else:
+            action_tag_5m = "🟢 建議偏多買進"
+            action_sub_5m = f"順應 5m 20 EMA（{ema_now:.2f} 元）支撐拉回逢低買進"
+            action_color_5m = "#22c55e"
+            mtf_status = "🟢 偏多整理"
     elif "空" in bpa_status:
-        action_tag_5m = "🔴 建議逢高做空"
-        action_sub_5m = f"受制 5m 20 EMA（{ema_now:.2f} 元）反壓，反彈逢高或破底順勢放空"
-        action_color_5m = "#ef4444"
+        if is_daily_bear:
+            action_tag_5m = "🔴 雙時框順勢做空"
+            action_sub_5m = f"日線與 5m 均處空方軌道，反彈逢 5m 20 EMA（{ema_now:.2f}元）反壓或破底順勢放空"
+            action_color_5m = "#ef4444"
+            mtf_status = "🔴 雙時框空方共振"
+        else:
+            action_tag_5m = "🔴 建議逢高做空"
+            action_sub_5m = f"受制 5m 20 EMA（{ema_now:.2f} 元）反壓，反彈逢高或破底順勢放空"
+            action_color_5m = "#ef4444"
+            mtf_status = "🔴 偏空整理"
     else:
         action_tag_5m = "🟡 建議觀望整理"
         action_sub_5m = "日內箱型均線糾結，高出低進或暫不開倉"
         action_color_5m = "#fbbf24"
+        mtf_status = "🟡 區間震盪整理"
 
     # 5m 20MA 成交量均線與主力爆量異動檢測
     df["vol_ma20"] = df["volume"].rolling(20, min_periods=1).mean()
@@ -1993,6 +2042,10 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         "vol_now": vol_now,
         "vol_ma20_5m": vol_ma20_5m,
         "vol_ratio_5m": vol_ratio_5m,
+        "mtf_status": mtf_status,
+        "daily_always_code": daily_always_code,
+        "daily_ma20": daily_ma20,
+        "inst_net_3d": inst_net_3d,
         "data_time_str": data_time_str
     }
 

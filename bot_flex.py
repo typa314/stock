@@ -1254,6 +1254,7 @@ def build_5m_stock_flex(res5: dict) -> dict:
     whale_tag = res5.get("whale_tag", "⚪ 常態量能流動")
     whale_color = res5.get("whale_color", "#94a3b8")
     whale_advice = res5.get("whale_advice", "")
+    mtf_status = res5.get("mtf_status", "中性整理")
 
     buy_stop = float(res5.get("buy_stop", close_now))
     sell_stop = float(res5.get("sell_stop", close_now))
@@ -1400,6 +1401,14 @@ def build_5m_stock_flex(res5: dict) -> dict:
                             "color": "#cbd5e1",
                             "wrap": True,
                             "margin": "sm"
+                        },
+                        {
+                            "type": "text",
+                            "text": f"🌐 多時框位階：{mtf_status}",
+                            "size": "xxs",
+                            "color": "#38bdf8",
+                            "wrap": True,
+                            "margin": "xs"
                         },
                         {
                             "type": "text",

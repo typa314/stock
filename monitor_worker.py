@@ -138,6 +138,15 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
         ema20_val = float(df["ema20"].iloc[-1]) if ("ema20" in df.columns and not df.empty) else close_now
         last_bar = bpa_res.get("last_bar_type", "")
 
+        # ── 籌碼硬門檻審核 (Institutional Hard Gate) ──
+        # 若近 3 日三大法人合計大賣超過 300 張，視為主力持續提款，技術面反彈極易破底，嚴格攔截不予推播
+        inst_df = res.get("inst_df")
+        if inst_df is not None and not inst_df.empty and "total" in inst_df.columns:
+            inst_net_3d = int(inst_df["total"].tail(3).sum())
+            if inst_net_3d < -300:
+                logger.info(f"【{ticker}】雖然可能浮現技術回測，但法人近3日大幅賣超 {inst_net_3d} 張，觸發籌碼硬門檻攔截！")
+                return {"triggered": False}
+
         # 1. High 2 (H2) 雙重底推動確認
         # 時效過濾：bpa_h2 必須在最近 5 根日K 棒內（避免過期訊號觸發推播）
         h2_recent = "bpa_h2" in df.columns and bool(df["bpa_h2"].tail(5).any()) and always_code in ["AIL", "TR"]
