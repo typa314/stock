@@ -132,7 +132,7 @@ class TestLineBotCore(unittest.TestCase):
         # 測試停損警報 Flex
         alert_flex = bot_flex.build_stop_loss_alert_flex("晶技", "3042", 160.0, 175.0, 162.75, -8.57)
         self.assertEqual(alert_flex["type"], "bubble")
-        self.assertIn("🚨 BPA 強制停損緊急告警", alert_flex["header"]["contents"][0]["text"])
+        self.assertIn("🚨 強制停損緊急告警", alert_flex["header"]["contents"][0]["text"])
 
         # 測試單股 BPA Flex
         single_flex = bot_flex.build_single_stock_flex(
@@ -168,19 +168,19 @@ class TestLineBotCore(unittest.TestCase):
         self.assertEqual(wl_flex["type"], "bubble")
         self.assertIn("自選觀察清單", wl_flex["header"]["contents"][0]["contents"][0]["text"])
 
-        # 測試 BPA 高勝率買點觸發推播 Flex
+        # 測試 高勝率買點觸發推播 Flex
         sig_flex = bot_flex.build_buy_signal_alert_flex(
             "台積電", "2330", "🔥 High 2 (H2) 雙重底回踩買點",
             "波段回檔 ABC 修正結束，空方無力跌破！", 1020.0, 1025.0, 1000.0, 1050.0, 1075.0
         )
         self.assertEqual(sig_flex["type"], "bubble")
-        self.assertIn("BPA 高勝率買點觸發", sig_flex["header"]["contents"][0]["text"])
+        self.assertIn("高勝率買點觸發", sig_flex["header"]["contents"][0]["text"])
 
     def test_04_command_parser_integration(self):
         """測試自然語言指令解析與相應回覆"""
         # 測試 說明 指令
         res_help = line_server.handle_user_command(self.user_id, "說明")
-        self.assertIn("BPA 操盤秘書指令指南", res_help)
+        self.assertIn("操盤秘書指令指南", res_help)
 
         # 測試 買 指令
         res_buy = line_server.handle_user_command(self.user_id, "買 2330 980")
