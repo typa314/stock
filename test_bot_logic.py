@@ -289,5 +289,51 @@ class TestLineBotCore(unittest.TestCase):
         finally:
             bot_db.DEFAULT_DB_PATH = old_db
 
+    def test_07_mtf_and_institutional_gate(self):
+        """自動化驗證：多時框對齊 (MTF Alignment) 與法人籌碼硬門檻 (Hard Gate)"""
+        import pandas as pd
+        import kline
+        import monitor_worker
+        from unittest.mock import patch
+
+        # 1. 測試法人籌碼硬門檻：若近3日法人賣超超過 300 張，應硬性攔截不予推播
+        mock_daily_res_bearish_inst = {
+            "df": pd.DataFrame({"close": [180.0], "low": [178.0], "high": [182.0], "ema20": [180.0], "vol_ma": [1000.0], "volume": [500.0]}),
+            "bpa_res": {"always_in_code": "AIL", "signals": ["🔥 High 2 (H2) 雙重底回踩買點"]},
+            "sr_levels": {"s1": 180.0},
+            "close_now": 180.0,
+            "stock_name": "晶技",
+            "inst_df": pd.DataFrame({"total": [-150, -100, -100]}) # 近3日合計賣超 -350 張
+        }
+        res_inst_blocked = monitor_worker.check_bottom_confirmation_signals("3042", analysis_res=mock_daily_res_bearish_inst)
+        self.assertFalse(res_inst_blocked["triggered"], "法人近3日賣超 > 300張時，應觸發硬門檻攔截！")
+
+        # 2. 測試法人中性或買超時，正常放行
+        mock_daily_res_bullish_inst = {
+            "df": pd.DataFrame({"close": [180.0], "low": [178.0], "high": [182.0], "ema20": [180.0], "vol_ma": [1000.0], "volume": [500.0], "bpa_h2": [True]}),
+            "bpa_res": {"always_in_code": "AIL", "signals": ["🔥 High 2 (H2) 雙重底回踩買點"]},
+            "sr_levels": {"s1": 180.0},
+            "close_now": 180.0,
+            "stock_name": "晶技",
+            "inst_df": pd.DataFrame({"total": [50, 100, 200]}) # 近3日合計買超 +350 張
+        }
+        res_inst_passed = monitor_worker.check_bottom_confirmation_signals("3042", analysis_res=mock_daily_res_bullish_inst)
+        self.assertTrue(res_inst_passed["triggered"], "法人買超且技術面吻合時，應正常觸發！")
+
+        # 3. 測試 5分K 多時框箝制：當日線處於空方架構 (AIS 或跌破日MA20)，5m 即使在均線上，也嚴禁偏多買進
+        mock_daily_for_5m = {
+            "bpa_res": {"always_in_code": "AIS"},
+            "trend_score": -4,
+            "df": pd.DataFrame({"ma20": [200.0]}), # 現價 180，遠低於日MA20 (200)
+            "inst_df": pd.DataFrame({"total": [-100, -100, -100]})
+        }
+        with patch("kline.analyze_stock", return_value=mock_daily_for_5m):
+            res_5m = kline.analyze_stock_5m("3042", days=1)
+            self.assertIn("mtf_status", res_5m)
+            # 若 bpa_status 出現多頭，必須被壓制為逆日線弱彈
+            if "多" in res_5m["bpa_status"]:
+                self.assertIn("逆日線弱彈", res_5m["action_tag"])
+                self.assertNotIn("建議偏多買進", res_5m["action_tag"])
+
 if __name__ == "__main__":
     unittest.main()
