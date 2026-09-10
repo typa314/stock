@@ -556,6 +556,9 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 | **靜態語法與未定義變數** | `pyflakes test_*.py bot_db.py core/*.py` | **0 Warnings / 0 Errors** | 代碼完全乾淨無任何未定義名稱。 |
 | **LINE Bot 業務邏輯整合測試** | `python test_bot_logic.py` | **9 / 9 OK (100%)** | 全部 9 項整合端到端場景通過。 |
 
+> **分支推播紀錄**：依據使用者明確指示，已建立測試分支 `test/architecture-and-coverage` 並推送至遠端 `origin/test/architecture-and-coverage` (commit: `6e02110`)。主分支 `main` 保持乾淨獨立不受影響。
+
+
 
 
 
