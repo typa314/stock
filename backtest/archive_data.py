@@ -66,6 +66,8 @@ def load_all():
 def build(records):
     prices, insts, revs, fss, cov = [], [], [], [], []
     for d in records:
+        if not isinstance(d, dict) or "ticker" not in d:
+            continue
         t, mkt = d["ticker"], d.get("market", "")
         px = d["price"].copy()
         px.insert(0, "ticker", t)

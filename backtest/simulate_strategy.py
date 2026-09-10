@@ -71,7 +71,7 @@ def simulate(sig, actions, hold, stop_pct, fee, stop_atr=0.0, stop_cap=0.0, stop
             exit_i, exit_p, why = None, None, ""
             for j in range(i + 1, min(i + 1 + hold, len(px))):
                 if px["adj_low"].iloc[j] <= stop:
-                    exit_i, exit_p, why = j, stop, "stop"
+                    exit_i, exit_p, why = j, min(stop, px["adj_open"].iloc[j]), "stop"
                     break
             if exit_i is None:
                 j = min(i + hold, len(px) - 1)

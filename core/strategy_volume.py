@@ -29,10 +29,12 @@ def evaluate_volume_price(df):
     candle_rng = max(high_now - low_now, 1e-5)
     body = abs(close_now - open_now)
     upper_sh = high_now - max(open_now, close_now)
-    lower_sh = min(open_now, close_now) - low_now
     
-    # 特殊量價與 Wyckoff 標記
-    is_breakout = bool(df["breakout"].iloc[-1]) if "breakout" in df else False
+    # 特殊量價與 Wyckoff 標記（帶量突破必須嚴格驗收成交量 >= 1.5 倍 20MA 均量）
+    if "breakout" in df:
+        is_breakout = bool(df["breakout"].iloc[-1]) and (vol_ratio_20 >= 1.5)
+    else:
+        is_breakout = (len(df) >= 21) and (close_now > df["high"].iloc[-21:-1].max()) and (vol_ratio_20 >= 1.5)
     is_dryup = bool(df["dryup"].iloc[-1]) if "dryup" in df else (vol_now < 0.45 * vol_ma20)
     is_churn = bool(df["churn"].iloc[-1]) if "churn" in df else (vol_ratio_20 > 1.8 and (upper_sh / candle_rng > 0.4 or body / candle_rng < 0.25))
     is_pullback = bool(df["pullback"].iloc[-1]) if "pullback" in df else False

@@ -16,7 +16,7 @@ from core.indicators import get_tw_tick, compute_atr_pct, compute_risk_stop, _ST
 from core.strategy_trend import evaluate_professional_trend
 from core.strategy_volume import evaluate_volume_price
 from core.strategy_brooks import evaluate_brooks_price_action
-from core.rating import get_rating_badge, evaluate_composite_rating
+from core.rating import get_rating_badge, evaluate_composite_rating, check_anti_chase
 
 
 # =====================================================================
@@ -507,6 +507,22 @@ class TestStrategyBrooks(unittest.TestCase):
         self.assertAlmostEqual(res["target_short_1r"], 64.70, places=2)
         self.assertAlmostEqual(res["target_short_2r"], 59.50, places=2)
 
+    def test_h2_expiration_after_two_bars(self):
+        """H2 pattern is only valid within last 1~2 bars (tail(2)), expiring if 3 bars ago."""
+        # Case 1: H2 happened 3 bars ago (index 27 in 30 bars) -> should NOT trigger H2
+        df_expired = self._create_bpa_df(n=30, close_base=100.0, trend_step=1.0)
+        df_expired["close"] = df_expired["ema20"] + 1.0
+        df_expired.loc[27, "bpa_h2"] = True
+        res_expired = evaluate_brooks_price_action(df_expired)
+        self.assertFalse(any("High 2 (H2)" in s for s in res_expired["signals"]))
+
+        # Case 2: H2 happened 2 bars ago (index 28 in 30 bars) -> valid and triggers
+        df_valid = self._create_bpa_df(n=30, close_base=100.0, trend_step=1.0)
+        df_valid["close"] = df_valid["ema20"] + 1.0
+        df_valid.loc[28, "bpa_h2"] = True
+        res_valid = evaluate_brooks_price_action(df_valid)
+        self.assertTrue(any("High 2 (H2)" in s for s in res_valid["signals"]))
+
 
 # =====================================================================
 # 5. Composite Rating & Decision Engine Tests
@@ -578,23 +594,36 @@ class TestRatingAndDecisions(unittest.TestCase):
         self.assertEqual(res_adverse_high["action_type"], "BUY")
 
     def test_action_decision_hold_wait_sell(self):
-        """Verify HOLD (>=60), WAIT (>=45), SELL (<45)."""
+        """Verify HOLD (>=70), WAIT (50~69), SELL (<50), and daily_bias output."""
         df, _, vol_eval, _, _ = self._create_synthetic_rating_env()
 
-        # HOLD test: score around 65
-        bpa_res_hold = {"always_in_zh": "震盪盤整"}
-        fund_hold = {"revenue_yoy": 10, "eps_ttm": 1.0, "gross_margin": 10} # c_score=3 -> 15 pts
+        # Score around 65: previously HOLD, now WAIT under Phase 1 (65~69 merged to WAIT)
+        bpa_res_neutral = {"always_in_zh": "震盪盤整"}
+        fund_65 = {"revenue_yoy": 10, "eps_ttm": 1.0, "gross_margin": 10}  # c_score=3 -> 15 pts
         # (7/7)*35 + 15 + 15 (bpa) + 0 = 65
-        res_hold = evaluate_composite_rating(
-            df, bpa_res_hold, vol_eval, pd.DataFrame([{"total": -50}] * 5),
-            fund_hold, "2330", "tse"
+        res_65 = evaluate_composite_rating(
+            df, bpa_res_neutral, vol_eval, pd.DataFrame([{"total": -50}] * 5),
+            fund_65, "2330", "tse"
         )
-        self.assertEqual(res_hold["score"], 65)
-        self.assertEqual(res_hold["action_type"], "HOLD")
+        self.assertEqual(res_65["score"], 65)
+        self.assertEqual(res_65["action_type"], "WAIT")
+        self.assertEqual(res_65["daily_bias"], "WAIT")
 
-        # SELL test: score < 45
+        # Score around 70: triggers HOLD (>=70)
+        fund_70 = {"revenue_yoy": 25, "eps_ttm": 1.0, "gross_margin": 10}  # c_score=4 -> 20 pts
+        # (7/7)*35 + 20 + 15 (bpa) + 0 = 70
+        res_70 = evaluate_composite_rating(
+            df, bpa_res_neutral, vol_eval, pd.DataFrame([{"total": -50}] * 5),
+            fund_70, "2330", "tse"
+        )
+        self.assertEqual(res_70["score"], 70)
+        self.assertEqual(res_70["action_type"], "HOLD")
+        self.assertEqual(res_70["daily_bias"], "WAIT")
+        self.assertEqual(res_70["suggested_hold_days"], 40)
+
+        # SELL test: score < 50
         bpa_res_sell = {"always_in_zh": "空方主導"}
-        fund_sell = {"revenue_yoy": -20, "eps_ttm": -1.0, "gross_margin": 5} # c_score=-1 -> 0 pts
+        fund_sell = {"revenue_yoy": -20, "eps_ttm": -1.0, "gross_margin": 5}  # c_score=-1 -> 0 pts
         df_bear = pd.DataFrame({
             "close": [200.0 - i * 0.5 for i in range(260)],
             "ema20": [200.0 - i * 0.5 for i in range(260)]
@@ -603,8 +632,23 @@ class TestRatingAndDecisions(unittest.TestCase):
             df_bear, bpa_res_sell, vol_eval, pd.DataFrame([{"total": -500}] * 5),
             fund_sell, "2330", "tse"
         )
-        self.assertLess(res_sell["score"], 45)
+        self.assertLess(res_sell["score"], 50)
         self.assertEqual(res_sell["action_type"], "SELL")
+        self.assertEqual(res_sell["daily_bias"], "SELL")
+
+    def test_anti_chase_rule(self):
+        """Test anti-chase rule blocks entries when next open is > 1.5% above signal close."""
+        # 1. Normal gap (< 1.5%): allowed
+        res_ok = check_anti_chase(signal_close=100.0, next_open=101.0, max_chase_pct=1.5)
+        self.assertTrue(res_ok["allow_entry"])
+        self.assertAlmostEqual(res_ok["chase_pct"], 1.0)
+
+        # 2. Excessive gap (> 1.5%): blocked
+        res_blocked = check_anti_chase(signal_close=100.0, next_open=102.5, max_chase_pct=1.5)
+        self.assertFalse(res_blocked["allow_entry"])
+        self.assertAlmostEqual(res_blocked["chase_pct"], 2.5)
+        self.assertIn("取消追高", res_blocked["reason"])
+
 
     @patch("yfinance.download", return_value=None)
     def test_composite_rating_insufficient_data_fallback(self, mock_yf):

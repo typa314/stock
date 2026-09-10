@@ -72,9 +72,9 @@ def evaluate_brooks_price_action(df):
     bpa_extra_score = 0
     mid_bb = df["bb_mid"].iloc[-1]
     
-    # 7.2.1 多方設定（僅在 AIL 多頭環境 或 TR 區間下半部守穩時採納）
+    # 7.2.1 多方設定（僅在 AIL 多頭環境 或 TR 區間下半部守穩時採納，時效 1~2 根 K 棒）
     if always_in_code == "AIL" or (always_in_code == "TR" and c <= mid_bb):
-        if df["bpa_h2"].tail(3).any():
+        if df["bpa_h2"].tail(2).any():
             idx_list = df.index[df["bpa_h2"]].tolist()
             last_idx = idx_list[-1] if idx_list else len(df) - 1
             prev_h = float(df["high"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["high"].iloc[last_idx])
@@ -82,7 +82,7 @@ def evaluate_brooks_price_action(df):
             trig_p = prev_h + tick_val
             recent_signals.append(f"觸發 High 2 (H2) 雙重推動買點🔥（突破價位: {trig_p:.2f} 元，前高: {prev_h:.2f} 元）")
             bpa_extra_score += 2
-        elif df["bpa_h1"].tail(3).any():
+        elif df["bpa_h1"].tail(2).any():
             idx_list = df.index[df["bpa_h1"]].tolist()
             last_idx = idx_list[-1] if idx_list else len(df) - 1
             prev_h = float(df["high"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["high"].iloc[last_idx])
@@ -90,26 +90,26 @@ def evaluate_brooks_price_action(df):
             trig_p = prev_h + tick_val
             recent_signals.append(f"觸發 High 1 (H1) 初次推動過前高（突破價位: {trig_p:.2f} 元，前高: {prev_h:.2f} 元）")
             bpa_extra_score += 1
-        elif df["bpa_h3"].tail(3).any():
+        elif df["bpa_h3"].tail(2).any():
             idx_list = df.index[df["bpa_h3"]].tolist()
             last_idx = idx_list[-1] if idx_list else len(df) - 1
             prev_h = float(df["high"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["high"].iloc[last_idx])
             tick_val = get_tw_tick(float(df["close"].iloc[last_idx - 1])) if last_idx >= 1 else 0.5
             trig_p = prev_h + tick_val
-            recent_signals.append(f"觸發 High 3 (H3) 楔形多頭旗形突破（突破價位: {trig_p:.2f} 元）")
-            bpa_extra_score += 1
-            
+            recent_signals.append(f"觸發 High 3 (H3) 楔形多頭旗形突破警訊⚠️（突破價位: {trig_p:.2f} 元，推動末端不追多）")
+            # H3 視為末端推動警訊，不給予額外做多加分
+
         if df["bpa_ema_pb"].tail(2).any():
             recent_signals.append(f"20 EMA 動態支撐回測確認（支撐價: {ema_v:.2f} 元，順勢買點）")
             bpa_extra_score += 1
-            
+
         if df["bpa_bull_gap"].tail(2).any():
             recent_signals.append(f"出現多頭 20 EMA 乖離缺口棒（當前乖離率: +{(c-ema_v)/ema_v*100:.1f}%，留意高檔測頂反轉）⚠️")
             bpa_extra_score += 1
-            
-    # 7.2.2 空方設定（僅在 AIS 空頭環境 或 TR 區間上半部受阻時採納）
+
+    # 7.2.2 空方設定（僅在 AIS 空頭環境 或 TR 區間上半部受阻時採納，時效 1~2 根 K 棒）
     if always_in_code == "AIS" or (always_in_code == "TR" and c >= mid_bb):
-        if df["bpa_l2"].tail(3).any():
+        if df["bpa_l2"].tail(2).any():
             idx_list = df.index[df["bpa_l2"]].tolist()
             last_idx = idx_list[-1] if idx_list else len(df) - 1
             prev_l = float(df["low"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["low"].iloc[last_idx])
@@ -117,7 +117,7 @@ def evaluate_brooks_price_action(df):
             trig_p = prev_l - tick_val
             recent_signals.append(f"觸發 Low 2 (L2) 雙重反彈逢高空點⚠️（跌破價位: {trig_p:.2f} 元，前低: {prev_l:.2f} 元）")
             bpa_extra_score -= 2
-        elif df["bpa_l1"].tail(3).any():
+        elif df["bpa_l1"].tail(2).any():
             idx_list = df.index[df["bpa_l1"]].tolist()
             last_idx = idx_list[-1] if idx_list else len(df) - 1
             prev_l = float(df["low"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["low"].iloc[last_idx])
@@ -125,7 +125,7 @@ def evaluate_brooks_price_action(df):
             trig_p = prev_l - tick_val
             recent_signals.append(f"觸發 Low 1 (L1) 初次反彈破前低（跌破價位: {trig_p:.2f} 元，前低: {prev_l:.2f} 元）")
             bpa_extra_score -= 1
-        elif df["bpa_l3"].tail(3).any():
+        elif df["bpa_l3"].tail(2).any():
             idx_list = df.index[df["bpa_l3"]].tolist()
             last_idx = idx_list[-1] if idx_list else len(df) - 1
             prev_l = float(df["low"].iloc[last_idx - 1]) if last_idx >= 1 else float(df["low"].iloc[last_idx])

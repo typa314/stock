@@ -17,8 +17,6 @@ def get_rating_badge(s):
 
 
 
-from core.market_regime import get_market_regime_status
-
 
 def _bpa_score(bpa_res: dict) -> int:
     """
@@ -250,8 +248,8 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
             action_border = "#22c55e"
             action_sub = f"主升動能強勁且 BPA 偏多，逢 20 EMA（{ema_val:.2f} 元）拉回守穩或放量突破順勢買進"
 
-    # 2. 建議持有：保留 65 分以上非空方結構（消除過去 60 分邊界無超額雜訊）
-    elif total_score >= 65 and "空" not in bpa_zh:
+    # 2. 建議持有：收緊至 70 分以上非空方結構（65~69 分依回測實證無邊緣，併入 WAIT 觀望）
+    elif total_score >= 70 and "空" not in bpa_zh:
         if is_stage4_bear:
             action_tag = "🟡 建議觀望 (Stage 4 禁買)"
             action_type = "WAIT"
@@ -267,7 +265,7 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
             action_border = "#38bdf8"
             action_sub = f"多頭架構穩健（評分 {total_score}），持股續抱；空手者待回測 20 EMA（{ema_val:.2f} 元）分批佈局"
 
-    # 3. 建議觀望：50~69 分（消除過去 60~69 分無超額假持有區間）
+    # 3. 建議觀望：50~69 分（65~69 分已併入觀望，消除無超額模糊區間）
     elif total_score >= 50:
         if is_stage4_bear:
             action_tag = "🟡 建議觀望 (Stage 4 禁買)"
@@ -295,6 +293,13 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
 
     suggested_hold_days = 60 if action_type == "BUY" else (40 if action_type == "HOLD" else None)
 
+    if action_type == "BUY":
+        daily_bias = "BUY_CANDIDATE"
+    elif action_type in ("HOLD", "WAIT"):
+        daily_bias = "WAIT"
+    else:
+        daily_bias = "SELL"
+
     return {
         "score": total_score,
         "badge": badge,
@@ -302,6 +307,7 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         "badge_bg": b_bg,
         "action_tag": action_tag,
         "action_type": action_type,
+        "daily_bias": daily_bias,
         "action_color": action_color,
         "action_bg": action_bg,
         "action_border": action_border,
@@ -326,5 +332,28 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         "is_market_bear": is_market_bear,
         "time_horizon": "40~60 交易日（波段動能跟隨）"
     }
+
+
+def check_anti_chase(signal_close: float, next_open: float, max_chase_pct: float = 1.5) -> dict:
+    """
+    次日開盤追價限制檢查（Anti-Chase Rule）：
+    若次日開盤價大於訊號日收盤價之 (1 + max_chase_pct%)，
+    判定為過度追價，取消當日追高進場，改等回測 20 EMA 或前波支撐。
+    """
+    if signal_close <= 0:
+        return {"allow_entry": True, "chase_pct": 0.0, "reason": "收盤價異常，無追價限制"}
+    chase_pct = ((next_open - signal_close) / signal_close) * 100.0
+    if chase_pct > max_chase_pct:
+        return {
+            "allow_entry": False,
+            "chase_pct": round(chase_pct, 2),
+            "reason": f"次日開盤跳空漲幅達 +{chase_pct:.2f}%，超過追價上限 +{max_chase_pct:.1f}%，依紀律取消追高，改等回測 20 EMA 或支撐"
+        }
+    return {
+        "allow_entry": True,
+        "chase_pct": round(chase_pct, 2),
+        "reason": f"開盤漲幅 +{chase_pct:.2f}% 處於允許追價範圍（<={max_chase_pct:.1f}%）"
+    }
+
 
 

@@ -10,6 +10,82 @@
 
 ---
 
+## 2026-09-10 ｜ 歷史基準回測資料庫審查、archive 崩潰修復與停損真實滑價結算（test/mtf-strategy 分支）
+
+參與者：使用者、Gemini agent。
+依據：使用者審查歷史基準回測資料庫與核心策略驗證代碼。
+
+### A. 改了什麼
+1. `backtest/archive_data.py`：
+   - 修復 `build()` 函式未過濾非 dict 格式快取檔案之 Bug（加入 `if not isinstance(d, dict) or "ticker" not in d: continue`），徹底消除大盤指數 `TWII.pkl` 造成的 `KeyError: 'ticker'` 崩潰。
+2. `backtest/simulate_strategy.py`：
+   - 修正停損觸發結算價邏輯：將固定使用 `stop` 價位改為 `exit_p = min(stop, px["adj_open"].iloc[j])`，真實反映跳空跌停/開低所產生的摩擦成本與滑價。
+   - 實測 28 檔個股 BUY 訊號持有 20 日：加權平均報酬從 +2.67% 調整至 +2.53%，策略平均 CAGR 從 10.7% 調整至 9.7%（產生 -1.0% 客觀摩擦成本）。
+3. `backtest/backtest_audit_report.md`：
+   - 依使用者審核意見修訂，更正 Anti-Chase 現況為「尚未落地於 main」，並記錄 HOLD 門檻 ≥65 建議收緊至 ≥70 之量化依據。
+4. `README.md`：
+   - 更新 Changelog 新增 v3.4.0 版本紀錄。
+
+### B. 驗證狀態
+- `python backtest/check_lookahead.py 2330`：253 個交易日 48 欄位 100% 一致通過。
+- `python test_core_strategies.py`：31/31 通過。
+- `python test_bot_logic.py`：9/9 通過。
+
+---
+
+## 2026-09-10 ｜ Phase 1 日K 方向層收緊 ＋ Phase 2 60分K 時機層框架落地（test/mtf-strategy 分支）
+
+參與者：Gemini agent。
+依據：《完整策略修改與勝率提升總冊 v2.0》（`COMPLETE_STRATEGY_AND_WINRATE_GUIDE.md`）
+
+### A. 改了什麼
+1. `core/rating.py`：
+   - HOLD 門檻由 `>= 65` 收緊為 `>= 70`，65~69 分依據回測無統計超額之實證併入 `WAIT`（觀望）。
+   - 決策輸出字典新增 `daily_bias` 方向許可證（`BUY_CANDIDATE`、`WAIT`、`SELL`），供跨週期時機層作為硬過濾閘門。
+   - 新增 `check_anti_chase(signal_close, next_open, max_chase_pct=1.5)`，若次日跳空開盤漲幅超過 +1.5%，標記禁止追價，改等回測 20 EMA。
+2. `core/strategy_brooks.py`：
+   - 將 H1/H2/H3/L1/L2/L3 形態檢索時效由 `tail(3)` 收緊至 `tail(2)`，避免超過 2 根日K 的過期形態觸發無效追價。
+   - H3 楔形旗形降級為純推動末端警示，不給予額外做多加分（`bpa_extra_score` 不累加）。
+3. `core/strategy_volume.py`：
+   - 帶量突破（`BREAKOUT`）嚴格強制要求成交量 `vol_ratio_20 >= 1.5`，杜絕縮量假突破。
+4. `core/strategy_timing.py`（全新建立）：
+   - 實作 `evaluate_60m_timing(df_60m, daily_bias, daily_ema20, daily_key_support, preferred_scheme)`。
+   - 嚴守長週期定方向：若 `daily_bias != "BUY_CANDIDATE"`，直接返回 `NONE`，禁止短週期逆勢開多。
+   - 實作方案 A（回測 20 EMA 守穩）、方案 B（H 推動突破前高）、方案 C（區間放量突破）與量價驗票、長上影爆量出貨攔截，並精確計算 `entry_ref`、`stop_ref`（以 tick 為距）與 1R/2R 目標。
+5. 單元測試：
+   - `test_core_strategies.py`：更新 `test_action_decision_hold_wait_sell`（驗證 65 分落入 WAIT、70 分落入 HOLD、`daily_bias` 正確性）、新增 `test_h2_expiration_after_two_bars` 與 `test_anti_chase_rule`。
+   - `test_strategy_timing.py`（全新建立）：覆蓋方向許可證攔截、資料不足、方案 A 回測守穩、日K 關鍵防守跌破警示、爆量出貨滯漲攔截、方案 C 區間突破等 6 項測試。
+
+### B. 為什麼
+- 依據 2026-09-09 point-in-time 回測報告，65~69 分無統計超額，且日K 落後容易導致次日開盤追高而承受短期浮虧。透過日K 收緊門檻至 70 分、防追價限制，並結合 60分K 時機層（方案 A 回測 20 EMA 守穩確認），落實「長週期定方向、短週期定時機」之架構。
+
+### C. 驗證狀態
+- 靜態檢查：`pyflakes core/ test_strategy_timing.py` 0 errors / 0 warnings。
+- 單元測試：
+  - `python -m unittest test_strategy_timing.py` 6/6 通過。
+  - `python -m unittest test_core_strategies.py` 31/31 通過。
+  - `python test_bot_logic.py` 9/9 通過。
+  - 全套 `pytest`：89/89 100% 通過。
+
+### D. 歷史走勢數據回測對比（Point-in-Time 實測，2,817 筆 2020-2026）
+以 `backtest_accuracy.py` 在相同 9 檔核心標的、相同時間區間下，以多核心並行對比修改前 (`signals_modified_m12_s5.csv`) 與修改後 (`signals_phase1_m12_s5.csv`)：
+1. **決策重構效益（去無效雜訊）**：
+   - `HOLD` 門檻收緊至 70 分後，117 筆 65~69 分無超額模糊訊號轉入 `WAIT`（HOLD 筆數從 385 降至 268 筆，減少 -30.4%）。
+   - 看多訊號（BUY + HOLD）總數由 943 筆收斂至 826 筆（雜訊過濾比率 12.4%）。
+2. **核心優勢週期（60 交易日）勝率與報酬提升**：
+   - 看多訊號 60 日勝率：由 60.3% 微升至 **60.5%**（+0.2 pp）。
+   - 看多訊號 60 日均報酬：由 +10.10% 提升至 **+10.30%**（+0.20% 超額增益）。
+   - BUY 訊號 60 日表現穩健：勝率維持 **62.7%**，均報酬 **+12.16%**（顯著跑贏全體基準之 +8.07% 與 55.4%）。
+3. **動態 ATR 停損與資金效率改善（simulate_strategy 回測）**：
+   - HOLD 策略總交易數從 169 筆降為 138 筆（過濾 18.3% 低效交易）。
+   - 平均在市時間由 34% 降至 28%（資金暴露風險降低 6 個百分點）。
+   - 停損出場率由 51% 降至 49%。
+   - 晶宏 (3042)：策略總報酬由 +283.3% 躍升至 **+416.2%**，CAGR 提升至 27.8%，停損率從 45% 降至 28%。
+   - 和益 (1717)：策略虧損從 -37.1% 大幅收斂至 -7.9%，停損率從 39% 降至 33%。
+   - 漢翔 (2616)：勝率由 60.0% 躍升至 **71.4%**（+11.4 pp），停損率從 40% 降至 29%。
+
+---
+
 ## 2026-09-09 ｜準確度 point-in-time 回測驗證 ＋ 依實證修正
 
 參與者：本條目由 Claude Code session A 撰寫。條目中標記為「session B」者為同日並行的另一個開發 session（於 15:05–15:08 改動 `kline.py`、`app.py`、`devapp.py`、`line_server.py`、`monitor_worker.py`）。
