@@ -606,9 +606,76 @@ class TestRatingAndDecisions(unittest.TestCase):
         self.assertLess(res_sell["score"], 45)
         self.assertEqual(res_sell["action_type"], "SELL")
 
+    @patch("yfinance.download", return_value=None)
+    def test_composite_rating_insufficient_data_fallback(self, mock_yf):
+        """When historical bars < 200 and yfinance fallback is empty, minervini_passed should be None and not fake 4."""
+        df_short = pd.DataFrame({
+            "close": [100.0 + i for i in range(50)],
+            "ema20": [100.0 + i for i in range(50)]
+        })
+        bpa_res = {"always_in_zh": "多頭主控"}
+        vol_eval = {"status": "NORMAL"}
+        inst_df = pd.DataFrame([{"total": 100}] * 5)
+        fundamentals = {"revenue_yoy": 20.0, "eps_ttm": 3.0, "gross_margin": 35.0}
+
+        res = evaluate_composite_rating(
+            df_short, bpa_res, vol_eval, inst_df, fundamentals, "9999", "tse"
+        )
+        self.assertIsNone(res["minervini_passed"])
+        self.assertEqual(res["minervini_status"], "資料不足（無法評估）")
+        self.assertEqual(res["minervini_color"], "#94a3b8")
+        # Minervini gives 0 pts; c_score=5 -> 25 pts, bpa=30 pts, inst=10 pts -> Total = 65
+        self.assertEqual(res["score"], 65)
+
 
 # =====================================================================
-# 6. Static Quality & Pyflakes Check across core/ modules
+# 6. Data Fetching & Realtime Fallback Tests
+# =====================================================================
+class TestDataFetch(unittest.TestCase):
+    """Test data fetching tracks, Yahoo realtime fallback open handling."""
+
+    @patch("requests.get")
+    def test_yahoo_realtime_fallback_open_price(self, mock_get):
+        """Verify Yahoo Finance fallback extracts quote.open[0] rather than chartPreviousClose."""
+        from core.data_fetch import fetch_realtime_bar
+
+        def fake_get(url, *args, **kwargs):
+            m = unittest.mock.MagicMock()
+            if "mis.twse.com.tw" in url:
+                m.json.return_value = {"msgArray": []}
+            elif "query1.finance.yahoo.com" in url:
+                m.json.return_value = {
+                    "chart": {
+                        "result": [{
+                            "meta": {
+                                "regularMarketPrice": 985.0,
+                                "regularMarketDayHigh": 990.0,
+                                "regularMarketDayLow": 975.0,
+                                "chartPreviousClose": 960.0,  # Yesterday close: MUST NOT be used!
+                                "regularMarketVolume": 15000000
+                            },
+                            "indicators": {
+                                "quote": [{
+                                    "open": [978.0, 980.0, 982.0]  # True session open is 978.0!
+                                }]
+                            }
+                        }]
+                    }
+                }
+            return m
+
+        mock_get.side_effect = fake_get
+
+        bar = fetch_realtime_bar("2330", "tse")
+        self.assertIsNotNone(bar)
+        self.assertEqual(bar["close"], 985.0)
+        self.assertEqual(bar["open"], 978.0, "Realtime open MUST be 978.0 from quote.open[0], NOT 960.0 from chartPreviousClose")
+        self.assertEqual(bar["high"], 990.0)
+        self.assertEqual(bar["low"], 975.0)
+
+
+# =====================================================================
+# 7. Static Quality & Pyflakes Check across core/ modules
 # =====================================================================
 class TestStaticQualityCore(unittest.TestCase):
     def test_pyflakes_all_core_files(self):

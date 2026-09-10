@@ -67,8 +67,12 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         m_checks.append((c_now - low_52w) / (low_52w + 1e-9) >= 0.25)
         m_checks.append((high_52w - c_now) / (high_52w + 1e-9) <= 0.25)
         m_passed = sum(m_checks)
+        m_status = "Stage 2 主升段" if m_passed >= 6 else ("符合多數樣板" if m_passed >= 4 else "弱勢整理型態")
+        m_color = "#4ade80" if m_passed >= 5 else ("#fbbf24" if m_passed >= 4 else "#f87171")
     else:
-        m_passed = 4
+        m_passed = None
+        m_status = "資料不足（無法評估）"
+        m_color = "#94a3b8"
 
     # 2. CANSLIM 成長動能評分
     rev_yoy = fundamentals.get("revenue_yoy") if fundamentals else None
@@ -136,10 +140,11 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         chip_color = "#fbbf24"
 
     # 綜合評分與操盤定位
-    total_score = (m_passed / 7.0) * 35 + (max(0, c_score) / 5.0) * 25 + (30 if "多" in bpa_zh else (15 if "整理" in bpa_zh or "震盪" in bpa_zh else 5)) + (10 if inst_5d > 0 else 0)
+    minervini_score = (m_passed / 7.0) * 35 if m_passed is not None else 0.0
+    total_score = minervini_score + (max(0, c_score) / 5.0) * 25 + (30 if "多" in bpa_zh else (15 if "整理" in bpa_zh or "震盪" in bpa_zh else 5)) + (10 if inst_5d > 0 else 0)
     total_score = int(round(total_score))
 
-    if total_score >= 80 and m_passed >= 5:
+    if total_score >= 80 and (m_passed is not None and m_passed >= 5):
         badge = "⭐⭐⭐⭐⭐ 頂級飆股體質（Stage 2 主升）"
         b_color = "#4ade80"
         b_bg = "rgba(34, 197, 94, 0.2)"
@@ -220,8 +225,8 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         "action_border": action_border,
         "action_sub": action_sub,
         "minervini_passed": m_passed,
-        "minervini_status": "Stage 2 主升段" if m_passed >= 6 else ("符合多數樣板" if m_passed >= 4 else "弱勢整理型態"),
-        "minervini_color": "#4ade80" if m_passed >= 5 else ("#fbbf24" if m_passed >= 4 else "#f87171"),
+        "minervini_status": m_status,
+        "minervini_color": m_color,
         "canslim_grade": canslim_grade,
         "canslim_sub": canslim_sub,
         "canslim_color": c_color,

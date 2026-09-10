@@ -123,6 +123,12 @@ $$Slope_{MA20} = \frac{MA20_t - MA20_{t-4}}{MA20_{t-4}},\quad Slope_{MA60} = \fr
    - 條件：$Close < EMA20$（斜率不符強空頭）。
 
 ### 5.2 交易形態與順勢濾網
+> [!NOTE]
+> **量化計數規格聲明（Quantitative State Machine Specification）**：  
+> 本系統之 High 1/2/3 (H1/H2/H3) 與 Low 1/2/3 (L1/L2/L3) 為量化演算法專用之「**10-Bar 滾動回撤波段計數器（Swing-Window Pullback Classifier）**」。
+> - **核心演算法**：以 10 根 K 線滾動窗口為基準，價格未創新高且出現回撤（$High_t < High_{t-1}$）後首度創前高標記為 H1；同波回撤再度創高標記為 H2；第三度標記為 H3（楔形旗形）。若價格刷新 10 根新高則重置計數為 0。
+> - **觀念釐清**：此為 100% 離散確定性狀態機，旨在消除人工主觀性、精確捕捉回撤測試支撐買點，**非交易室人工肉眼或 tick-by-tick 逐筆微觀計數**。
+
 - **High 1 / High 2 / High 3 (H1/H2/H3)**：
   - 多頭回檔後創前根高點之推進棒。
   - **進場濾網**：僅在 `AIL` 狀態、或 `Trading Range` 且價格處於布林下半部（$Close \le Mid_{BB}$）時方為有效進場點。
@@ -148,6 +154,7 @@ $$Slope_{MA20} = \frac{MA20_t - MA20_{t-4}}{MA20_{t-4}},\quad Slope_{MA60} = \fr
 
 ### 6.1 評分權重矩陣（總分 0 ~ 100 分）
 $$TotalScore = \operatorname{round}\left( \frac{M_{passed}}{7} \times 35 + \frac{\max(0, C_{score})}{5} \times 25 + Score_{BPA} + Score_{Inst} \right)$$
+*(若歷史資料不足 200 交易日，$M_{passed} = \text{None}$，Minervini 得分記 0 分，狀態標註「資料不足（無法評估）」)*
 
 1. **Minervini 7 條件趨勢樣板（滿分 35 分）**：
    - (1) $Close > MA150 \land Close > MA200$
@@ -155,13 +162,16 @@ $$TotalScore = \operatorname{round}\left( \frac{M_{passed}}{7} \times 35 + \frac
    - (3) $MA200 \ge MA200_{22d} \times 0.995$（年線持平或走揚）
    - (4) $MA50 > MA150 \land MA50 > MA200$
    - (5) $Close > MA50$
-   - (6) 距離 52 週最低點 $\ge +25\%$
-   - (7) 距離 52 週最高點 $\le 25\%$
+   - (6) $\frac{Close - Low_{52w}}{Low_{52w}} \ge 25\%$（高出 52 週低點 25% 以上）
+   - (7) $\frac{High_{52w} - Close}{High_{52w}} \le 25\%$（位於 52 週高點 25% 以內）
+   - **資料不足嚴格防護**：若資料不足無法計算 200MA 與 52 週高低點，回退為 `None`，不給予假分數。
+
 2. **CANSLIM 基本面動能（滿分 25 分）**：
    - 營收 YoY $\ge +20\%$ (+2 分)，$\ge 0\%$ (+1 分)，$< 0\%$ (-1 分)
    - 近四季 EPS（TTM）$> 0$ (+2 分)
    - 毛利率 $\ge 30\%$ (+1 分)
    - 累積得分 $C_{score}$，折算 $\frac{\max(0, C_{score})}{5} \times 25$。
+
 3. **BPA 價格行為（滿分 30 分）**：
    - 若處於多頭（含 AIL）：**30 分**
    - 若處於盤整 / 震盪：**15 分**

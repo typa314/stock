@@ -21,7 +21,7 @@ from datetime import datetime, timezone, timedelta
 TW_TZ = timezone(timedelta(hours=8))
 
 try:
-    from kline import analyze_stock, analyze_stock_5m, get_info, get_tw_tick, __version__
+    from kline import analyze_stock, analyze_stock_5m, get_info, get_tw_tick, compute_risk_stop, __version__
 except Exception as e:
     import streamlit as st
     st.error(f"❌ 模組載入錯誤 (Import Error): {e}")
@@ -143,51 +143,59 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── 2. 快取分析結果（避免重複計算，手機切換極速流暢） ───────────
-# 平日盤中 (09:00~13:35，時區嚴格鎖定台股 GMT+8) 設為 20 秒極速更新即時行情，盤後維持 300 秒以省頻寬
-def _get_cache_ttl():
+def _get_market_time_bucket(trading_step=20, non_trading_step=300) -> int:
+    """
+    產生時間桶 (time-bucket) 作為快取鍵：
+      - 平日盤中 (09:00~13:35，嚴格鎖定台股 GMT+8) 設為 20 秒極速更新即時行情
+      - 盤後與假日維持 300 秒以省頻寬
+    """
     now = datetime.now(TW_TZ)
-    if now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) <= (13, 35):
-        return 20
-    return 300
+    is_trading = (now.weekday() < 5 and (9, 0) <= (now.hour, now.minute) <= (13, 35))
+    step = trading_step if is_trading else non_trading_step
+    return int(now.timestamp() // step)
 
-@st.cache_data(ttl=_get_cache_ttl(), show_spinner=False)
-def get_cached_analysis(ticker, months, cost, version=__version__):
+@st.cache_data(ttl=600, show_spinner=False)
+def get_cached_analysis(ticker, months, cost, time_bucket=0, version=__version__):
     return analyze_stock(ticker=ticker, months=12, display_months=months, cost=cost, generate_html=False, print_report=False)
 
-@st.cache_data(ttl=60, show_spinner=False)
-def get_cached_5m(ticker, days=3, version=__version__):
+@st.cache_data(ttl=600, show_spinner=False)
+def get_cached_5m(ticker, days=3, time_bucket=0, version=__version__):
     return analyze_stock_5m(ticker=ticker, days=days)
 
-def render_cost_stop_loss_card(cost_price, current_price):
-    """現貨強制停損與持股風控監控卡（依據 O'Neil / Minervini -7%~-8% 資本保護鐵律）"""
+def render_cost_stop_loss_card(cost_price, current_price, ticker=None, market="tse", analysis_res=None):
+    """現貨持股風控與浮虧警戒監控卡（整合 3×ATR20 自適應波動度與寬幅防守線）"""
     if not cost_price or cost_price <= 0:
         return
     c_p = float(cost_price)
     diff = current_price - c_p
     pnl_pct = (diff / c_p) * 100
     pnl_1k = diff * 1000
-    stop_7 = round(c_p * 0.93, 2)
-    stop_8 = round(c_p * 0.92, 2)
-    buf_7 = current_price - stop_7
 
-    if current_price <= stop_8:
-        tag = "🚨 觸發極限強制停損"
+    # 統一由 core.indicators.compute_risk_stop 計算自適應警戒線
+    stop_alert, stop_pct, stop_basis = compute_risk_stop(
+        ticker or "2330", c_p, market=market, analysis_res=analysis_res
+    )
+    stop_defense = round(c_p * (1 - stop_pct - 0.03), 2)
+    buf_alert = current_price - stop_alert
+
+    if current_price <= stop_defense:
+        tag = "🚨 觸發寬幅防守停損"
         card_color = "#ef4444"
         card_bg = "rgba(239, 68, 68, 0.2)"
         pnl_color = "#ef4444"
-        advice = "虧損已達 -8% 極限保命線，觸發 Minervini 資本保護鐵律，強烈建議無條件市價全出，嚴防虧損失控！"
-    elif current_price <= stop_7:
-        tag = "⚠️ 觸發強制停損警戒"
+        advice = f"虧損已達 -{(stop_pct + 0.03)*100:.1f}% 寬幅防守底線，強烈建議市價停損離場，嚴防虧損失控！"
+    elif current_price <= stop_alert:
+        tag = "⚠️ 觸發浮虧警戒通知"
         card_color = "#f59e0b"
         card_bg = "rgba(245, 158, 11, 0.2)"
         pnl_color = "#f59e0b"
-        advice = "虧損已觸及 -7% 警戒線，建議立即分批減碼或預掛停損單，切勿凹單加碼。"
+        advice = f"虧損已觸及 -{stop_pct*100:.1f}% 警戒線（依據 {stop_basis}），建議檢視持股理由並預作減碼準備。"
     elif diff < 0:
         tag = "🟡 浮動虧損防守中"
         card_color = "#fbbf24"
         card_bg = "rgba(245, 158, 11, 0.15)"
         pnl_color = "#fbbf24"
-        advice = f"距 -7% 強制停損尚有 {buf_7:.2f} 元緩衝，緊盯技術防守位，未觸及前按紀律持有。"
+        advice = f"距浮虧警戒 (-{stop_pct*100:.1f}%) 尚有 {buf_alert:.2f} 元緩衝，緊盯技術防守位，按紀律持有。"
     else:
         tag = "🟢 獲利持有中"
         card_color = "#22c55e"
@@ -198,7 +206,7 @@ def render_cost_stop_loss_card(cost_price, current_price):
     st.markdown(f"""
     <div class="dashboard-card" style="border-left: 4px solid {card_color}; margin-bottom: 12px;">
         <div class="card-header">
-            <span class="card-title">🎯 現貨持股風控與強制停損監控</span>
+            <span class="card-title">🎯 現貨持股風控與浮虧警戒監控</span>
             <span class="pill-badge" style="background: {card_bg}; color: {card_color}; font-weight: 700;">{tag}</span>
         </div>
         <div class="grid-4">
@@ -210,17 +218,17 @@ def render_cost_stop_loss_card(cost_price, current_price):
             <div class="grid-cell">
                 <div class="cell-label">浮動損益幅度</div>
                 <div class="cell-val" style="color: {pnl_color};">{pnl_pct:+.2f}%</div>
-                <div class="cell-sub">{"獲利鎖定中" if diff >= 0 else f"距停損剩 {buf_7:.2f} 元"}</div>
+                <div class="cell-sub">{"獲利鎖定中" if diff >= 0 else f"距警戒剩 {buf_alert:.2f} 元"}</div>
             </div>
             <div class="grid-cell">
-                <div class="cell-label">強制停損 (-7% 警戒)</div>
-                <div class="cell-val" style="color: #f59e0b;">{stop_7:.2f} 元</div>
-                <div class="cell-sub">觸及啟動減碼</div>
+                <div class="cell-label">浮虧警戒 (-{stop_pct*100:.1f}%)</div>
+                <div class="cell-val" style="color: #f59e0b;">{stop_alert:.2f} 元</div>
+                <div class="cell-sub">{stop_basis}</div>
             </div>
             <div class="grid-cell">
-                <div class="cell-label">極限保命 (-8% 斷頭)</div>
-                <div class="cell-val" style="color: #ef4444;">{stop_8:.2f} 元</div>
-                <div class="cell-sub">無條件市價全出</div>
+                <div class="cell-label">寬幅防守 (-{(stop_pct+0.03)*100:.1f}%)</div>
+                <div class="cell-val" style="color: #ef4444;">{stop_defense:.2f} 元</div>
+                <div class="cell-sub">防守底線 (嚴格風控)</div>
             </div>
         </div>
         <div style="font-size: 0.82rem; color: #cbd5e1; background: rgba(0,0,0,0.25); padding: 8px 12px; border-radius: 6px; margin-top: 6px; border-left: 3px solid {card_color};">
@@ -313,7 +321,7 @@ if timeframe_mode == "⚡ 5分K（日內當沖）":
     # ── 4. 5分K 日內價格行為分析 ──────────────────────────────
     try:
         with st.spinner(f"正在分析 {current_ticker} 5 分鐘 K 線與日內轉折..."):
-            res5 = get_cached_5m(current_ticker, days=3, version=__version__)
+            res5 = get_cached_5m(current_ticker, days=3, time_bucket=_get_market_time_bucket(30, 300), version=__version__)
     except Exception as e:
         st.error(f"⚠️ 無法取得股票代號【{current_ticker}】的 5 分鐘 K 線資料：{e}")
         st.stop()
@@ -342,8 +350,8 @@ if timeframe_mode == "⚡ 5分K（日內當沖）":
     </div>
     """, unsafe_allow_html=True)
 
-    # 現貨強制停損與持股風控監控卡（當使用者有輸入持有成本時顯示）
-    render_cost_stop_loss_card(cost_val, res5["close_now"])
+    # 現貨持股風控與浮虧警戒監控卡（當使用者有輸入持有成本時顯示）
+    render_cost_stop_loss_card(cost_val, res5["close_now"], ticker=current_ticker, market=res5["market"])
 
     # 4 關鍵 5分K 指標橫幅
     k1, k2, k3, k4 = st.columns(4)
@@ -460,7 +468,7 @@ if timeframe_mode == "⚡ 5分K（日內當沖）":
 # ── 4. 日K 執行研判與展示（原既有邏輯） ────────────────────
 try:
     with st.spinner(f"正在分析 {current_ticker} 4合1 多維量化指標..."):
-        res = get_cached_analysis(current_ticker, months_opt, cost_val, version=__version__)
+        res = get_cached_analysis(current_ticker, months_opt, cost_val, time_bucket=_get_market_time_bucket(20, 300), version=__version__)
 except Exception as e:
     st.error(f"⚠️ 無法取得股票代號【{current_ticker}】的資料：{e}")
     st.stop()
@@ -565,8 +573,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 現貨強制停損與持股風控監控卡（當使用者有輸入持有成本時顯示）
-render_cost_stop_loss_card(cost_val, close_now)
+# 現貨持股風控與浮虧警戒監控卡（當使用者有輸入持有成本時顯示）
+render_cost_stop_loss_card(cost_val, close_now, ticker=current_ticker, market=res["market"], analysis_res=res)
 
 # ── 4.1 四大關鍵指標橫幅卡片 ─────────────────────────────────
 k1, k2, k3, k4 = st.columns(4)
@@ -608,18 +616,24 @@ with k3:
     """, unsafe_allow_html=True)
 
 with k4:
-    last_bar = bpa_res["last_bar_type"].split("/")[0].strip()
+    total_vol = float(df['volume'].iloc[-1])
+    vol_ratio = total_vol / (df['vol_ma'].iloc[-1] + 1e-9)
+    vol_tag = "大量增溫" if vol_ratio >= 1.5 else ("量縮整理" if vol_ratio <= 0.7 else "量能常態")
+    vol_color = "#4ade80" if vol_ratio >= 1.5 else ("#f87171" if vol_ratio <= 0.7 else "#94a3b8")
+
     st.markdown(f"""
     <div class="metric-card">
-        <div class="metric-title">當前 K 線結構</div>
-        <div class="metric-value" style="font-size: 1.05rem;">{last_bar}</div>
-        <div class="metric-sub">{res['trend_stage'].split('（')[0]}</div>
+        <div class="metric-title">成交量能特徵</div>
+        <div class="metric-value" style="color: {vol_color};">{vol_ratio:.1f} 倍均量</div>
+        <div class="metric-sub">{vol_tag} ｜ {total_vol:,.0f} 張</div>
     </div>
     """, unsafe_allow_html=True)
 
 # ── 4.2 巨星多維綜合評級圖卡（Minervini + CANSLIM + BPA + 法人量價） ─────────
 comp = res.get("composite_rating", {})
 if comp:
+    m_passed_val = comp.get("minervini_passed")
+    m_passed_display = f"{m_passed_val}/7 項" if m_passed_val is not None else "--/7 項"
     st.markdown(f"""
     <div class="dashboard-card" style="border-left: 4px solid {comp.get('badge_color', '#38bdf8')};">
         <div class="card-header">
@@ -632,7 +646,7 @@ if comp:
         <div class="grid-4">
             <div class="grid-cell">
                 <div class="cell-label">趨勢樣板 (Minervini)</div>
-                <div class="cell-val" style="color: {comp.get('minervini_color', '#cbd5e1')};">{comp.get('minervini_passed', 0)}/7 項</div>
+                <div class="cell-val" style="color: {comp.get('minervini_color', '#cbd5e1')};">{m_passed_display}</div>
                 <div class="cell-sub">{comp.get('minervini_status', '')}</div>
             </div>
             <div class="grid-cell">

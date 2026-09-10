@@ -493,7 +493,8 @@ def build_dashboard_stock_flex(
     rating_short = rating_badge.split("（")[0] if rating_badge else "量化平穩"
 
     # 巨星多維 4 格
-    m_passed = comp.get("minervini_passed", 5)
+    m_passed = comp.get("minervini_passed")
+    m_passed_txt = f"{m_passed}/7 項" if m_passed is not None else "--/7 項"
     m_status = comp.get("minervini_status", "符合樣板")
     m_color = comp.get("minervini_color", "#4ade80")
 
@@ -770,7 +771,7 @@ def build_dashboard_stock_flex(
                             "flex": 1,
                             "contents": [
                                 {"type": "text", "text": "趨勢樣板 (Minervini)", "size": "xxs", "color": "#94a3b8"},
-                                {"type": "text", "text": f"{m_passed}/7 項", "weight": "bold", "size": "sm", "color": m_color, "margin": "xs"},
+                                {"type": "text", "text": m_passed_txt, "weight": "bold", "size": "sm", "color": m_color, "margin": "xs"},
                                 {"type": "text", "text": m_status, "size": "xxs", "color": "#64748b", "margin": "xs"}
                             ]
                         },

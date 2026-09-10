@@ -150,7 +150,23 @@ def fetch_realtime_bar(ticker, market):
             price = float(meta["regularMarketPrice"])
             high_p = float(meta.get("regularMarketDayHigh", price))
             low_p  = float(meta.get("regularMarketDayLow", price))
-            open_p = float(meta.get("chartPreviousClose", price))
+
+            # 開盤價獲取邏輯：優先從 meta 的 regularMarketOpen / regularMarketDayOpen 讀取，
+            # 若無則從 1m 分時序列 quote.open 讀取當日第一筆有效開盤價，
+            # 若仍無（如尚未撮合之盤前）則退回最新成交價 price，絕不可取 chartPreviousClose（昨收價）！
+            open_p = None
+            if meta.get("regularMarketOpen") is not None:
+                open_p = float(meta["regularMarketOpen"])
+            elif meta.get("regularMarketDayOpen") is not None:
+                open_p = float(meta["regularMarketDayOpen"])
+            else:
+                quote = chart[0].get("indicators", {}).get("quote", [{}])[0]
+                opens = [x for x in quote.get("open", []) if x is not None]
+                if opens:
+                    open_p = float(opens[0])
+                else:
+                    open_p = price
+
             vol    = float(meta.get("regularMarketVolume", 0)) / 1000.0
             return {
                 "date": pd.Timestamp.now(tz=TW_TZ).normalize().tz_localize(None),

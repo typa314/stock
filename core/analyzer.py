@@ -26,125 +26,35 @@ from core.rating import get_rating_badge, evaluate_composite_rating
 from core.charting import build_stock_chart
 
 
-def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=True, print_report=True, quick_mode=False, display_months=None, **kwargs):
-    ticker = str(ticker).strip()
-    market, auto_name = get_info(ticker)
-    stock_name = custom_name if custom_name else auto_name
+def classify_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    對價格序列進行逐根 K 線形態與 Al Brooks 價格行為學（BPA）特徵識別。
 
-    # 確保技術指標載入充足歷史資料（固定至少 12 個月以避免 MA60/MACD/RSI 計算失真）
-    fetch_months = max(months, 12) if months else 12
-    # 若未指定 display_months，則預設 display_months 為 1（圖表只顯示近 1 個月保持清爽）
-    if display_months is None:
-        display_months = months if (months and months <= 6) else 1
-
-    if print_report:
-        print(f"[INFO] {ticker}（{stock_name}）| {'上市(TSE)' if market=='tse' else '上櫃(OTC)'}")
-        print(f"下載近 {fetch_months} 個月歷史資料運算指標（圖表呈現近 {display_months} 個月）...")
-
-    records = []
-    if market == "tse":
-        records = fetch_twse(ticker, fetch_months)
-        if not records:
-            if print_report:
-                print(f"[WARN] TWSE 官方 API 未能取得 {ticker} 資料，啟動 yfinance (.TW) 備援...")
-            records = fetch_from_yfinance(f"{ticker}.TW", fetch_months)
-    else:
-        records = fetch_otc(ticker, fetch_months)
-        if not records:
-            if print_report:
-                print(f"[WARN] yfinance (.TWO) 未能取得 {ticker} 資料，嘗試 (.TW)...")
-            records = fetch_from_yfinance(f"{ticker}.TW", fetch_months)
-
-    # 交叉最後備援：若仍無資料，嘗試對向市場代號
-    if not records:
-        alt_sym = f"{ticker}.TWO" if market == "tse" else f"{ticker}.TW"
-        records = fetch_from_yfinance(alt_sym, fetch_months)
-        if records:
-            market = "otc" if alt_sym.endswith(".TWO") else "tse"
-
-    if not records:
-        raise ValueError(f"查無 {ticker} 資料，請確認代號是否正確。")
-
-    df = pd.DataFrame(records)
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.dropna().sort_values("date").drop_duplicates("date").reset_index(drop=True)
-    if print_report:
-        print(f"[OK] 取得 {len(df)} 筆，{df['date'].iloc[0].date()} ~ {df['date'].iloc[-1].date()}")
-
-    realtime_info = None
-    rt_row = fetch_realtime_bar(ticker, market)
-    if rt_row:
-        if rt_row["date"] > df["date"].iloc[-1]:
-            df = pd.concat([df, pd.DataFrame([{
-                "date": rt_row["date"],
-                "open": rt_row["open"],
-                "high": rt_row["high"],
-                "low": rt_row["low"],
-                "close": rt_row["close"],
-                "volume": rt_row["volume"]
-            }])], ignore_index=True)
-            realtime_info = rt_row
-            if print_report:
-                tag = f"盤中即時 {rt_row['time']}" if rt_row["is_realtime"] else "收盤定盤"
-                print(f"[OK] 補上今日最新行情（{tag}，來自 {rt_row['source']}）：{rt_row['close']:.2f} 元 ｜ 成交量 {rt_row['volume']:,.0f} 張")
-        elif rt_row["date"] == df["date"].iloc[-1] and rt_row.get("is_realtime"):
-            idx = len(df) - 1
-            df.loc[idx, "close"] = rt_row["close"]
-            df.loc[idx, "high"] = max(df.loc[idx, "high"], rt_row["high"])
-            df.loc[idx, "low"] = min(df.loc[idx, "low"], rt_row["low"])
-            df.loc[idx, "volume"] = rt_row["volume"]
-            realtime_info = rt_row
-            if print_report:
-                print(f"[OK] 動態更新今日盤中即時行情（{rt_row['time']}，來自 {rt_row['source']}）：{rt_row['close']:.2f} 元 ｜ 成交量 {rt_row['volume']:,.0f} 張")
-
-    # ── 4. 技術指標計算 ───────────────────────────────────────────
-    # 移動平均線
-    for n in MA_DAYS:
-        df[f"ma{n}"] = df["close"].rolling(n, min_periods=min(n, 20)).mean()
-    df["vol_ma"] = df["volume"].rolling(VOL_MA, min_periods=min(VOL_MA, 5)).mean()
-
-    # 20 EMA（Al Brooks 唯一指定核心基準線）
-    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
-
-    # RSI(14)
-    _delta    = df["close"].diff()
-    _gain     = _delta.clip(lower=0)
-    _loss     = -_delta.clip(upper=0)
-    _avg_gain = _gain.ewm(com=13, adjust=False).mean()
-    _avg_loss = _loss.ewm(com=13, adjust=False).mean()
-    df["rsi"] = 100 - (100 / (1 + _avg_gain / (_avg_loss + 1e-9)))
-
-    # MACD(12, 26, 9)
-    _ema12 = df["close"].ewm(span=12, adjust=False).mean()
-    _ema26 = df["close"].ewm(span=26, adjust=False).mean()
-    df["macd"]        = _ema12 - _ema26
-    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
-    df["macd_hist"]   = df["macd"] - df["macd_signal"]
-
-    # KD(9, 3, 3)
-    _low9  = df["low"].rolling(9, min_periods=1).min()
-    _high9 = df["high"].rolling(9, min_periods=1).max()
-    df["kd_rsv"] = (df["close"] - _low9) / (_high9 - _low9 + 1e-9) * 100
-    df["kd_k"]   = df["kd_rsv"].ewm(com=2, adjust=False).mean()
-    df["kd_d"]   = df["kd_k"].ewm(com=2, adjust=False).mean()
-
-    # Bollinger Bands(20, ±2σ)
-    df["bb_mid"]   = df["close"].rolling(20, min_periods=1).mean()
-    _bb_std        = df["close"].rolling(20, min_periods=1).std(ddof=0).fillna(0)
-    df["bb_upper"] = df["bb_mid"] + 2 * _bb_std
-    df["bb_lower"] = df["bb_mid"] - 2 * _bb_std
-    df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / (df["bb_mid"] + 1e-9) * 100
-
-    # ── 5. Al Brooks 價格行為學（BPA）形態識別與量價特徵 ──────────────
+    規格說明：
+      - 趨勢棒 (Trend Bars)：實體佔比 >= 50%，收於高點或低點 25% 範圍內。
+      - 反轉棒 (Reversal Bars)：影線拒絕 >= 35%，收盤朝有利方向 (>= 60% / <= 40%)。
+      - 孕線 (i)、雙重孕線 (ii 突破模式)、外部棒 (o)、十字星 (Doji)。
+      - 多空推動計數 (H1/H2/H3, L1/L2/L3)：量化系統採用之「10-Bar 滾動回撤波段計數器（Swing-Window Pullback Classifier）」，
+        將 Al Brooks 的多空推動與回撤測試原則轉化為確定性離散狀態機，非人工肉眼之 tick-by-tick 微觀計數。
+      - 20 EMA Pullback 與 Gap Bar 缺口棒。
+      - 窄幅震盪帶 (TTR / Barbwire 鐵絲網)。
+      - Wyckoff 放量突破、量縮回踩、窒息量 (Dryup)、高檔換手滯漲 (Churn)。
+      - 多空吞噬 (Engulfing)、鎚頭線 (Hammer)、流星線 (Shooting Star)。
+      - RSI / MACD 頂底背離。
+    """
+    df = df.copy()
     close_arr = df["close"].values.astype(float)
     open_arr  = df["open"].values.astype(float)
     high_arr  = df["high"].values.astype(float)
     low_arr   = df["low"].values.astype(float)
-    vol_arr   = df["volume"].values.astype(float)
-    vol_ma_arr= df["vol_ma"].values.astype(float)
-    ma5_arr   = df["ma5"].values.astype(float)
-    ema20_arr = df["ema20"].values.astype(float)
     N         = len(df)
+
+    vol_arr    = df["volume"].values.astype(float) if "volume" in df.columns else np.zeros(N, dtype=float)
+    vol_ma_arr = df["vol_ma"].values.astype(float) if "vol_ma" in df.columns else (
+        df["volume"].rolling(5, min_periods=1).mean().values.astype(float) if "volume" in df.columns else np.ones(N, dtype=float)
+    )
+    ma5_arr    = df["ma5"].values.astype(float) if "ma5" in df.columns else df["close"].rolling(5, min_periods=1).mean().values.astype(float)
+    ema20_arr  = df["ema20"].values.astype(float) if "ema20" in df.columns else df["close"].ewm(span=20, adjust=False).mean().values.astype(float)
 
     # K 線實體與上下影線
     body_arr     = np.abs(close_arr - open_arr)
@@ -297,6 +207,9 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
             if (overlap_range / avg_range > 0.45) and (np.mean(body_arr[i-2:i+1] / candle_range[i-2:i+1]) < 0.40):
                 bpa_ttr[i] = True
     df["bpa_ttr"]        = bpa_ttr
+    df["inside_bar"]     = inside_bar
+    df["outside_bar"]    = outside_bar
+    df["doji_bar"]       = doji_bar
     df["double_inside"]  = double_inside
     df["bull_rev_bar"]   = bull_rev_bar
     df["bear_rev_bar"]   = bear_rev_bar
@@ -324,8 +237,7 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
     star   = (upper_shadow >= 2.0 * body_arr) & (lower_shadow <= 0.15 * candle_range)
 
     # 指標頂底背離
-    rsi_arr  = df["rsi"].values.astype(float)
-    macd_arr = df["macd"].values.astype(float)
+    rsi_arr  = df["rsi"].values.astype(float) if "rsi" in df.columns else np.zeros(N, dtype=float)
     bull_div = np.zeros(N, dtype=bool)
     bear_div = np.zeros(N, dtype=bool)
     for i in range(15, N):
@@ -346,6 +258,121 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
     df["star"]        = star
     df["bull_div"]    = bull_div
     df["bear_div"]    = bear_div
+
+    return df
+
+
+def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=True, print_report=True, quick_mode=False, display_months=None, **kwargs):
+    ticker = str(ticker).strip()
+    market, auto_name = get_info(ticker)
+    stock_name = custom_name if custom_name else auto_name
+
+    # 確保技術指標載入充足歷史資料（固定至少 12 個月以避免 MA60/MACD/RSI 計算失真）
+    fetch_months = max(months, 12) if months else 12
+    # 若未指定 display_months，則預設 display_months 為 1（圖表只顯示近 1 個月保持清爽）
+    if display_months is None:
+        display_months = months if (months and months <= 6) else 1
+
+    if print_report:
+        print(f"[INFO] {ticker}（{stock_name}）| {'上市(TSE)' if market=='tse' else '上櫃(OTC)'}")
+        print(f"下載近 {fetch_months} 個月歷史資料運算指標（圖表呈現近 {display_months} 個月）...")
+
+    records = []
+    if market == "tse":
+        records = fetch_twse(ticker, fetch_months)
+        if not records:
+            if print_report:
+                print(f"[WARN] TWSE 官方 API 未能取得 {ticker} 資料，啟動 yfinance (.TW) 備援...")
+            records = fetch_from_yfinance(f"{ticker}.TW", fetch_months)
+    else:
+        records = fetch_otc(ticker, fetch_months)
+        if not records:
+            if print_report:
+                print(f"[WARN] yfinance (.TWO) 未能取得 {ticker} 資料，嘗試 (.TW)...")
+            records = fetch_from_yfinance(f"{ticker}.TW", fetch_months)
+
+    # 交叉最後備援：若仍無資料，嘗試對向市場代號
+    if not records:
+        alt_sym = f"{ticker}.TWO" if market == "tse" else f"{ticker}.TW"
+        records = fetch_from_yfinance(alt_sym, fetch_months)
+        if records:
+            market = "otc" if alt_sym.endswith(".TWO") else "tse"
+
+    if not records:
+        raise ValueError(f"查無 {ticker} 資料，請確認代號是否正確。")
+
+    df = pd.DataFrame(records)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.dropna().sort_values("date").drop_duplicates("date").reset_index(drop=True)
+    if print_report:
+        print(f"[OK] 取得 {len(df)} 筆，{df['date'].iloc[0].date()} ~ {df['date'].iloc[-1].date()}")
+
+    realtime_info = None
+    rt_row = fetch_realtime_bar(ticker, market)
+    if rt_row:
+        if rt_row["date"] > df["date"].iloc[-1]:
+            df = pd.concat([df, pd.DataFrame([{
+                "date": rt_row["date"],
+                "open": rt_row["open"],
+                "high": rt_row["high"],
+                "low": rt_row["low"],
+                "close": rt_row["close"],
+                "volume": rt_row["volume"]
+            }])], ignore_index=True)
+            realtime_info = rt_row
+            if print_report:
+                tag = f"盤中即時 {rt_row['time']}" if rt_row["is_realtime"] else "收盤定盤"
+                print(f"[OK] 補上今日最新行情（{tag}，來自 {rt_row['source']}）：{rt_row['close']:.2f} 元 ｜ 成交量 {rt_row['volume']:,.0f} 張")
+        elif rt_row["date"] == df["date"].iloc[-1] and rt_row.get("is_realtime"):
+            idx = len(df) - 1
+            df.loc[idx, "close"] = rt_row["close"]
+            df.loc[idx, "high"] = max(df.loc[idx, "high"], rt_row["high"])
+            df.loc[idx, "low"] = min(df.loc[idx, "low"], rt_row["low"])
+            df.loc[idx, "volume"] = rt_row["volume"]
+            realtime_info = rt_row
+            if print_report:
+                print(f"[OK] 動態更新今日盤中即時行情（{rt_row['time']}，來自 {rt_row['source']}）：{rt_row['close']:.2f} 元 ｜ 成交量 {rt_row['volume']:,.0f} 張")
+
+    # ── 4. 技術指標計算 ───────────────────────────────────────────
+    # 移動平均線
+    for n in MA_DAYS:
+        df[f"ma{n}"] = df["close"].rolling(n, min_periods=min(n, 20)).mean()
+    df["vol_ma"] = df["volume"].rolling(VOL_MA, min_periods=min(VOL_MA, 5)).mean()
+
+    # 20 EMA（Al Brooks 唯一指定核心基準線）
+    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
+
+    # RSI(14)
+    _delta    = df["close"].diff()
+    _gain     = _delta.clip(lower=0)
+    _loss     = -_delta.clip(upper=0)
+    _avg_gain = _gain.ewm(com=13, adjust=False).mean()
+    _avg_loss = _loss.ewm(com=13, adjust=False).mean()
+    df["rsi"] = 100 - (100 / (1 + _avg_gain / (_avg_loss + 1e-9)))
+
+    # MACD(12, 26, 9)
+    _ema12 = df["close"].ewm(span=12, adjust=False).mean()
+    _ema26 = df["close"].ewm(span=26, adjust=False).mean()
+    df["macd"]        = _ema12 - _ema26
+    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
+    df["macd_hist"]   = df["macd"] - df["macd_signal"]
+
+    # KD(9, 3, 3)
+    _low9  = df["low"].rolling(9, min_periods=1).min()
+    _high9 = df["high"].rolling(9, min_periods=1).max()
+    df["kd_rsv"] = (df["close"] - _low9) / (_high9 - _low9 + 1e-9) * 100
+    df["kd_k"]   = df["kd_rsv"].ewm(com=2, adjust=False).mean()
+    df["kd_d"]   = df["kd_k"].ewm(com=2, adjust=False).mean()
+
+    # Bollinger Bands(20, ±2σ)
+    df["bb_mid"]   = df["close"].rolling(20, min_periods=1).mean()
+    _bb_std        = df["close"].rolling(20, min_periods=1).std(ddof=0).fillna(0)
+    df["bb_upper"] = df["bb_mid"] + 2 * _bb_std
+    df["bb_lower"] = df["bb_mid"] - 2 * _bb_std
+    df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / (df["bb_mid"] + 1e-9) * 100
+
+    # ── 5. Al Brooks 價格行為學（BPA）形態識別與量價特徵 ──────────────
+    df = classify_candlestick_patterns(df)
 
     if quick_mode:
         inst_df = pd.DataFrame()

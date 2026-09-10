@@ -558,6 +558,42 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 
 > **分支推播紀錄**：依據使用者明確指示，已建立測試分支 `test/architecture-and-coverage` 並推送至遠端 `origin/test/architecture-and-coverage` (commit: `6e02110`)。主分支 `main` 保持乾淨獨立不受影響。
 
+---
+
+## Session L：Code Review 實質邏輯缺陷修復與測試對齊 (2026-09-10 11:55)
+
+### A. 問題根因與修復目標
+針對使用者審查 `test/architecture-and-coverage` 分支所提出的 5 大關鍵缺陷與 1 項架構觀念進行深度根因修復：
+1. **🔴 Yahoo 即時開盤價誤用 (`core/data_fetch.py`)**：原程式取用 `chartPreviousClose` 作為今日 `open`，實為昨收價，導致今日 K 線實體與上下影線完全失真。改為優先提取 `regularMarketOpen`，次之自 1m 分時序列首筆 `quote.open[0]` 解析今日第一筆成交價，盤前無分時則退回最新成交價，徹底杜絕昨收價混淆。
+2. **🔴 K 線形態識別未測生產程式碼 (`core/analyzer.py` & `test_analyzer_pipeline.py`)**：原測試函式在測試體內部自行重寫公式。將 `core/analyzer.py` 中 200 行形態識別邏輯抽取為獨立、高內聚之純函式 `classify_candlestick_patterns(df)`，於 `analyze_stock` 中調用，並讓單元測試直接呼叫生產函式進行斷言，100% 驗證真實生產程式碼。
+3. **🟠 Web UI (`app.py`) 風控邏輯與 `compute_risk_stop()` 衝突**：移除 `app.py` 中殘留的硬寫 `cost * 0.93` / `cost * 0.92` 與已廢除的「固定 -7% 鐵律」文案，全面整合 `compute_risk_stop()`，動態計算 3×ATR20 浮虧警戒線與寬幅防守線，與 LINE Bot、巡邏 Worker 風控 100% 同步。
+4. **🟠 Streamlit 動態快取 TTL 失效 (`app.py`)**：裝飾器 `@st.cache_data(ttl=_get_cache_ttl())` 僅於模組 import 時評估一次。改為引入動態時間桶 `_get_market_time_bucket(20, 300)` 作為快取鍵參數，盤中 20 秒自動切換，盤後 300 秒切換，裝飾器配置固定 TTL 清理記憶體。
+5. **🟡 Minervini 資料不足虛假 4/7 pass (`core/rating.py`)**：資料少於 200 根且長期補抓失敗時，原程式預設 `m_passed = 4`（虛假送分 20 分）。改為 `m_passed = None`、狀態標記「資料不足（無法評估）」、灰字提示，Minervini 得分記 0 分，UI 顯示 `--/7 項`，避免虛假主升段誤判。
+6. **🟡 BPA H1/H2/H3 命名與觀念釐清 (`CORE_STRATEGY_SPEC.md` & `core/analyzer.py`)**：於規格書與代碼 docstring 明確標註此為量化「10-Bar 滾動回撤波段計數器（Swing-Window Pullback Classifier）」確定性狀態機，消除與人工逐筆 tick-by-tick 微觀計數之混淆。
+
+### B. 修改檔案與改動清單
+
+| 檔案 | 改動內容 |
+|---|---|
+| [`core/data_fetch.py`](file:///F:/stock/core/data_fetch.py) | • 修復 Yahoo 即時開盤價：優先自 `regularMarketOpen` / `quote.open[0]` 解析，不取 `chartPreviousClose`。 |
+| [`core/analyzer.py`](file:///F:/stock/core/analyzer.py) | • 抽取 `classify_candlestick_patterns(df)` 純函式供外部與測試直接調用；`analyze_stock` 簡化呼叫它。 |
+| [`kline.py`](file:///F:/stock/kline.py) | • Facade 導出 `classify_candlestick_patterns`。 |
+| [`app.py`](file:///F:/stock/app.py) | • 導入 `_get_market_time_bucket` 解決 Streamlit 動態 TTL 問題。<br>• `render_cost_stop_loss_card` 接入 `compute_risk_stop()` 自適應風控。<br>• Minervini 評級卡 None 安全顯示 `--/7 項`。 |
+| [`core/rating.py`](file:///F:/stock/core/rating.py) | • Minervini 資料不足時回退為 `m_passed = None` 與「資料不足（無法評估）」，Minervini 記 0 分，避免 TypeError。 |
+| [`bot_flex.py`](file:///F:/stock/bot_flex.py) | • Minervini Bubble 支援 `m_passed is None`，安全顯示 `--/7 項`。 |
+| [`CORE_STRATEGY_SPEC.md`](file:///F:/stock/CORE_STRATEGY_SPEC.md) | • 明確補充 H1/H2/H3 10-Bar 滾動回撤波段計數器量化定義，以及 Minervini 資料不足防護規格。 |
+| [`test_analyzer_pipeline.py`](file:///F:/stock/test_analyzer_pipeline.py) | • 重構 `TestBarPatternRecognition`，直接呼叫生產函式 `classify_candlestick_patterns(df)`。 |
+| [`test_core_strategies.py`](file:///F:/stock/test_core_strategies.py) | • 新增 Minervini 資料不足 fallback 測試與 Yahoo realtime open 提取測試（測試總數增至 29 項）。 |
+
+### C. 驗證結果
+
+| 測試套件 | 執行命令 | 結果 | 說明 |
+|---|---|:---:|---|
+| **全套自動化單元測試集** | `pytest test_core_strategies.py test_analyzer_pipeline.py test_bot_db_isolated.py test_command_handlers.py test_kline_logic.py -v` | **62 / 62 PASS (100%)** | 總耗時 3.26s，全部 62 項單元測試 100% 通過。 |
+| **LINE Bot 整合測試** | `python test_bot_logic.py` | **9 / 9 OK (100%)** | 9 項端到端整合測試全數通過。 |
+| **靜態語法與未定義變數檢查** | `pyflakes core/*.py app.py bot_flex.py` | **0 Undefined Names** | 生產代碼與介面代碼乾淨無瑕。 |
+
+
 
 
 
