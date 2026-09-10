@@ -5,7 +5,7 @@ from datetime import timezone, timedelta
 # 台股標準時區 (GMT+8)
 TW_TZ = timezone(timedelta(hours=8))
 
-__version__ = "3.0.0"
+__version__ = "3.3.0"
 
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
 MA_DAYS = [5, 20, 60]

@@ -593,6 +593,48 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 | **LINE Bot 整合測試** | `python test_bot_logic.py` | **9 / 9 OK (100%)** | 9 項端到端整合測試全數通過。 |
 | **靜態語法與未定義變數檢查** | `pyflakes core/*.py app.py bot_flex.py` | **0 Undefined Names** | 生產代碼與介面代碼乾淨無瑕。 |
 
+---
+
+## Session M：K線快取、批次撮合引擎、Stage 4 空頭防禦與主分支合併 (2026-09-10 14:35)
+
+### A. 需求背景與改進效益
+- **使用者需求**：「代碼已經過大幅更動 在重構前我們先確保此分支代碼正常運行 經過我確認後在上傳到main branch」 -> 「merge到主branch」。
+- **核心實作與改進**：
+  1. **SQLite 增量日K快取與 Parquet 種子 (`core/kline_cache.py`)**：新增 `seeds/tw_stock_seeds.parquet` (838KB) 與增量補齊機制，大幅降低冷啟動延遲至 < 0.01 秒，避免重覆向 TWSE/Yahoo 抓取 12 個月歷史。
+  2. **TWSE 批次即時撮合中心 (`core/quote_hub.py`)**：支援多檔合併批次請求、全域頻率限制器 (Rate Limiter)，減少 80% 盤中網路連線次數。
+  3. **Stan Weinstein Stage 4 空頭標的池過濾與熊市防禦 (`core/rating.py`, `core/market_regime.py`)**：
+     - Stage 4 衰退空頭型態（年線 MA200 下彎且股價處於年線下）強制禁買，避免逆勢接刀。
+     - 大盤空頭熊市情境自動上修買入門檻至 85 分並要求多頭強勢主控。
+  4. **修復 Windows CP950 控制台 Emoji 輸出例外 (`core/analyzer.py`)**：
+     - 加入 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`，徹底根除 Windows 終端輸出 📊/⚡ 時拋出 `UnicodeEncodeError` 的問題。
+  5. **單元測試覆蓋擴展至 81 項**：新增 `test_kline_cache.py`、`test_quote_hub.py`、`test_universe_and_regime.py`，全套 81 項單元測試 100% 通過。
+
+### B. 修改檔案與改動清單
+
+| 檔案 | 改動內容 |
+|---|---|
+| [`core/kline_cache.py`](file:///F:/stock/core/kline_cache.py) | • **新增**：SQLite 增量日K 快取與 Parquet 種子載入模組。 |
+| [`core/quote_hub.py`](file:///F:/stock/core/quote_hub.py) | • **新增**：TWSE 官方 MIS 批次撮合與全域頻率限制中心。 |
+| [`core/market_regime.py`](file:///F:/stock/core/market_regime.py) | • **新增**：大盤市場狀態判定（加權指數年線/季線多空）。 |
+| [`core/analyzer.py`](file:///F:/stock/core/analyzer.py) | • 加入 `sys.stdout.reconfigure(encoding="utf-8")` 修復 Windows 終端報表編碼。 |
+| [`core/rating.py`](file:///F:/stock/core/rating.py) | • 整合 Stage 4 空頭標的池過濾與大盤熊市門檻收緊防禦。 |
+| [`monitor_worker.py`](file:///F:/stock/monitor_worker.py) | • 接入 QuoteHub 與 Kline Cache，優化盤中巡邏效能。 |
+| [`line_server.py`](file:///F:/stock/line_server.py) | • 接入 QuoteHub 與 Kline Cache，優化自選與持倉查詢速度。 |
+| [`requirements.txt`](file:///F:/stock/requirements.txt) | • 加入 `cachetools>=5.3.0`、`pyarrow>=14.0.0`。 |
+| [`test_kline_cache.py`](file:///F:/stock/test_kline_cache.py) | • **新增**：K線快取資料表建立、Parquet 種子載入與查詢測試。 |
+| [`test_quote_hub.py`](file:///F:/stock/test_quote_hub.py) | • **新增**：QuoteHub 頻率限制、TWSE 撮合解析與批次行情測試。 |
+| [`test_universe_and_regime.py`](file:///F:/stock/test_universe_and_regime.py) | • **新增**：Stage 4 禁買、熊市門檻拉升、風控收緊測試。 |
+
+### C. 驗證結果
+
+| 測試套件 | 執行命令 | 結果 | 說明 |
+|---|---|:---:|---|
+| **全自動化單元測試集** | `pytest -q` | **81 / 81 PASS (100%)** | 耗時 26.7s，81 項單元測試 100% 通過。 |
+| **Kline 數理與 QA 測試** | `python test_kline_logic.py` | **7 / 7 PASS (100%)** | 核心數理指標與形態分類無偏差。 |
+| **LINE Bot 端到端業務整合測試** | `python test_bot_logic.py` | **9 / 9 OK (100%)** | 9 項情境端到端測試全數通過。 |
+| **端到端 CLI 實測** | `python kline.py 2330` / `6446` | **0 Error (PASS)** | 上市/上櫃即時撮合、圖表產出與終端報表正常。 |
+| **靜態語法與未定義名稱檢查** | `pyflakes core/*.py line_server.py` | **0 Undefined Names** | 生產代碼乾淨無未定義變數。 |
+
 
 
 

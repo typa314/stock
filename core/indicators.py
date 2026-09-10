@@ -60,13 +60,14 @@ def compute_atr_pct(df, period=20):
 
 
 
-def compute_risk_stop(ticker, cost_price, market="tse", user_pct=None, analysis_res=None):
+def compute_risk_stop(ticker, cost_price, market="tse", user_pct=None, analysis_res=None, is_market_bear=None):
     """
     計算持倉的浮虧警戒價位（取代原本三處各自硬寫的 cost * 0.93）。
 
     回傳 (警戒價, 警戒幅度小數, 依據說明)：
       - user_pct 若為使用者自訂（不等於 STOP_PCT_DB_DEFAULT）則優先採用
-      - 否則以 3 x ATR20 縮放，夾在 -8% ~ -15% 之間
+      - 常態多頭：以 3 x ATR20 縮放，夾在 -8% ~ -15% 之間
+      - 熊市防禦：以 2 x ATR20 縮放，夾在 -5% ~ -8% 之間，防止深度套牢
       - 取不到 ATR 時退回 -7%
     同一檔股票同一天只計算一次（記憶體快取），供 60 秒巡邏迴圈重複呼叫。
     """
@@ -80,7 +81,14 @@ def compute_risk_stop(ticker, cost_price, market="tse", user_pct=None, analysis_
             pct = abs(up) / 100.0
             return round(cost_price * (1 - pct), 2), pct, f"使用者自訂 -{pct * 100:.1f}%"
 
-    key = (str(ticker).strip(), datetime.now(TW_TZ).strftime("%Y-%m-%d"))
+    if is_market_bear is None:
+        try:
+            from core.market_regime import get_market_regime_status
+            is_market_bear = bool(get_market_regime_status().get("is_market_bear", False))
+        except Exception:
+            is_market_bear = False
+
+    key = (str(ticker).strip(), datetime.now(TW_TZ).strftime("%Y-%m-%d"), bool(is_market_bear))
     if key in _STOP_LEVEL_CACHE:
         pct, basis = _STOP_LEVEL_CACHE[key]
     else:
@@ -90,18 +98,27 @@ def compute_risk_stop(ticker, cost_price, market="tse", user_pct=None, analysis_
                 res = analysis_res
             else:
                 # 延遲匯入以避免 core.analyzer <-> core.indicators 的循環匯入
-                # （analyzer 在模組層級 import 本模組，本模組只在需要時才反向呼叫 analyzer）
                 from core.analyzer import analyze_stock
                 res = analyze_stock(ticker, months=12, generate_html=False,
                                      print_report=False, quick_mode=True)
             atr_pct = compute_atr_pct(res.get("df") if res else None)
             if atr_pct:
-                pct = min(STOP_PCT_MAX, max(STOP_PCT_MIN, STOP_ATR_MULT * atr_pct))
-                basis = f"{STOP_ATR_MULT:.0f}×ATR20（日波動 {atr_pct * 100:.2f}%）"
+                if is_market_bear:
+                    # 熊市防禦收縮：2x ATR，夾在 -5% ~ -8%
+                    mult = 2.0
+                    min_pct, max_pct = 0.05, 0.08
+                    pct = min(max_pct, max(min_pct, mult * atr_pct))
+                    basis = f"2×ATR20（熊市防禦收縮，日波動 {atr_pct * 100:.2f}%）"
+                else:
+                    mult = STOP_ATR_MULT
+                    min_pct, max_pct = STOP_PCT_MIN, STOP_PCT_MAX
+                    pct = min(max_pct, max(min_pct, mult * atr_pct))
+                    basis = f"{mult:.0f}×ATR20（日波動 {atr_pct * 100:.2f}%）"
                 # 僅在成功算出波動度時快取；暫時性失敗不鎖住整天的警戒價位
                 _STOP_LEVEL_CACHE[key] = (pct, basis)
         except Exception as e:
             print(f"  [WARN] {ticker} 波動度停損計算失敗，沿用固定 -7%：{e}")
     return round(cost_price * (1 - pct), 2), pct, basis
+
 
 

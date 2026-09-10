@@ -485,13 +485,19 @@ def _cmd_view_watchlist(user_id: str, user_name: str):
             "盤中一旦偵測到 20 EMA 支撐回測或 High 2 底部確認，系統將主動震動通知您！"
         )
 
-    def _process_one_watch_item(w):
+    watch_meta = []
+    for w in watch_items:
         t = w["ticker"]
         market, sname = get_info(t)
-        sname = sname or w.get("stock_name", t)
+        watch_meta.append((t, market, sname or w.get("stock_name", t)))
 
-        # 抓取即時行情撮合
-        rt = fetch_realtime_bar(t, market)
+    # 透過中央 Quote Hub 批次一次性取得所有即時行情（單次請求搞定，徹底消除 8 執行緒併發轟炸）
+    from core.quote_hub import fetch_realtime_quotes_batch
+    quotes_map = fetch_realtime_quotes_batch([(t, m) for t, m, _ in watch_meta])
+
+    items = []
+    for t, market, sname in watch_meta:
+        rt = quotes_map.get(t)
         if rt and rt.get("close") and rt["close"] > 0:
             cur_p = float(rt["close"])
             chg_val = cur_p - float(rt["open"]) if rt.get("open") else 0.0
@@ -529,7 +535,7 @@ def _cmd_view_watchlist(user_id: str, user_name: str):
             bpa_color = "#94a3b8"
             dist_desc = "觀察中"
 
-        return {
+        items.append({
             "ticker": t,
             "stock_name": sname,
             "current_price": cur_p,
@@ -538,12 +544,10 @@ def _cmd_view_watchlist(user_id: str, user_name: str):
             "bpa_zh": bpa_zh,
             "bpa_color": bpa_color,
             "dist_desc": dist_desc
-        }
-
-    with ThreadPoolExecutor(max_workers=min(len(watch_items), 8)) as executor:
-        items = list(executor.map(_process_one_watch_item, watch_items))
+        })
 
     return bot_flex.build_watchlist_flex(user_name, items)
+
 
 
 def _cmd_5m_query(raw_text: str, action: str, tokens: list):

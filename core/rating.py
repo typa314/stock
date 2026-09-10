@@ -17,11 +17,43 @@ def get_rating_badge(s):
 
 
 
-def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market, regime_info=None):
+from core.market_regime import get_market_regime_status
+
+
+def _bpa_score(bpa_res: dict) -> int:
+    """
+    細粒度 BPA 分數（0~30）
+    - 基礎分來自 Always-In 強度（+2->30, +1->20, 0->14, -1->8, -2->4）
+    - 額外分來自 strategy_brooks 的形態加成 bpa_extra_score（限制在 -4 ~ +6）
+    - 兼顧向下相容回退
+    """
+    if not bpa_res:
+        return 14
+    base_map = {
+        2: 30,   # 多頭主控 (滿分30)
+        1: 20,   # 偏多整理
+        0: 15,   # 箱型震盪
+        -1: 8,   # 偏空整理
+        -2: 4,   # 空方主導
+    }
+    if "always_in_score" in bpa_res and bpa_res["always_in_score"] is not None:
+        base = base_map.get(bpa_res["always_in_score"], 15)
+    else:
+        zh = bpa_res.get("always_in_zh", "")
+        base = 30 if ("多頭" in zh or "主控" in zh or "主升" in zh) else (20 if "多" in zh else (15 if "震盪" in zh or "整理" in zh else 4))
+
+    extra_raw = bpa_res.get("bpa_extra_score", 0)
+    extra = min(6, max(-4, extra_raw * 2))
+
+    return int(min(30, max(0, base + extra)))
+
+
+def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market, regime_info=None, market_regime=None):
     """
     多維綜合評級：融合 Minervini 趨勢樣板 + CANSLIM 成長動能 + BPA 價格行為 + 法人量價結構 + HMM 市場狀態
     保持乾淨精簡，輸出高訊號比之綜合評級卡片資料
     """
+
     c = df["close"]
     ma50 = ma150 = ma200 = ma200_20d = low_52w = high_52w = None
     if len(c) >= 200:
@@ -141,7 +173,8 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
 
     # 綜合評分與操盤定位
     minervini_score = (m_passed / 7.0) * 35 if m_passed is not None else 0.0
-    total_score = minervini_score + (max(0, c_score) / 5.0) * 25 + (30 if "多" in bpa_zh else (15 if "整理" in bpa_zh or "震盪" in bpa_zh else 5)) + (10 if inst_5d > 0 else 0)
+    bpa_score_val = _bpa_score(bpa_res)
+    total_score = minervini_score + (max(0, c_score) / 5.0) * 25 + bpa_score_val + (10 if inst_5d > 0 else 0)
     total_score = int(round(total_score))
 
     if total_score >= 80 and (m_passed is not None and m_passed >= 5):
@@ -165,53 +198,102 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         b_bg = "rgba(239, 68, 68, 0.2)"
         summary_advice = "跌破中長期均線，空方主導，持股逢反彈嚴格風控，嚴禁盲目猜底。"
 
-    # 5. 核心操盤動作決策（依回測實證優化：80 分為基準，疊加 HMM 市場狀態雙層濾網）
+    # 5. 核心操盤動作決策（依回測實證重新校準：BPA偏多 + Stage 4 標的池過濾 + 熊市防禦）
     is_adverse_regime = bool(regime_info.get("is_adverse", False)) if regime_info else False
+    if market_regime is None and regime_info:
+        market_regime = regime_info.get("market_regime")
+    if market_regime is None:
+        try:
+            from core.market_regime import get_market_regime_status
+            market_regime = get_market_regime_status()
+        except Exception:
+            market_regime = {}
+    is_market_bear = bool(market_regime.get("is_market_bear", False)) if market_regime else False
 
-    if total_score >= 80 and ("多" in bpa_zh or "主升" in badge):
-        if is_adverse_regime:
-            if total_score >= 85:
-                action_tag = "🟢 建議買入"
+    # Stan Weinstein Stage 4 空頭型態判定：股價在年線下且年線下彎
+    is_stage4_bear = bool(ma200 is not None and c_now < ma200 * 0.98 and ma200 < ma200_20d)
+
+    is_bullish_bpa = ("多" in bpa_zh) or (bpa_res.get("always_in_score", 0) > 0)
+    is_strong_bull = (bpa_res.get("always_in_score", 0) >= 2) or ("主控" in bpa_zh)
+
+    # 1. 建議買入：高分 + 實質偏多結構
+    if total_score >= 80 and is_bullish_bpa:
+        if is_stage4_bear:
+            # Stan Weinstein 標的池過濾：Stage 4 空頭主跌段強制禁買，防範牛皮/衰退股假突破
+            action_tag = "🟡 建議觀望 (Stage 4 禁買)"
+            action_type = "WAIT"
+            action_color = "#fbbf24"
+            action_bg = "rgba(245, 158, 11, 0.18)"
+            action_border = "#fbbf24"
+            action_sub = "長期年線（200 MA）下彎且股價處於年線之下，屬 Stage 4 衰退空頭形態，依風控架構嚴禁開多單，嚴防假突破！"
+        elif is_adverse_regime or is_market_bear:
+            reason = "大盤空方承壓" if is_market_bear else "市況震盪"
+            if total_score >= 85 and is_strong_bull:
+                action_tag = "🟢 建議買入 (防禦佈局)" if is_market_bear else "🟢 建議買入"
                 action_type = "BUY"
                 action_color = "#22c55e"
                 action_bg = "rgba(34, 197, 94, 0.18)"
                 action_border = "#22c55e"
-                action_sub = f"具備 ≥85 分極致飆股體質，雖處震盪市況仍可順應 20 EMA（{ema_val:.2f} 元）守穩嚴設風控佈局"
+                action_sub = f"具備 ≥85 分極致飆股體質且多頭主控，雖處{reason}仍可順應 20 EMA（{ema_val:.2f} 元）守穩嚴設防禦停損佈局"
             else:
-                action_tag = "🟡 建議觀望 (市況震盪)"
+                action_tag = f"🟡 建議觀望 ({reason})"
                 action_type = "WAIT"
                 action_color = "#fbbf24"
                 action_bg = "rgba(245, 158, 11, 0.18)"
                 action_border = "#fbbf24"
-                action_sub = f"綜合評分達 {total_score} 分，但處於 HMM 高波震盪市況，未達 85 分極致飆股標準，建議防守觀望"
+                action_sub = f"綜合評分達 {total_score} 分，但處於 {reason}，未達 85 分多頭主控標準，建議防守觀望"
         else:
             action_tag = "🟢 建議買入"
             action_type = "BUY"
             action_color = "#22c55e"
             action_bg = "rgba(34, 197, 94, 0.18)"
             action_border = "#22c55e"
-            action_sub = f"主升動能強勁，逢 20 EMA（{ema_val:.2f} 元）拉回守穩或放量突破順勢買進"
-    elif total_score >= 60 and "空" not in bpa_zh:
-        action_tag = "🟡 建議持有"
-        action_type = "HOLD"
-        action_color = "#38bdf8"
-        action_bg = "rgba(56, 189, 248, 0.18)"
-        action_border = "#38bdf8"
-        action_sub = f"多頭結構穩健，持股續抱；空手者待回測 20 EMA（{ema_val:.2f} 元）分批佈局"
-    elif total_score >= 45:
-        action_tag = "🟡 建議觀望"
-        action_type = "WAIT"
-        action_color = "#fbbf24"
-        action_bg = "rgba(245, 158, 11, 0.18)"
-        action_border = "#fbbf24"
-        action_sub = "箱型震盪打底，多空未明，暫勿追價，靜待帶量表態"
+            action_sub = f"主升動能強勁且 BPA 偏多，逢 20 EMA（{ema_val:.2f} 元）拉回守穩或放量突破順勢買進"
+
+    # 2. 建議持有：保留 65 分以上非空方結構（消除過去 60 分邊界無超額雜訊）
+    elif total_score >= 65 and "空" not in bpa_zh:
+        if is_stage4_bear:
+            action_tag = "🟡 建議觀望 (Stage 4 禁買)"
+            action_type = "WAIT"
+            action_color = "#fbbf24"
+            action_bg = "rgba(245, 158, 11, 0.18)"
+            action_border = "#fbbf24"
+            action_sub = "長期年線（200 MA）下彎且股價處於年線之下，屬 Stage 4 衰退空頭形態，依風控架構嚴禁開多單，嚴防假突破！"
+        else:
+            action_tag = "🔵 建議持有"
+            action_type = "HOLD"
+            action_color = "#38bdf8"
+            action_bg = "rgba(56, 189, 248, 0.18)"
+            action_border = "#38bdf8"
+            action_sub = f"多頭架構穩健（評分 {total_score}），持股續抱；空手者待回測 20 EMA（{ema_val:.2f} 元）分批佈局"
+
+    # 3. 建議觀望：50~69 分（消除過去 60~69 分無超額假持有區間）
+    elif total_score >= 50:
+        if is_stage4_bear:
+            action_tag = "🟡 建議觀望 (Stage 4 禁買)"
+            action_type = "WAIT"
+            action_color = "#fbbf24"
+            action_bg = "rgba(245, 158, 11, 0.18)"
+            action_border = "#fbbf24"
+            action_sub = "長期年線（200 MA）下彎且股價處於年線之下，屬 Stage 4 衰退空頭形態，依風控架構嚴禁開多單，嚴防假突破！"
+        else:
+            action_tag = "🟡 建議觀望"
+            action_type = "WAIT"
+            action_color = "#fbbf24"
+            action_bg = "rgba(245, 158, 11, 0.18)"
+            action_border = "#fbbf24"
+            action_sub = f"綜合評分 {total_score} 分，動能與形態未達明朗標準，多空未明，建議空手觀望靜待帶量表態"
+
+    # 4. 建議賣出：< 50 分或空方主控
     else:
         action_tag = "🔴 建議賣出"
         action_type = "SELL"
         action_color = "#ef4444"
         action_bg = "rgba(239, 68, 68, 0.18)"
         action_border = "#ef4444"
-        action_sub = "跌破關鍵防守線，空方主控，持股逢反彈減碼，嚴禁接刀"
+        action_sub = "跌破關鍵防守線或空方主控，持股逢反彈減碼避險，嚴禁逆勢接刀"
+
+    suggested_hold_days = 60 if action_type == "BUY" else (40 if action_type == "HOLD" else None)
 
     return {
         "score": total_score,
@@ -224,6 +306,7 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         "action_bg": action_bg,
         "action_border": action_border,
         "action_sub": action_sub,
+        "suggested_hold_days": suggested_hold_days,
         "minervini_passed": m_passed,
         "minervini_status": m_status,
         "minervini_color": m_color,
@@ -237,6 +320,11 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         "chip_sub": chip_sub,
         "chip_color": chip_color,
         "summary_advice": summary_advice,
-        "regime_info": regime_info
+        "regime_info": regime_info,
+        "market_regime": market_regime,
+        "is_stage4_bear": is_stage4_bear,
+        "is_market_bear": is_market_bear,
+        "time_horizon": "40~60 交易日（波段動能跟隨）"
     }
+
 

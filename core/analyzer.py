@@ -6,12 +6,19 @@
   - analyze_stock(ticker, ...)     日線完整分析（含圖表 HTML、報表輸出）
   - analyze_stock_5m(ticker, ...)  5 分鐘線短線複合評估
 """
+import sys
 import argparse
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from core.constants import MA_DAYS, VOL_MA
 from core.data_fetch import (
@@ -358,15 +365,15 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
     df["macd_hist"]   = df["macd"] - df["macd_signal"]
 
     # KD(9, 3, 3)
-    _low9  = df["low"].rolling(9, min_periods=1).min()
-    _high9 = df["high"].rolling(9, min_periods=1).max()
+    _low9  = df["low"].rolling(9, min_periods=9).min()
+    _high9 = df["high"].rolling(9, min_periods=9).max()
     df["kd_rsv"] = (df["close"] - _low9) / (_high9 - _low9 + 1e-9) * 100
     df["kd_k"]   = df["kd_rsv"].ewm(com=2, adjust=False).mean()
     df["kd_d"]   = df["kd_k"].ewm(com=2, adjust=False).mean()
 
     # Bollinger Bands(20, ±2σ)
-    df["bb_mid"]   = df["close"].rolling(20, min_periods=1).mean()
-    _bb_std        = df["close"].rolling(20, min_periods=1).std(ddof=0).fillna(0)
+    df["bb_mid"]   = df["close"].rolling(20, min_periods=20).mean()
+    _bb_std        = df["close"].rolling(20, min_periods=20).std(ddof=0).fillna(0)
     df["bb_upper"] = df["bb_mid"] + 2 * _bb_std
     df["bb_lower"] = df["bb_mid"] - 2 * _bb_std
     df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / (df["bb_mid"] + 1e-9) * 100
@@ -390,13 +397,19 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
     bpa_res = evaluate_brooks_price_action(df)
     import hmm_regime
     regime_info = hmm_regime.detect_market_regime(df)
+    try:
+        from core.market_regime import get_market_regime_status
+        market_regime = get_market_regime_status()
+    except Exception:
+        market_regime = {}
 
     if quick_mode:
         fundamentals = {}
         composite_rating = None
     else:
         fundamentals = fetch_fundamentals(ticker, market=market)
-        composite_rating = evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market, regime_info=regime_info)
+        composite_rating = evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, ticker, market, regime_info=regime_info, market_regime=market_regime)
+
 
     trend_score, trend_stage, trend_factors = evaluate_professional_trend(df, inst_df, bpa_res, vol_eval)
     rating_badge = get_rating_badge(trend_score)
@@ -493,9 +506,14 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
         print(f"  防守停損線 (Stop-Loss Pivot)：{stop_loss:.2f} 元（跌破宜果斷執行）")
 
         print(f"\n  ── 🧭 多維量化評估綜合研判 ─────────────────────────────")
-        print(f"  綜合評分 ：{trend_score:+d} 分 ｜ 評級：{rating_badge}")
+        print(f"  綜合評分 ：{trend_score:+d} 分 ｜ 評級：{rating_badge} (參考指標)")
         for f_item in trend_factors:
             print(f"  • {f_item}")
+        if composite_rating and composite_rating.get("is_stage4_bear"):
+            print(f"  • ⚠️ [標的池風控硬警示] 本標的處於 Stage 4 衰退/空頭形態（年線下彎且股價在年線下），依風控規範禁止開多單！")
+        if market_regime and market_regime.get("status_desc"):
+            print(f"  • 宏觀環境：{market_regime['status_desc']}")
+        print(f"  • 建議評估週期：40 ~ 60 個交易日（中線波段動能策略，非極短線當沖）")
 
         print(f"\n  ── 💡 操盤行動指引 ─────────────────────────────────────")
         ma60_val = df['ma60'].iloc[-1]
@@ -532,9 +550,14 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
             "r2": r2, "r1": r1, "s1": s1, "s2": s2, "stop_loss": stop_loss, "close_now": close_now
         },
         "regime_info": regime_info,
+        "market_regime": market_regime,
+        "time_horizon": "40~60 交易日（波段動能跟隨策略）",
+        "is_stage4_bear": composite_rating.get("is_stage4_bear", False) if composite_rating else False,
+        "is_market_bear": market_regime.get("is_market_bear", False) if market_regime else False,
         "display_months": display_months,
         "output_html": output if generate_html else None
     }
+
 
 
 
@@ -946,7 +969,10 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         "noise_ratio": noise_ratio,
         "atr20_5m": atr20_5m,
         "conformal_status": conformal_status,
-        "data_time_str": data_time_str
+        "data_time_str": data_time_str,
+        "data_cutoff_time": df["date"].iloc[-1].strftime("%H:%M:%S") if not df.empty else "",
+        "is_delayed": True,
+        "data_source": "Yahoo Finance (5分K)"
     }
 
 # ── 7. 命令列執行入口 ─────────────────────────────────────────

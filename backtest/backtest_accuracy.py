@@ -158,6 +158,72 @@ def install_patches():
     kline.get_info = lambda t: (S["market"], t)                 # 免打 twstock，市場別取自快取
     kline.yf = _FakeYF
 
+    # 同步 monkeypatch core/ 模組（避免模組層級已快取原函式）
+    import core.data_fetch as c_df
+    import core.analyzer as c_an
+    import core.rating as c_rt
+    import core.indicators as c_ind
+    import core.market_regime as c_mr
+
+    for mod in (c_df, c_an):
+        mod.fetch_twse = patched_fetch_twse
+        mod.fetch_from_yfinance = patched_fetch_from_yfinance
+        mod.fetch_otc = patched_fetch_otc
+        mod.fetch_institutional = patched_fetch_institutional
+        mod.fetch_fundamentals = patched_fetch_fundamentals
+        mod.fetch_realtime_bar = lambda ticker, market: None
+        mod.get_info = lambda t: (S["market"], t)
+        mod.yf = _FakeYF
+
+    c_rt.yf = _FakeYF
+
+    # 載入大盤歷史資料以提供零未來資訊的 Point-in-Time 大盤體系判定
+    twii_path = os.path.join(CACHE, "TWII.pkl")
+    twii_df = None
+    if os.path.exists(twii_path):
+        try:
+            with open(twii_path, "rb") as f:
+                twii_df = pickle.load(f)
+        except Exception as e:
+            print(f"[WARN] 無法載入 TWII.pkl: {e}")
+
+    def patched_get_market_regime_status(force_refresh=False):
+        cut = S.get("cut")
+        if twii_df is None or cut is None:
+            return {
+                "is_market_bear": False, "market_score": 70, "twii_close": 0.0,
+                "twii_ma20": 0.0, "twii_ma60": 0.0, "twii_ma60_slope": 0.0,
+                "status_desc": "大盤數據離線（常態多頭）"
+            }
+        sub = twii_df[twii_df.index <= pd.Timestamp(cut)]
+        if len(sub) < 65:
+            return {
+                "is_market_bear": False, "market_score": 70, "twii_close": 0.0,
+                "twii_ma20": 0.0, "twii_ma60": 0.0, "twii_ma60_slope": 0.0,
+                "status_desc": "數據不足 65 根"
+            }
+        c = sub["close"]
+        ma20 = c.rolling(20).mean().iloc[-1]
+        ma60 = c.rolling(60).mean().iloc[-1]
+        ma60_10d = c.rolling(60).mean().iloc[-11]
+        c_now = float(c.iloc[-1])
+        slope = (ma60 - ma60_10d) / (ma60_10d + 1e-9) * 100
+        is_bear = (c_now < ma60 * 0.99 and slope < 0) or (c_now < ma60 * 0.97)
+        return {
+            "is_market_bear": bool(is_bear),
+            "market_score": 35 if is_bear else 85,
+            "twii_close": round(c_now, 2),
+            "twii_ma20": round(float(ma20), 2),
+            "twii_ma60": round(float(ma60), 2),
+            "twii_ma60_slope": round(float(slope), 2),
+            "status_desc": "熊市防禦模式" if is_bear else "多方主控"
+        }
+
+    c_mr.get_market_regime_status = patched_get_market_regime_status
+    c_an.get_market_regime_status = patched_get_market_regime_status
+    c_rt.get_market_regime_status = patched_get_market_regime_status
+    c_ind.get_market_regime_status = patched_get_market_regime_status
+
 
 # ── 4. 前瞻報酬（含息；T+1 開盤進場為可交易情境） ────────────────
 def add_forward(px):
@@ -235,6 +301,8 @@ def run(tickers, months, step, start_date, out_path, verbose=True, with_alert=Fa
                 "ticker": t, "market": d.get("market"), "date": px["date"].iloc[i],
                 "months": months, "bars_used": len(df_sig),
                 "score": cr.get("score"), "action": cr.get("action_type"),
+                "is_stage4": 1 if cr.get("is_stage4_bear") else 0,
+                "is_market_bear": 1 if (res.get("market_regime") or {}).get("is_market_bear") else 0,
                 "minervini": cr.get("minervini_passed"),
                 "canslim": (cr.get("canslim_grade") or "")[:2].strip(),
                 "bpa": bpa.get("always_in_zh"),

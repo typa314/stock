@@ -22,6 +22,8 @@ from core.strategy_trend import evaluate_professional_trend
 from core.rating import get_rating_badge, evaluate_composite_rating
 from core.charting import build_stock_chart
 from core.analyzer import analyze_stock, analyze_stock_5m, classify_candlestick_patterns
+from core.kline_cache import get_daily_kline_records
+from core.quote_hub import fetch_realtime_quotes_batch, fetch_realtime_quote
 
 __all__ = [
     "__version__", "TW_TZ", "HEADERS", "MA_DAYS", "VOL_MA", "MA_COLORS", "MIN_SWING_R_PCT",
@@ -31,6 +33,7 @@ __all__ = [
     "evaluate_brooks_price_action", "evaluate_volume_price", "evaluate_professional_trend",
     "get_rating_badge", "evaluate_composite_rating", "build_stock_chart",
     "analyze_stock", "analyze_stock_5m", "classify_candlestick_patterns",
+    "get_daily_kline_records", "fetch_realtime_quotes_batch", "fetch_realtime_quote",
 ]
 
 
