@@ -17,8 +17,13 @@ DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "port
 @contextmanager
 def get_connection(db_path=None):
     path = db_path or DEFAULT_DB_PATH
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=30000;")
+    except Exception:
+        pass
     try:
         yield conn
         conn.commit()
@@ -102,6 +107,8 @@ def get_or_create_user(line_user_id, display_name=None, db_path=None):
             if display_name and row["display_name"] != display_name:
                 cursor.execute("UPDATE users SET display_name = ? WHERE id = ?", (display_name, row["id"]))
                 conn.commit()
+                cursor.execute("SELECT * FROM users WHERE id = ?", (row["id"],))
+                row = cursor.fetchone()
             return dict(row)
         
         cursor.execute(
@@ -319,6 +326,8 @@ def import_db_snapshot(data, db_path=None):
         return False
 
     stats = {"users": 0, "positions": 0, "watchlist": 0, "skipped": 0}
+    now_tw_str = datetime.now(TW_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
 
@@ -348,15 +357,18 @@ def import_db_snapshot(data, db_path=None):
                 id_map[u["id"]] = local_id
             stats["users"] += 1
 
-        # 2. 持倉（updated_at 較新者為準）
+        # 2. 持倉（updated_at 較新者為準，空時間戳由 Python 填入台灣時間，杜絕 SQLite CURRENT_TIMESTAMP 的 UTC 回溯）
         for pos in data.get("positions", []):
             local_uid = id_map.get(pos.get("user_id"))
             if local_uid is None or not pos.get("ticker"):
                 stats["skipped"] += 1
                 continue
+            pos_created_at = pos.get("created_at") or now_tw_str
+            pos_updated_at = pos.get("updated_at") or now_tw_str
+
             cursor.execute("""
             INSERT INTO positions (user_id, ticker, stock_name, shares, cost_price, stop_loss_pct, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, ticker) DO UPDATE SET
                 stock_name = excluded.stock_name,
                 shares = excluded.shares,
@@ -368,20 +380,23 @@ def import_db_snapshot(data, db_path=None):
             """, (
                 local_uid, pos.get("ticker"), pos.get("stock_name"), pos.get("shares", 1000),
                 pos.get("cost_price"), pos.get("stop_loss_pct", -7.0), pos.get("status", "OPEN"),
-                pos.get("created_at"), pos.get("updated_at")
+                pos_created_at, pos_updated_at
             ))
             if cursor.rowcount > 0:
                 stats["positions"] += 1
 
-        # 3. 自選觀察名單（updated_at 較新者為準）
+        # 3. 自選觀察名單（updated_at 較新者為準，空時間戳由 Python 填入台灣時間）
         for w in data.get("watchlist", []):
             local_uid = id_map.get(w.get("user_id"))
             if local_uid is None or not w.get("ticker"):
                 stats["skipped"] += 1
                 continue
+            w_created_at = w.get("created_at") or now_tw_str
+            w_updated_at = w.get("updated_at") or now_tw_str
+
             cursor.execute("""
             INSERT INTO watchlist (user_id, ticker, stock_name, note, active, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP))
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, ticker) DO UPDATE SET
                 stock_name = excluded.stock_name,
                 note = excluded.note,
@@ -390,7 +405,7 @@ def import_db_snapshot(data, db_path=None):
             WHERE excluded.updated_at >= watchlist.updated_at
             """, (
                 local_uid, w.get("ticker"), w.get("stock_name"), w.get("note"),
-                w.get("active", 1), w.get("created_at"), w.get("updated_at")
+                w.get("active", 1), w_created_at, w_updated_at
             ))
             if cursor.rowcount > 0:
                 stats["watchlist"] += 1

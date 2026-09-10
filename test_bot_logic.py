@@ -177,6 +177,23 @@ class TestLineBotCore(unittest.TestCase):
         footer_btn_labels = [b.get("action", {}).get("label", "") for b in dash_flex.get("footer", {}).get("contents", [])]
         self.assertNotIn("⚡ 5分K 當沖", footer_btn_labels, "日K卡片 footer 應已移除 5分K 當沖按鍵")
 
+        # 驗證 5分K 卡片 footer 已移除 查日K 按鍵
+        flex_5m = bot_flex.build_5m_stock_flex({
+            "ticker": "2330", "stock_name": "台積電", "market": "tse",
+            "close_now": 1020.0, "change_today": 15.0, "change_today_pct": 1.49,
+            "high_today": 1025.0, "low_today": 1005.0, "range_today": 20.0,
+            "data_time_str": "13:30", "ema_now": 1015.0, "ema_bias_pct": 0.5,
+            "bpa_status": "多頭順勢", "bpa_status_color": "#22c55e",
+            "last_bar_type": "多頭趨勢棒", "vol_now": 2000, "vol_ratio_5m": 1.5,
+            "action_tag": "🟢 順勢偏多", "action_sub": "順勢運行", "action_color": "#22c55e",
+            "whale_tag": "大單敲進", "whale_color": "#22c55e", "whale_advice": "動能充沛",
+            "mtf_status": "多時框多方", "conformal_status": "合格", "noise_ratio": 1.0,
+            "buy_stop": 1025.0, "sell_stop": 1005.0, "stop_loss": 995.0,
+            "stop_type": "前低防守", "r_val": 25.0, "target_1r": 1045.0, "target_2r": 1070.0
+        })
+        footer_5m_btns = [b.get("action", {}).get("label", "") for b in flex_5m.get("footer", {}).get("contents", [])]
+        self.assertNotIn("📊 查日K (4合1)", footer_5m_btns, "5分K卡片 footer 應已移除 查日K 按鍵")
+
         # 測試 自選觀察清單 Flex
         wl_flex = bot_flex.build_watchlist_flex("小明", [{
             "ticker": "2330",
@@ -353,13 +370,20 @@ class TestLineBotCore(unittest.TestCase):
             "df": pd.DataFrame({"ma20": [200.0]}), # 現價 180，遠低於日MA20 (200)
             "inst_df": pd.DataFrame({"total": [-100, -100, -100]})
         }
-        with patch("kline.analyze_stock", return_value=mock_daily_for_5m):
+        with patch("core.analyzer.analyze_stock", return_value=mock_daily_for_5m):
+            # 注意：analyze_stock_5m 內部呼叫的是 core.analyzer 自身模組內的 analyze_stock，
+            # 而不是 kline.py 這個相容性 facade 重新匯出的名稱，兩者是不同的物件參照，
+            # 所以必須直接對定義它的模組（core.analyzer）下 patch，才能攔截到內部呼叫。
             res_5m = kline.analyze_stock_5m("3042", days=1)
             self.assertIn("mtf_status", res_5m)
-            # 若 bpa_status 出現多頭，必須被壓制為逆日線弱彈
+            # 若 bpa_status 出現多頭，必須被壓制，嚴禁給出多方買進建議
             if "多" in res_5m["bpa_status"]:
-                self.assertIn("逆日線弱彈", res_5m["action_tag"])
                 self.assertNotIn("建議偏多買進", res_5m["action_tag"])
+                self.assertNotIn("建議順勢做多", res_5m["action_tag"])
+                self.assertTrue(
+                    any(kw in res_5m["action_tag"] for kw in ["逆日線弱彈", "暫緩開倉", "拒絕開倉"]),
+                    f"Unexpected action_tag: {res_5m['action_tag']}"
+                )
 
     def test_08_conformal_prediction_abstention(self):
         """自動化驗證：Conformal Prediction 雜訊比與拒絕開倉門檻 (Abstention Gate)"""

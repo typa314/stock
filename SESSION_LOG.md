@@ -428,4 +428,136 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 | 靜態語法檢查 | `python -m pyflakes hmm_regime.py bot_db.py test_bot_logic.py` | **0 Warnings / 0 Errors** |
 | 個股 2330 雙時框查詢實機測試 | `line_server.handle_user_command('U_test', '2330')` | **成功回傳 Carousel (2 bubbles)** |
 
+---
+
+## Session H：同步 stock-refactored 架構重構至 F:\stock (2026-09-10 11:05)
+
+### A. 需求背景與重構目標
+- **使用者需求**：「基於這份修改建議，修正F:\stock專案」（參照 `stock-refactored.zip`）。
+- **架構重構核心**：
+  1. **巨型單檔解耦**：將 2,231 行的 `kline.py` 拆分為高內聚、低耦合的 `core/` 套件（9 個子模組），`kline.py` 改為相容性 Facade（約 40 行），重新導出所有原本符號，對外維持 100% 呼叫相容。
+  2. **Web 入口整併**：刪除重複的 `devapp.py`，改由 `app.py` 依 `APP_ENV=dev` 環境變數動態渲染 DEV 開發橫幅。
+  3. **清理過時部署配置**：刪除已停用的 `HUGGINGFACE_SETUP.md`、`KOYEB_SETUP.md`；更新 `Dockerfile`（通用 port 8080）與 `cloudflare_worker/worker.js`（移除過時節點，保留 Render + 本機雙節點路由與 `PREFER_RENDER`）。
+  4. **保留本機最新修改**：完整保留 `F:\stock` 當前工作區在 `bot_flex.py` 與 `test_bot_logic.py` 移除 5分K 卡片 footer「查日K」按鈕的優化改動。
+
+### B. 修改檔案與改動清單
+
+| 檔案 | 改動內容 |
+|---|---|
+| [`core/`](file:///F:/stock/core/) | 新增套件，拆分原 `kline.py` 職責：<br>• `constants.py` (常數/時區)<br>• `data_fetch.py` (TWSE/Yahoo/FinMind擷取與盤中撮合)<br>• `indicators.py` (Tick級距、ATR、動態風控停損)<br>• `strategy_brooks.py` (Al Brooks 價格行為學 BPA)<br>• `strategy_volume.py` (Wyckoff / VPA 量價結構)<br>• `strategy_trend.py` (Weinstein 四階段趨勢)<br>• `rating.py` (多維綜合評分模型)<br>• `charting.py` (Plotly 互動式圖表繪製)<br>• `analyzer.py` (核心分析主入口 `analyze_stock`/`analyze_stock_5m`) |
+| [`kline.py`](file:///F:/stock/kline.py) | 改寫為 42 行相容性 Facade，重新導出 `core/` 所有公開 API，保持既有模組免改動。 |
+| [`app.py`](file:///F:/stock/app.py) | 引入 `IS_DEV_ENV = os.environ.get("APP_ENV", "prod").strip().lower() == "dev"`，動態展示 DEV 提示橫幅。 |
+| [`devapp.py`](file:///F:/stock/devapp.py) | 刪除。 |
+| [`HUGGINGFACE_SETUP.md`](file:///F:/stock/HUGGINGFACE_SETUP.md) | 刪除。 |
+| [`KOYEB_SETUP.md`](file:///F:/stock/KOYEB_SETUP.md) | 刪除。 |
+| [`Dockerfile`](file:///F:/stock/Dockerfile) | 改為非 root `appuser` 與標準 port 8080。 |
+| [`cloudflare_worker/worker.js`](file:///F:/stock/cloudflare_worker/worker.js) | 移除 Koyeb/HF 路由，精簡為 Render 雲端 + 本機 PC 雙節點路由，保留 `PREFER_RENDER`。 |
+| [`CLOUDFLARE_WORKER_SETUP.md`](file:///F:/stock/CLOUDFLARE_WORKER_SETUP.md) | 同步移除過時的第 3 順位雲端備援說明。 |
+| [`test_kline_logic.py`](file:///F:/stock/test_kline_logic.py) | 靜態品質檢查清單中移除已刪除的 `devapp.py`。 |
+| [`test_bot_logic.py`](file:///F:/stock/test_bot_logic.py) | 將 `test_07_mtf_and_institutional_gate` 的 patch 目標更新為 `core.analyzer.analyze_stock`；保留 5分K 移除查日K按鈕斷言。 |
+| [`REFACTOR_NOTES.md`](file:///F:/stock/REFACTOR_NOTES.md) | 新增重構架構說明手冊。 |
+
+### C. 驗證結果
+
+| 測試項目 | 命令 | 結果 |
+|---|---|:---:|
+| Kline 指標與靜態品質測試 | `python -m pytest test_kline_logic.py` | **7/7 PASS (100%)** |
+| Bot 業務與自然語言單元測試 | `python test_bot_logic.py` | **9/9 OK (100%)** |
+| 跨模組語法與未定義名稱檢查 | `pyflakes app.py kline.py test_kline_logic.py test_bot_logic.py core` | **0 Undefined Names** |
+| Facade 轉接層公開介面匯出 | `python -c "import kline; ..."` | **35 symbols 正確導出** |
+| 實機盤中撮合分析測試 (CLI) | `python -X utf8 kline.py 2330 --months 1` | **成功取得即時撮合與生成圖表** |
+
+---
+
+## Session I：SQLite 雙節點快照強化、handle_user_command 解耦與 TTLCache 導入 (2026-09-10 11:20)
+
+### A. 需求背景與重構目標
+- **使用者需求**：
+  1. 解決 SQLite 雙節點快照同步的脆弱性（安全鑑權、時區回溯、並發鎖定、重試）。
+  2. 將 `handle_user_command` 近 400 行巨型函式拆分為專職模組。
+  3. 將 `line_server.py` 與 `monitor_worker.py` 的全域快取升級為 `cachetools.TTLCache`。
+- **改進效益**：
+  1. **安全與時區加固**：防止公網無驗證 dump 資料庫；消滅 SQLite `CURRENT_TIMESTAMP` 的 UTC 8 小時回溯 bug；開啟 WAL 模式消除鎖定。
+  2. **職責分離**：主路由器僅 40 行，9 個子處理器各自獨立且邏輯 100% 保真。
+  3. **資源與內存防護**：TTLCache 限制容量上限並自動驅逐過期項，配置 thread lock 保護多執行緒安全。
+
+### B. 修改檔案與改動清單
+
+| 檔案 | 改動內容 |
+|---|---|
+| [`bot_db.py`](file:///F:/stock/bot_db.py) | • `get_connection()` 加上 `timeout=30.0`，執行 `PRAGMA journal_mode=WAL;` 與 `PRAGMA busy_timeout=30000;`<br>• `import_db_snapshot()` 替換 `COALESCE(?, CURRENT_TIMESTAMP)`，由 Python 預先以 `datetime.now(TW_TZ)` 填入 GMT+8 台灣時間字串。 |
+| [`line_server.py`](file:///F:/stock/line_server.py) | • 新增 `_verify_sync_token(req)` 與 `_get_sync_headers()`（優先使用 `SYNC_SECRET_KEY` 或 `LINE_CHANNEL_SECRET`）<br>• `/api/sync_db` 增加 401 鑑權與 10MB 大小限制<br>• `push_snapshot_to_cloud()` 實作指數退避重試（3次）與 Token 標頭<br>• `_STOCK_CACHE` 與 `_STOCK_5M_CACHE` 改用執行緒安全 `TTLCache`<br>• 拆分 `handle_user_command` 為 `_cmd_buy`, `_cmd_sell`, `_cmd_portfolio`, `_cmd_add_watchlist`, `_cmd_remove_watchlist`, `_cmd_view_watchlist`, `_cmd_5m_query`, `_cmd_stock_query`, `_cmd_help`。 |
+| [`monitor_worker.py`](file:///F:/stock/monitor_worker.py) | • 導入 `_WORKER_ANALYSIS_CACHE` (TTL 60s) 與 `_WORKER_PRICE_CACHE` (TTL 10s)<br>• 巡檢比對即時撮合與 BPA 買點判定優先檢查快取，減少重複高耗能運算。 |
+| [`requirements.txt`](file:///F:/stock/requirements.txt) | • 追加 `cachetools>=5.3.0`。 |
+
+### C. 驗證結果
+
+| 測試項目 | 命令 | 結果 |
+|---|---|:---:|
+| Bot 核心邏輯全套單元測試 | `python test_bot_logic.py` | **9/9 OK (100%)** |
+| Kline 指標與品質單元測試 | `python -m pytest test_kline_logic.py` | **7/7 PASS (100%)** |
+| 快照鑑權/WAL/TTLCache 專案測試 | `TestEnhancements (API 401/200, TTLCache, WAL)` | **4/4 PASS (100%)** |
+| 跨模組語法與未定義名稱檢查 | `pyflakes line_server.py bot_db.py monitor_worker.py` | **0 Undefined Names** |
+
+---
+
+## Session J：核心策略規格化與高覆蓋率回歸測試防護網 (2026-09-10 11:30)
+
+### A. 需求背景與核心防護原則
+- **使用者需求**：
+  1. **測試覆蓋薄弱**：過去單元測試未覆蓋 `core/` 各個技術指標、四階段趨勢、Wyckoff VPA、Al Brooks BPA 與評級決策子模組，缺乏針對邊界值與特定狀態機的精確單元測試。
+  2. **紀錄核心策略函式邏輯**：在未來任何核心邏輯更動前，必須有 100% 明確、可重現的量化規格書與回歸防護網，落實 `GEMINI.md` 的 **Zero Speculation（零臆測原則）**。
+- **改進效益**：
+  1. **建立量化規格權威基準 (`CORE_STRATEGY_SPEC.md`)**：明確定義台股 6 階 Tick Rules、ATR20 風控停損公式、Stan Weinstein 四階段趨勢公式、VPA 8 大狀態機條件、BPA Always-In 狀態轉移與 Minervini/CANSLIM 100分制權重矩陣。
+  2. **建置高覆蓋率零外部依賴單元測試 (`test_core_strategies.py`)**：以合成純數學行情資料構建 27 項確定性測試，覆蓋所有邊界條件與狀態機分支，不依賴外部 API，1 秒內閃電執行完畢。
+
+### B. 修改檔案與改動清單
+
+| 檔案 | 改動內容 |
+|---|---|
+| [`CORE_STRATEGY_SPEC.md`](file:///F:/stock/CORE_STRATEGY_SPEC.md) | • **新增核心策略量化規格書**：涵蓋 Tick 級距、動態 ATR 風控、Weinstein 四階段斜率判斷、VPA 8 大狀態機、Brooks Always-In 與掛單計算、Minervini 7 條件樣板與 CANSLIM 成長評分矩陣。 |
+| [`test_core_strategies.py`](file:///F:/stock/test_core_strategies.py) | • **新增 27 項確定性單元與回歸測試**：<br>  1. `TestIndicators` (4項)：台股全級距邊界測試、確定性 ATR% 驗證、使用者自訂停損優先權、3×ATR 夾 [-15%, -8%] 測試。<br>  2. `TestStrategyTrend` (7項)：溫斯坦第 1/2/3/4 階段斜率條件測試、均線多空乖離、三大法人外資投信買賣超加減分、星級徽章級距。<br>  3. `TestStrategyVolume` (7項)：CHURN 爆量滯漲、BREAKOUT 帶量突破、DRYUP 窒息量、BULL_EXP 價量齊揚、BULL_DIV 量價背離、BEAR_EXP 放量重挫、BEAR_RET 價跌量縮（守穩/跌破均線）。<br>  4. `TestStrategyBrooks` (5項)：AIL 多頭主控、AIS 空方主導、TR 箱型震盪 (TTR)、H1 多頭順勢推升進場單與風控價位、L1 空方推升進場單與風控價位。<br>  5. `TestRatingAndDecisions` (3項)：綜合評級 100 分滿分評估、HMM 不利震盪市況 ≥85 分雙層濾網切換、HOLD/WAIT/SELL 動作決策狀態機。<br>  6. `TestStaticQualityCore` (1項)：靜態 pyflakes 逐一檢查 `core/` 下所有 9 個模組，確保 0 個未定義名稱。 |
+
+### C. 驗證結果
+
+| 測試項目 | 命令 | 結果 |
+|---|---|:---:|
+| 核心策略高覆蓋率單元測試 | `pytest test_core_strategies.py -v` | **27/27 PASS (100%) in 1.02s** |
+| Kline 原生整合與 HMM 測試 | `pytest test_kline_logic.py -v` | **7/7 PASS (100%)** |
+| Bot 業務與自然語言測試 | `python test_bot_logic.py` | **9/9 OK (100%)** |
+| 核心模組靜態程式碼品質 | `pyflakes core/*.py` | **0 Undefined Names** |
+
+---
+
+## Session K：逐步增加單元測試 — 覆蓋分析管線、資料庫隔離與指令處理器 (2026-09-10 11:36)
+
+### A. 需求背景與覆蓋擴充目標
+- **使用者需求**：「逐步增加單元測試」，針對整體 7,800 行生產代碼中覆蓋率偏低的分析管線、資料庫層與指令服務層進行階段式補強。
+- **改進效益**：
+  1. **補強分析管線 (`core/analyzer.py` 944 行)**：撰寫 [`test_analyzer_pipeline.py`](file:///F:/stock/test_analyzer_pipeline.py)，覆蓋 11 種 K 線形態識別（趨勢棒、反轉棒、孕線/雙重孕線 ii、外部棒、Doji、十字星、鎚頭、吞噬、RSI背離）、5分K 當沖 Conformal 雜訊比異常拒絕開倉 (`>2.8x`)、波動過低暫緩開倉 (`<0.35x`)、多時框 (MTF) 日線空方箝制 (`⚠️ 逆日線弱彈`)、主力爆量 6 種形態判定。
+  2. **補強資料庫存取層 (`bot_db.py` 413 行)**：撰寫 [`test_bot_db_isolated.py`](file:///F:/stock/test_bot_db_isolated.py)，在獨立暫時 SQLite 資料庫中測試用戶建立、display_name 即時更新（修復了原本回傳舊資料的潛在瑕疵）、持倉新增與更新、平倉標記、告警冷卻防轟炸去重、自選觀察名單上限控制、雙節點快照匯出/匯入（含 ID 映射與時區時間戳防護）、交易錯誤自動回滾 (Rollback)。
+  3. **補強指令處理器 (`line_server.py` 867 行)**：撰寫 [`test_command_handlers.py`](file:///F:/stock/test_command_handlers.py)，隔離測試拆分後的 9 個 `_cmd_*` 子函式（買進、賣出、持倉查詢、自選增刪查、5分K查詢、說明指引、個股查詢）及主路由器 `handle_user_command` 的分派分流，全數加入邊界與防呆驗證。
+
+### B. 修改檔案與改動清單
+
+| 檔案 | 改動內容 |
+|---|---|
+| [`bot_db.py`](file:///F:/stock/bot_db.py) | • 修復 `get_or_create_user()` 在更新 `display_name` 後未重新查詢最新資料列、導致回傳舊名稱 dict 的潛在 bug。 |
+| [`test_bot_logic.py`](file:///F:/stock/test_bot_logic.py) | • 調整 `test_07_mtf_and_institutional_gate` 斷言，相容盤中若遭遇 Conformal 波動鈍化濾網（暫緩開倉）時同樣能正確壓制多方買點。 |
+| [`test_analyzer_pipeline.py`](file:///F:/stock/test_analyzer_pipeline.py) | • **新增分析管線單元測試（9 項）**：K 線形態 11 種分類、日K全套指標與壓力支撐計算、5分K Conformal 雜訊過大/過小拒絕開倉、MTF 多時框共振/箝制、主力爆量形態。 |
+| [`test_bot_db_isolated.py`](file:///F:/stock/test_bot_db_isolated.py) | • **新增資料庫隔離單元測試（8 項）**：用戶/持倉/觀察名單/告警日誌 CRUD、WAL 併發模式、快照安全同步、異常回滾。 |
+| [`test_command_handlers.py`](file:///F:/stock/test_command_handlers.py) | • **新增指令路由器單元測試（9 項）**：買/賣/持倉/自選/5分K/說明各指令單元隔離測試與輸入容錯。 |
+
+### C. 驗證結果
+
+| 測試套件 | 執行命令 | 結果 | 說明 |
+|---|---|:---:|---|
+| **全套自動化單元測試集** | `pytest test_core_strategies.py test_analyzer_pipeline.py test_bot_db_isolated.py test_command_handlers.py test_kline_logic.py -v` | **60 / 60 PASS (100%)** | 總耗時僅 3.53s，測試數量從 34 項大幅提升至 60 項！ |
+| **靜態語法與未定義變數** | `pyflakes test_*.py bot_db.py core/*.py` | **0 Warnings / 0 Errors** | 代碼完全乾淨無任何未定義名稱。 |
+| **LINE Bot 業務邏輯整合測試** | `python test_bot_logic.py` | **9 / 9 OK (100%)** | 全部 9 項整合端到端場景通過。 |
+
+
+
+
+
 

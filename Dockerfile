@@ -7,22 +7,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Hugging Face Spaces 建議建立 UID 1000 專用使用者以確保沙盒安全
-RUN useradd -m -u 1000 user
-USER user
-ENV HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH \
-    PORT=7860
+# 建立非 root 使用者執行服務（一般容器安全實務，不綁定特定平台）
+RUN useradd -m -u 1000 appuser
+ENV PORT=8080
 
-WORKDIR $HOME/app
-
-# 安裝 Python 依賴
-COPY --chown=user requirements.txt $HOME/app/
+COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-# 複製專案程式碼
-COPY --chown=user . $HOME/app/
+COPY --chown=appuser:appuser . .
+USER appuser
 
-EXPOSE 7860
+EXPOSE 8080
 
-CMD ["sh", "-c", "uvicorn line_server:app --host 0.0.0.0 --port ${PORT:-7860}"]
+CMD ["sh", "-c", "uvicorn line_server:app --host 0.0.0.0 --port ${PORT:-8080}"]

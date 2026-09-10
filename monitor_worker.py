@@ -43,6 +43,18 @@ try:
 except Exception as e:
     logger.warning(f"巡邏 Worker: LINE SDK 未設定憑證，執行模擬告警模式: {e}")
 
+import threading
+from cachetools import TTLCache
+
+# ── 盤中巡檢快取機制（使用 cachetools.TTLCache 防過度請求外部 API 與記憶體洩漏） ──
+# 盤中全量分析快取：最多 128 檔，TTL 60 秒
+_WORKER_ANALYSIS_CACHE = TTLCache(maxsize=128, ttl=60)
+_WORKER_ANALYSIS_LOCK = threading.Lock()
+
+# 盤中即時撮合現價快取：最多 256 檔，TTL 10 秒
+_WORKER_PRICE_CACHE = TTLCache(maxsize=256, ttl=10)
+_WORKER_PRICE_LOCK = threading.Lock()
+
 def is_market_open(force_test=False):
     """判斷當前是否為台股開盤時段 (平日 09:00 ~ 13:35，嚴格鎖定台股 GMT+8 時區)"""
     if force_test:
@@ -69,12 +81,20 @@ def run_patrol_cycle(force_test=False):
             market, sname = get_info(t)
             ticker_market_map[t] = (market, sname or p.get("stock_name", t))
 
-    # 批次取得各標的最新現價
+    # 批次取得各標的最新現價（優先檢查 10s TTLCache 避免過度頻繁打 TWSE API）
     price_cache = {}
     for t, (market, sname) in ticker_market_map.items():
+        with _WORKER_PRICE_LOCK:
+            if t in _WORKER_PRICE_CACHE:
+                price_cache[t] = _WORKER_PRICE_CACHE[t]
+                continue
+
         rt = fetch_realtime_bar(t, market)
         if rt and rt.get("close") and rt["close"] > 0:
-            price_cache[t] = float(rt["close"])
+            p_val = float(rt["close"])
+            price_cache[t] = p_val
+            with _WORKER_PRICE_LOCK:
+                _WORKER_PRICE_CACHE[t] = p_val
         else:
             logger.debug(f"標的 {t} 暫無法取得盤中撮合價，跳過本次檢查。")
 
@@ -132,7 +152,17 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
     4. 價跌量縮良性洗盤守穩 (Wyckoff / VPA)
     """
     try:
-        res = analysis_res or analyze_stock(ticker, months=12, generate_html=False, print_report=False)
+        if analysis_res is not None:
+            res = analysis_res
+        else:
+            with _WORKER_ANALYSIS_LOCK:
+                res = _WORKER_ANALYSIS_CACHE.get(ticker)
+            if res is None:
+                res = analyze_stock(ticker, months=12, generate_html=False, print_report=False)
+                if res and "close_now" in res:
+                    with _WORKER_ANALYSIS_LOCK:
+                        _WORKER_ANALYSIS_CACHE[ticker] = res
+
         df = res.get("df")
         bpa_res = res.get("bpa_res", {})
         sr = res.get("sr_levels", {})

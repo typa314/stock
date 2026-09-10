@@ -1,12 +1,11 @@
 /**
- * Cloudflare Worker - LINE Bot 邊緣智慧多重備援路由器
+ * Cloudflare Worker - LINE Bot 邊緣智慧雙節點備援路由器
  * 
  * 核心特性：
  * 1. 永不休眠、全球邊緣節點加速（延遲 < 15ms）
  * 2. 瀑布式智慧容錯 (Waterfall Failover)：
- *    第 1 順位：本地電腦 (Local PC Tunnel，若有開機享受滿血 CPU 秒回)
- *    第 2 順位：Render 雲端 (主力雲端託管)
- *    第 3 順位：未來備援 (Koyeb / Fly.io / 自建主機，隨時熱插拔)
+ *    第 1 順位：Render 雲端 (主力雲端託管，PREFER_RENDER 可切換優先序)
+ *    第 2 順位：本地電腦 (Local PC Tunnel，若有開機享受滿血 CPU 秒回)
  * 3. 忠實透傳 LINE Webhook 原始 Payload 與 X-Line-Signature
  * 4. 內建全節點即時健康監控儀表 (GET /health)
  */
@@ -26,10 +25,7 @@ export default {
 
     // ── 1. 定義後端備援節點清單（優先順序由上而下） ──
     const localUrl = sanitizeBaseUrl(env.LOCAL_TUNNEL_URL || env.LOCAL_BACKEND_URL || "");
-    const koyebUrl = sanitizeBaseUrl(env.KOYEB_BACKEND_URL || "");
-    const hfUrl = sanitizeBaseUrl(env.HF_BACKEND_URL || "");
     const renderUrl = sanitizeBaseUrl(env.RENDER_BACKEND_URL || "https://tw-stock-bpa-bot.onrender.com");
-    const backup3Url = sanitizeBaseUrl(env.BACKUP_3_URL || "");
 
     const localTimeout = parseInt(env.LOCAL_TIMEOUT_MS || "4200", 10);
     const cloudTimeout = parseInt(env.CLOUD_TIMEOUT_MS || "25000", 10);
@@ -82,39 +78,6 @@ export default {
           isLocal: false
         });
       }
-    }
-
-    // 若有設定 Koyeb，列為備用雲端
-    if (koyebUrl) {
-      backends.push({
-        id: "koyeb_cloud",
-        name: "⚡ Koyeb 雲端 (備用)",
-        baseUrl: koyebUrl,
-        timeoutMs: cloudTimeout,
-        isLocal: false
-      });
-    }
-
-    // 若有設定 Hugging Face，列為備用雲端
-    if (hfUrl) {
-      backends.push({
-        id: "huggingface_cloud",
-        name: "🤗 Hugging Face 旗艦雲端",
-        baseUrl: hfUrl,
-        timeoutMs: cloudTimeout,
-        isLocal: false
-      });
-    }
-
-    // 第三備援節點（若有設定）
-    if (backup3Url) {
-      backends.push({
-        id: "backup_tier_3",
-        name: "🚀 第三雲端備援 (Koyeb/Fly.io)",
-        baseUrl: backup3Url,
-        timeoutMs: cloudTimeout,
-        isLocal: false
-      });
     }
 
     // ── 2. 健康檢查端點 (GET /health 或 GET /) ──

@@ -1658,21 +1658,9 @@ def build_5m_stock_flex(res5: dict) -> dict:
                 {
                     "type": "button",
                     "style": "primary",
-                    "color": "#0284c7",
-                    "height": "sm",
-                    "flex": 2,
-                    "action": {
-                        "type": "message",
-                        "label": "📊 查日K (4合1)",
-                        "text": ticker
-                    }
-                },
-                {
-                    "type": "button",
-                    "style": "primary",
                     "color": "#d97706",
                     "height": "sm",
-                    "flex": 2,
+                    "flex": 1,
                     "action": {
                         "type": "message",
                         "label": f"⭐ 關注 {ticker}",
@@ -1684,7 +1672,7 @@ def build_5m_stock_flex(res5: dict) -> dict:
                     "style": "primary",
                     "color": "#2563eb",
                     "height": "sm",
-                    "flex": 2,
+                    "flex": 1,
                     "action": {
                         "type": "message",
                         "label": "💼 查看持倉",

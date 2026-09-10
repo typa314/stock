@@ -28,6 +28,10 @@ except Exception as e:
     st.exception(e)
     st.stop()
 
+# 是否為 DEV 環境（原 devapp.py 的用途，現由環境變數控制，避免整份檔案重複維護）
+# 部署 DEV 驗證環境時設定 APP_ENV=dev 即可顯示提示 banner，正式環境不需設定。
+IS_DEV_ENV = os.environ.get("APP_ENV", "prod").strip().lower() == "dev"
+
 # ── 1. 頁面設定（手機版體驗最佳化） ─────────────────────────
 st.set_page_config(
     page_title=f"台股多維量化操盤系統 v{__version__}",
@@ -227,6 +231,14 @@ def render_cost_stop_loss_card(cost_price, current_price):
 
 # ── 3. 頂部導覽與股票選擇區 ──────────────────────────────────
 st.markdown(f"### ⚡ 台股多維量化操盤系統 <span style='font-size: 0.8rem; color: #94a3b8; font-weight: normal;'>v{__version__}</span>", unsafe_allow_html=True)
+
+if IS_DEV_ENV:
+    st.markdown(f"""
+    <div style="background: rgba(234, 179, 8, 0.12); border: 1px solid #eab308; color: #facc15; padding: 6px 12px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+        <span>🛠️ <b>DEV 開發驗證環境</b>：新功能與介面試驗中，驗證確認無誤後再同步推送到正式環境（設定 APP_ENV=prod 或移除此環境變數即可恢復正式樣式）</span>
+        <span style="font-size: 0.72rem; color: #94a3b8; font-weight: normal; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">v{__version__}-dev</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 # 快捷熱門股按鈕
 quick_tickers = [
