@@ -11,35 +11,40 @@ import time
 import pandas as pd
 import yfinance as yf
 
-# 核心種子標的名單（台股 50 成分股 + 系統常測熱門股）
+# 核心種子標的名單（台股 50 全體成分股 + 系統常測熱門股與代表性 ETF，共 71 檔）
 TOP_TICKERS = [
-    # 半導體 / 電子代工 / 權值股
+    # ── 1. 台灣 50 (0050) 全體科技與電子權值 (20 檔) ──
     ("2330", "TW"), ("2454", "TW"), ("2317", "TW"), ("2308", "TW"), ("2382", "TW"),
     ("2379", "TW"), ("3008", "TW"), ("3034", "TW"), ("2303", "TW"), ("3711", "TW"),
     ("2357", "TW"), ("2395", "TW"), ("3231", "TW"), ("4938", "TW"), ("2327", "TW"),
-    ("3042", "TW"), ("3443", "TW"), ("3661", "TW"), ("6669", "TW"), ("6415", "TWO"),
-    ("6182", "TWO"), ("6446", "TWO"), ("8046", "TW"), ("2376", "TW"), ("1717", "TW"),
-    # 金融股
+    ("3661", "TW"), ("6669", "TW"), ("3037", "TW"), ("2345", "TW"), ("2301", "TW"),
+    # ── 2. 台灣 50 全體金融權值 (15 檔) ──
     ("2881", "TW"), ("2882", "TW"), ("2891", "TW"), ("2886", "TW"), ("2884", "TW"),
     ("2885", "TW"), ("2880", "TW"), ("5880", "TW"), ("2892", "TW"), ("2887", "TW"),
-    ("2890", "TW"), ("5871", "TW"), ("5876", "TW"),
-    # 航運 / 傳產 / 塑化 / 原物料
-    ("2603", "TW"), ("2609", "TW"), ("2615", "TW"), ("2618", "TW"), ("2610", "TW"),
-    ("1101", "TW"), ("1216", "TW"), ("1301", "TW"), ("1303", "TW"), ("2002", "TW"),
-    ("6505", "TW"), ("2207", "TW"), ("2912", "TW"), ("9910", "TW"),
-    # 熱門 ETF
-    ("0050", "TW"), ("0056", "TW"), ("00878", "TW"), ("00919", "TW"), ("00929", "TW")
+    ("2890", "TW"), ("5871", "TW"), ("5876", "TW"), ("2801", "TW"), ("2883", "TW"),
+    # ── 3. 台灣 50 全體電信與公用事業 (3 檔) ──
+    ("2412", "TW"), ("3045", "TW"), ("4904", "TW"),
+    # ── 4. 台灣 50 全體傳產、航運、原物料、零售 (12 檔) ──
+    ("2603", "TW"), ("2609", "TW"), ("2615", "TW"),
+    ("1101", "TW"), ("1102", "TW"), ("1216", "TW"), ("1301", "TW"), ("1303", "TW"),
+    ("1326", "TW"), ("2002", "TW"), ("6505", "TW"), ("2912", "TW"),
+    # ── 5. 熱門中小型龍頭、高價千金、生技與 OTC 標竿 (15 檔) ──
+    ("2618", "TW"), ("2610", "TW"), ("2207", "TW"), ("9910", "TW"),
+    ("2376", "TW"), ("1717", "TW"), ("3042", "TW"), ("3443", "TW"), ("8046", "TW"),
+    ("6446", "TWO"), ("6182", "TWO"), ("6415", "TWO"), ("6643", "TWO"), ("8069", "TWO"), ("3293", "TWO"),
+    # ── 6. 指標與高股息 ETF (6 檔) ──
+    ("0050", "TW"), ("0056", "TW"), ("00878", "TW"), ("00919", "TW"), ("00929", "TW"), ("00708L", "TW")
 ]
 
 
-def generate_seeds(output_path=None, period="18mo"):
+def generate_seeds(output_path=None, period="5y"):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if output_path is None:
         seeds_dir = os.path.join(base_dir, "seeds")
         os.makedirs(seeds_dir, exist_ok=True)
         output_path = os.path.join(seeds_dir, "tw_stock_seeds.parquet")
 
-    print(f"[*] 開始產出 Parquet 種子檔，共 {len(TOP_TICKERS)} 檔標的...")
+    print(f"[*] 開始產出 Parquet 種子檔（歷史週期：{period}），共 {len(TOP_TICKERS)} 檔標的...")
     all_rows = []
 
     for ticker, suffix in TOP_TICKERS:
@@ -71,7 +76,7 @@ def generate_seeds(output_path=None, period="18mo"):
                         "close": float(row["close"]),
                         "volume": float(row["volume_shares"])
                     })
-                print(f"  [OK] {ticker} ({len(df)} 根日K)")
+                print(f"  [OK] {ticker} ({len(df)} 根日K, {df['date_str'].iloc[0]} ~ {df['date_str'].iloc[-1]})")
             else:
                 print(f"  [WARN] {ticker} 無法取得歷史日K")
         except Exception as e:
@@ -95,9 +100,14 @@ def generate_seeds(output_path=None, period="18mo"):
     print(f"\n[SUCCESS] 已產出種子檔: {output_path}")
     print(f"  總筆數: {len(seed_df):,} 列")
     print(f"  涵蓋標的: {seed_df['ticker'].nunique()} 檔")
-    print(f"  檔案大小: {file_size_kb:.1f} KB")
+    print(f"  時間跨度: {seed_df['date'].min()} ~ {seed_df['date'].max()}")
+    print(f"  檔案大小: {file_size_kb:.1f} KB ({file_size_kb/1024:.2f} MB)")
     return output_path
 
 
 if __name__ == "__main__":
-    generate_seeds()
+    import argparse
+    parser = argparse.ArgumentParser(description="台股種子檔產生工具")
+    parser.add_argument("--period", default="5y", help="歷史長度 (如 5y, 10y, max，預設 5y)")
+    args = parser.parse_args()
+    generate_seeds(period=args.period)
