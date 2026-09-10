@@ -25,6 +25,9 @@
    - 依使用者審核意見修訂，更正 Anti-Chase 現況為「尚未落地於 main」，並記錄 HOLD 門檻 ≥65 建議收緊至 ≥70 之量化依據。
 4. `README.md`：
    - 更新 Changelog 新增 v3.4.0 版本紀錄。
+5. `setup_rich_menu.py`：
+   - 依使用者指示，調用 LINE Messaging API 解除預設並刪除線上所有 Rich Menu，成功移除 LINE 對話頁面底部的服務導覽列。
+   - 實作 `remove_rich_menu()` 函式與 `--remove` 參數支援，加入 UTF-8 控制台輸出保護。
 
 ### B. 驗證狀態
 - `python backtest/check_lookahead.py 2330`：253 個交易日 48 欄位 100% 一致通過。

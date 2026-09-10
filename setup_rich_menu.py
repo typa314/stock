@@ -10,6 +10,12 @@ import sys
 import io
 from dotenv import load_dotenv
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
@@ -208,5 +214,28 @@ def setup_rich_menu():
     line_bot_api.set_default_rich_menu(rich_menu_id)
     print(f"🎉 大功告成！所有加入 LINE Bot 的用戶現在打開對話框，底部都會自動顯示「⚡ 智能操盤選單」！")
 
+
+def remove_rich_menu():
+    """移除並清空 LINE Bot 底部預設服務導覽列 (Rich Menu)"""
+    print("🧹 正在取消預設並刪除所有 LINE 底部導覽列 (Rich Menu)...")
+    try:
+        line_bot_api.cancel_default_rich_menu()
+        print("✅ 已成功解除所有用戶的預設 Rich Menu 綁定")
+    except Exception as e:
+        print(f"ℹ️ 解除預設選單提示: {e}")
+
+    try:
+        menus = line_bot_api.get_rich_menu_list()
+        for m in menus:
+            line_bot_api.delete_rich_menu(m.rich_menu_id)
+            print(f"🗑️ 已刪除選單 ID: {m.rich_menu_id}")
+        print(f"🎉 大功告成！已成功移除 LINE 頁面底部的導覽列（共清理 {len(menus)} 個選單）。")
+    except Exception as e:
+        print(f"❌ 刪除選單失敗: {e}")
+
+
 if __name__ == "__main__":
-    setup_rich_menu()
+    if len(sys.argv) > 1 and sys.argv[1] in ("--remove", "--delete", "-d", "remove", "delete"):
+        remove_rich_menu()
+    else:
+        setup_rich_menu()
