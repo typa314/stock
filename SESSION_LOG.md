@@ -10,6 +10,32 @@
 
 ---
 
+## 2026-09-11 ｜ 修復 ETF (如 00712 / 00708L) 查詢 Yahoo 基本面誤觸 .TWO 404 報錯問題
+
+參與者：使用者、Gemini agent。
+回報現象：`HTTP Error 404: {"quoteSummary":{"result":null,"error":{"code":"Not Found","description":"Quote not found for symbol: 00712.TWO"}}}`。
+
+### A. 根因分析（Root Cause）
+1. `00712`（復華富時不動產）與 `00708L`（元大S&P黃金正2）為**台灣證券交易所（TWSE）上市**之 ETF，在 Yahoo Finance 上標準代號為 `.TW`。
+2. 原始程式 `core/data_fetch.py` 的 `fetch_fundamentals` 函式中，第 392 行判定條件為：
+   `if not info or not info.get("trailingEps"): sym_alt = ... info = yf.Ticker(sym_alt).info`
+3. 由於**指數型基金 (ETF) 本身沒有公司個股之每股盈餘（`trailingEps`）**，該條件必定為 True，導致即使 `00712.TW` 已經成功抓取到 93 項完整欄位（含殖利率 9.32%），程式卻誤判為「查錯市場」，強制向 yfinance 請求不存在的 `00712.TWO`（上櫃），因而觸發 Yahoo Finance 伺服器回傳 `HTTP Error 404 (Quote not found for symbol: 00712.TWO)`，且覆蓋抹除了原本已取得的有效資料。
+
+### B. 改動內容
+- `core/data_fetch.py`（`fetch_fundamentals`）：
+  - 修正備援切換條件：改為 `is_valid_info = bool(info and isinstance(info, dict) and ("symbol" in info or "shortName" in info))`。
+  - 僅在原始代號查詢完全為空或無效（查無此代號）時才嘗試備援後綴；若已有有效字典資料，即使缺少 `trailingEps`（如 ETF 或虧損公司）也不再錯誤發起 `.TWO` 請求。
+  - 對 ETF 之 `dividendYield` 提供自動百分比歸一化處理。
+
+### C. 驗證結果
+- 實測 `fetch_fundamentals('00712', 'tse')`：404 報錯徹底消除，成功保留 `dividend_yield: 9.32%` 與 `has_data: True`。
+- 實測 `fetch_fundamentals('00708L', 'tse')`：404 報錯徹底消除。
+- 實測 `2330`（台積電，上市普通股）與 `6643`（M31，上櫃股票）：基本面資料皆完整正常取得。
+- 單元測試：`pytest test_analyzer_pipeline.py test_core_strategies.py test_strategy_timing.py` 46/46 100% 通過。
+- 靜態檢查：`pyflakes core/data_fetch.py` 0 errors / 0 warnings。
+
+---
+
 ## 2026-09-10 ｜ 歷史基準回測資料庫審查、archive 崩潰修復與停損真實滑價結算（test/mtf-strategy 分支）
 
 參與者：使用者、Gemini agent。

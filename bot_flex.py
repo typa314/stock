@@ -1354,6 +1354,20 @@ def build_5m_stock_flex(res5: dict) -> dict:
     pct_1r = abs(target_1r - close_now) / close_now * 100 if close_now > 0 else 0.0
     pct_2r = abs(target_2r - close_now) / close_now * 100 if close_now > 0 else 0.0
 
+    # 提取盤中即時撮合與 5m K 棒時間資訊
+    rt_info = res5.get("realtime_info")
+    is_rt = bool(rt_info and rt_info.get("is_realtime"))
+    rt_time = rt_info.get("time", "") if is_rt else ""
+    bar_time = data_time_str.split(" ")[-1] if data_time_str else ""
+    time_label = f"⚡ 即時 {rt_time} (5m {bar_time})" if (is_rt and rt_time) else (f"5m棒 {bar_time}" if bar_time else "")
+
+    intraday_pct = float(res5.get("intraday_change_pct", 0.0)) if res5.get("intraday_change_pct") is not None else None
+    if intraday_pct is not None:
+        intra_sign = "+" if intraday_pct > 0 else ""
+        range_label = f"振幅 {range_today:.2f}元 ({low_today:.2f}~{high_today:.2f}) ｜ 今開 {intra_sign}{intraday_pct:.2f}%"
+    else:
+        range_label = f"振幅 {range_today:.2f}元 ({low_today:.2f}~{high_today:.2f})"
+
     flex_bubble = {
         "type": "bubble",
         "size": "giga",
@@ -1425,18 +1439,18 @@ def build_5m_stock_flex(res5: dict) -> dict:
                     "contents": [
                         {
                             "type": "text",
-                            "text": f"⚡ 5分K ｜ 振幅 {range_today:.2f}元 ({low_today:.2f}~{high_today:.2f})",
+                            "text": range_label,
                             "size": "xxs",
                             "color": "#94a3b8",
                             "flex": 5
                         },
                         {
                             "type": "text",
-                            "text": data_time_str.split(" ")[-1] if data_time_str else "",
+                            "text": time_label,
                             "size": "xxs",
                             "color": "#64748b",
                             "align": "end",
-                            "flex": 3
+                            "flex": 4
                         }
                     ]
                 }

@@ -604,13 +604,74 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
     today_date = df["date"].iloc[-1].date()
     df_today = df[df["date"].dt.date == today_date]
 
-    close_now = float(df["close"].iloc[-1])
-    open_today = float(df_today["open"].iloc[0]) if not df_today.empty else close_now
-    high_today = float(df_today["high"].max()) if not df_today.empty else close_now
-    low_today = float(df_today["low"].min()) if not df_today.empty else close_now
+    bar_close = float(df["close"].iloc[-1])
+    open_today = float(df_today["open"].iloc[0]) if not df_today.empty else bar_close
+    high_today = float(df_today["high"].max()) if not df_today.empty else bar_close
+    low_today = float(df_today["low"].min()) if not df_today.empty else bar_close
+
+    # ── 多時框對齊 (Multi-Timeframe Alignment: MTF) 與行情解耦整合 ──
+    # 提前取得日K級別核心架構、官方結算昨收價與 TWSE MIS 即時撮合行情
+    daily_res = None
+    daily_always_code = "TR"
+    daily_trend_score = 0
+    daily_ma20 = bar_close
+    inst_net_3d = 0
+    prev_close = None
+    realtime_info = None
+
+    try:
+        daily_res = analyze_stock(ticker, months=3, generate_html=False, print_report=False, quick_mode=True)
+        if daily_res:
+            b_res = daily_res.get("bpa_res", {})
+            daily_always_code = b_res.get("always_in_code", "TR")
+            daily_trend_score = daily_res.get("trend_score", 0)
+            df_d = daily_res.get("df")
+            if df_d is not None and not df_d.empty and "ma20" in df_d.columns:
+                daily_ma20 = float(df_d["ma20"].iloc[-1])
+            inst_df = daily_res.get("inst_df")
+            if inst_df is not None and not inst_df.empty and "total" in inst_df.columns:
+                inst_net_3d = int(inst_df["total"].tail(3).sum())
+
+            # 從日線取得官方結算之昨收價
+            if df_d is not None and not df_d.empty and "close" in df_d.columns:
+                last_d_date = df_d["date"].iloc[-1]
+                last_d_date = last_d_date.date() if hasattr(last_d_date, "date") else pd.to_datetime(last_d_date).date()
+                if last_d_date == today_date and len(df_d) >= 2:
+                    prev_close = float(df_d["close"].iloc[-2])
+                elif last_d_date < today_date:
+                    prev_close = float(df_d["close"].iloc[-1])
+                elif len(df_d) >= 2:
+                    prev_close = float(df_d["close"].iloc[-2])
+
+            realtime_info = daily_res.get("realtime_info")
+    except Exception as e:
+        print(f"  [WARN] 5分K多時框讀取日線異常：{e}")
+
+    # 若未能從日線取得昨收價，備援自 5分K 歷史數據提取前一交易日最後一根棒
+    if prev_close is None or prev_close <= 0:
+        df_prev = df[df["date"].dt.date < today_date]
+        if not df_prev.empty:
+            prev_close = float(df_prev["close"].iloc[-1])
+        else:
+            prev_close = open_today
+
+    # 若有盤中秒級即時撮合價，現價採用即時撮合價（與日K 100% 同步）；否則採用最後一根 5m 棒收盤價
+    if realtime_info and realtime_info.get("is_realtime") and daily_res and daily_res.get("close_now"):
+        close_now = float(daily_res["close_now"])
+        if "high" in realtime_info and realtime_info["high"] > 0:
+            high_today = max(high_today, float(realtime_info["high"]))
+        if "low" in realtime_info and realtime_info["low"] > 0:
+            low_today = min(low_today, float(realtime_info["low"]))
+    else:
+        close_now = bar_close
+
     range_today = round(high_today - low_today, 2)
-    change_today = round(close_now - open_today, 2)
-    change_today_pct = round(change_today / (open_today + 1e-9) * 100, 2)
+    # 以前一交易日收盤價為基準計算公認標準漲跌與漲跌幅
+    change_today = round(close_now - prev_close, 2)
+    change_today_pct = round(change_today / (prev_close + 1e-9) * 100, 2)
+    # 開盤以來盤中振幅（輔助指標）
+    intraday_change = round(close_now - open_today, 2)
+    intraday_change_pct = round(intraday_change / (open_today + 1e-9) * 100, 2)
 
     # 5m 20 EMA 乖離
     ema_now = float(df["ema20"].iloc[-1])
@@ -726,30 +787,7 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         stop_direction = "-"
         entry_type = "區間高出低進價位"
 
-    # ── 多時框對齊 (Multi-Timeframe Alignment: MTF) ──
-    # 取得日K級別核心架構與籌碼，落實大時框箝制小時框，嚴禁逆大趨勢盲目做多
-    daily_res = None
-    daily_always_code = "TR"
-    daily_ma20 = close_now
-    daily_trend_score = 0
-    inst_net_3d = 0
-    try:
-        daily_res = analyze_stock(ticker, months=3, generate_html=False, print_report=False, quick_mode=True)
-        if daily_res:
-            b_res = daily_res.get("bpa_res", {})
-            daily_always_code = b_res.get("always_in_code", "TR")
-            daily_trend_score = daily_res.get("trend_score", 0)
-            df_d = daily_res.get("df")
-            if df_d is not None and not df_d.empty and "ma20" in df_d.columns:
-                daily_ma20 = float(df_d["ma20"].iloc[-1])
-            inst_df = daily_res.get("inst_df")
-            if inst_df is not None and not inst_df.empty and "total" in inst_df.columns:
-                inst_net_3d = int(inst_df["total"].tail(3).sum())
-    except Exception as e:
-        # kline.py 未引入 logging，統一沿用本檔既有的 print 警示風格；
-        # 原本誤用未定義的 logger 會在此拋出 NameError，反而蓋掉真正的例外。
-        print(f"  [WARN] 5分K多時框讀取日線異常：{e}")
-
+    # ── 多時框對齊 (Multi-Timeframe Alignment: MTF) 架構判斷 ──
     # 日線是否處於空方破線架構（AIS 或跌破日MA20達0.5%以上，或波段評分 <= -2）
     is_daily_bear = (daily_always_code == "AIS") or (close_now < daily_ma20 * 0.995) or (daily_trend_score <= -2)
     # 日線是否處於多頭主控架構（AIL 且站穩日MA20）
@@ -971,6 +1009,11 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         "conformal_status": conformal_status,
         "data_time_str": data_time_str,
         "data_cutoff_time": df["date"].iloc[-1].strftime("%H:%M:%S") if not df.empty else "",
+        "prev_close": prev_close,
+        "bar_close": bar_close,
+        "intraday_change": intraday_change,
+        "intraday_change_pct": intraday_change_pct,
+        "realtime_info": realtime_info,
         "is_delayed": True,
         "data_source": "Yahoo Finance (5分K)"
     }

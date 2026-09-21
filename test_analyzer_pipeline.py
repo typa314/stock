@@ -244,6 +244,47 @@ class TestAnalyzeStock5m(unittest.TestCase):
         self.assertIn("主力放量推升", res["whale_tag"])
         self.assertGreaterEqual(res["vol_ratio_5m"], 1.8)
 
+    @patch("core.analyzer.get_info", return_value=("tse", "台積電"))
+    @patch("yfinance.download")
+    @patch("core.analyzer.analyze_stock")
+    def test_5m_price_and_change_calculation(self, mock_daily, mock_yf, mock_info):
+        """Verify 5m price quotes and change % anchored to previous close, not open."""
+        raw = self._generate_5m_raw(n=50, noise_mult=1.0, is_bull=True)
+        # Assume today open is 105.0, last 5m bar close is 104.0 (opened high and pulled back)
+        raw.iloc[0, raw.columns.get_loc("open")] = 105.0
+        raw.iloc[-1, raw.columns.get_loc("close")] = 104.0
+
+        mock_yf.return_value = raw
+        # Yesterday close in daily df is 100.0, realtime matching price is 104.5
+        mock_daily.return_value = {
+            "bpa_res": {"always_in_code": "AIL"},
+            "trend_score": 3,
+            "close_now": 104.5,
+            "realtime_info": {"is_realtime": True, "time": "10:30:00", "high": 106.0, "low": 103.5},
+            "df": pd.DataFrame({
+                "date": pd.to_datetime(["2026-09-09", "2026-09-10"]),
+                "close": [100.0, 104.5], # 100.0 is prev_close
+                "ma20": [98.0, 99.0]
+            })
+        }
+
+        res = analyze_stock_5m("2330", days=1)
+
+        # 1. 頂部現價應同步為即時撮合價 104.5，而非過時的 5m 棒 104.0
+        self.assertEqual(res["close_now"], 104.5)
+        self.assertEqual(res["bar_close"], 104.0)
+
+        # 2. 昨收價應為 100.0
+        self.assertEqual(res["prev_close"], 100.0)
+
+        # 3. 漲跌幅應基於昨收 (100.0)，即 104.5 - 100.0 = +4.5 (+4.5%)，絕非 104.5 - 105.0 = -0.5
+        self.assertEqual(res["change_today"], 4.5)
+        self.assertEqual(res["change_today_pct"], 4.5)
+
+        # 4. 今開振幅應為 104.5 - 105.0 = -0.5
+        self.assertEqual(res["intraday_change"], -0.5)
+        self.assertAlmostEqual(res["intraday_change_pct"], -0.48, places=2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -389,10 +389,16 @@ def fetch_fundamentals(ticker, market="tse"):
             sym = f"{ticker}.TW" if market == "tse" else f"{ticker}.TWO"
             t_obj = yf.Ticker(sym)
             info = t_obj.info
-            if not info or not info.get("trailingEps"):
+            # 只有當原始查詢完全為空或無效 (例如查無此代號)，才嘗試另一市場後綴
+            is_valid_info = bool(info and isinstance(info, dict) and ("symbol" in info or "shortName" in info))
+            if not is_valid_info:
                 sym_alt = f"{ticker}.TWO" if market == "tse" else f"{ticker}.TW"
-                info = yf.Ticker(sym_alt).info
-            if info and (info.get("trailingEps") is not None or info.get("trailingPE") is not None):
+                alt_obj = yf.Ticker(sym_alt)
+                info_alt = alt_obj.info
+                if info_alt and isinstance(info_alt, dict) and ("symbol" in info_alt or "shortName" in info_alt):
+                    info = info_alt
+
+            if info and isinstance(info, dict):
                 if res["eps_ttm"] is None and info.get("trailingEps") is not None:
                     res["eps_ttm"] = round(float(info["trailingEps"]), 2)
                     res["latest_quarter"] = "近四季"
@@ -401,14 +407,16 @@ def fetch_fundamentals(ticker, market="tse"):
                 if res["pbr"] is None and info.get("priceToBook") is not None:
                     res["pbr"] = round(float(info["priceToBook"]), 2)
                 if res["dividend_yield"] is None and info.get("dividendYield") is not None:
-                    res["dividend_yield"] = round(float(info["dividendYield"]) * 100, 2)
+                    dy_raw = float(info["dividendYield"])
+                    res["dividend_yield"] = round(dy_raw if dy_raw > 1.0 else dy_raw * 100, 2)
                 if res["gross_margin"] is None and info.get("grossMargins") is not None:
                     res["gross_margin"] = round(float(info["grossMargins"]) * 100, 1)
                 if res["operating_margin"] is None and info.get("operatingMargins") is not None:
                     res["operating_margin"] = round(float(info["operatingMargins"]) * 100, 1)
                 if res["revenue_yoy"] is None and info.get("revenueGrowth") is not None:
                     res["revenue_yoy"] = round(float(info["revenueGrowth"]) * 100, 2)
-                res["has_data"] = True
+                if any(res[k] is not None for k in ["per", "pbr", "dividend_yield", "eps_ttm", "gross_margin"]):
+                    res["has_data"] = True
         except Exception:
             pass
 
