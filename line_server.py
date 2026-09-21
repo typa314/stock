@@ -550,30 +550,6 @@ def _cmd_view_watchlist(user_id: str, user_name: str):
 
 
 
-def _cmd_5m_query(raw_text: str, action: str, tokens: list):
-    """查詢 5 分鐘 K 線當沖研判"""
-    m_5m = re.match(r"^(k|5k|5m|5分|當沖)\s*(\d{4,6}[a-zA-Z]?)(\.(tw|two))?$", raw_text, re.IGNORECASE)
-    if m_5m and m_5m.group(2):
-        ticker_raw = m_5m.group(2)
-    elif len(tokens) >= 2:
-        ticker_raw = tokens[1].strip()
-    else:
-        ticker_raw = ""
-
-    cleaned_t = re.sub(r"\.(tw|two)$", "", ticker_raw, flags=re.IGNORECASE).upper()
-    ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
-    if not ticker_match:
-        return "⚠️ 請提供欲查詢 5 分 K 的股票代號，例如「k2330」或「k 00708L」"
-    ticker = ticker_match.group().upper()
-
-    try:
-        res5 = get_cached_5m_analysis(ticker, days=3)
-        return bot_flex.build_5m_stock_flex(res5)
-    except Exception as e:
-        logger.error(f"查詢 5分K【{ticker}】失敗: {e}", exc_info=True)
-        return f"⚠️ 查詢股票【{ticker}】5 分鐘 K 線失敗：{e}"
-
-
 def _cmd_stock_query(cmd: str):
     """單檔股票代號查詢 (日K 4合1 旗艦 + 5分K 當沖 Carousel 雙時框輪播)"""
     cleaned_cmd = re.sub(r"\.(tw|two)\b", "", cmd, flags=re.IGNORECASE)
@@ -614,6 +590,14 @@ def _cmd_stock_query(cmd: str):
         # 2. 整合 5 分鐘 K 線當沖研判為雙時框 Carousel 輪播 (左右滑動切換)
         try:
             res5 = get_cached_5m_analysis(ticker, days=3)
+            # 確保 5m 卡片與日K即時行情 100% 共享最新撮合與昨收基準
+            if res.get("close_now") and res.get("realtime_info"):
+                res5["close_now"] = float(res["close_now"])
+                res5["realtime_info"] = res.get("realtime_info")
+            if prev_close and prev_close > 0:
+                res5["prev_close"] = float(prev_close)
+                res5["change_today"] = round(res5["close_now"] - res5["prev_close"], 2)
+                res5["change_today_pct"] = round(res5["change_today"] / res5["prev_close"] * 100, 2)
             bubble_5m = bot_flex.build_5m_stock_flex(res5)
             flex_dict = bot_flex.build_stock_carousel_flex(bubble_daily, bubble_5m)
         except Exception as e5:
@@ -642,9 +626,7 @@ def _cmd_help() -> str:
         "   +2330 (快速加入追蹤)\n"
         "   -2330 (快速取消關注)\n"
         "📌 個股雙時框 (日K+5分K) 輪播：\n"
-        "   直接輸入代號，如「2330」或「00708L」（左右滑動切換波段與當沖）\n\n"
-        "📌 單獨查 5分K 當沖：\n"
-        "   k2330 或 5k 2330 (查5分鐘K線與當沖掛單)\n"
+        "   直接輸入代號，如「2330」或「00708L」（左右滑動切換波段與當沖）\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "🛡️ 盤中跌破 -7% 停損或觸發高勝率買點時主動通知！"
     )
@@ -659,7 +641,6 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     - 賣 [代號]
     - 持倉 / 庫存 / 損益
     - 自選 / 觀察名單 (+/-)
-    - 5分K 當沖 (k2330)
     - [純代號] 查 4合1 多維量化研判 (雙時框 Carousel)
     - 說明 / help
     """
@@ -695,13 +676,6 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     # 3.3 查詢自選觀察清單
     elif action in ["自選", "自選股", "觀察名單", "清單", "watchlist", "wl"]:
         return _cmd_view_watchlist(user_id, user_name)
-
-    # 3.9 查詢 5 分鐘 K 線當沖研判 (支援 k2330, K2330, k 2330, 5k 2330, 5m 2330, 5分 2330, 當沖 2330 等)
-    elif (
-        re.match(r"^(k|5k|5m|5分|當沖)\s*(\d{4,6}[a-zA-Z]?)(\.(tw|two))?$", raw_text, re.IGNORECASE)
-        or (action in ["k", "5k", "5m", "5分", "當沖"] and len(tokens) >= 2)
-    ):
-        return _cmd_5m_query(raw_text, action, tokens)
 
     # 4. 單檔股票代號查詢 (支援純代號 2330, 00708L, 查 2330, 診斷 00708L, 2330.TW 等)
     elif (

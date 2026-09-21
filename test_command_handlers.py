@@ -21,7 +21,7 @@ from unittest.mock import patch
 import bot_db
 from line_server import (
     _cmd_buy, _cmd_sell, _cmd_portfolio, _cmd_add_watchlist,
-    _cmd_remove_watchlist, _cmd_view_watchlist, _cmd_5m_query,
+    _cmd_remove_watchlist, _cmd_view_watchlist,
     _cmd_help, handle_user_command
 )
 
@@ -146,26 +146,13 @@ class TestCommandHandlers(unittest.TestCase):
         msg = _cmd_view_watchlist("U_EMPTY_WATCH", "TestUser")
         self.assertIn("自選觀察名單目前是空的", msg)
 
-    @patch("line_server.get_cached_5m_analysis")
-    @patch("bot_flex.build_5m_stock_flex", return_value={"type": "flex", "altText": "5m"})
-    def test_cmd_5m_query(self, mock_flex, mock_5m):
-        """Test 5m query (k2330, 5k 2330)."""
-        mock_5m.return_value = {"ticker": "2330", "close": 950.0}
-
-        # Valid 5m
-        res = _cmd_5m_query("k2330", "k", ["k2330"])
-        self.assertEqual(res, {"type": "flex", "altText": "5m"})
-
-        # Missing ticker
-        err_msg = _cmd_5m_query("k", "k", ["k"])
-        self.assertIn("請提供欲查詢 5 分 K 的股票代號", err_msg)
-
     def test_cmd_help(self):
         """Test _cmd_help returns instruction text."""
         h = _cmd_help()
         self.assertIn("量化操盤秘書指令指南", h)
         self.assertIn("買 2330 980", h)
         self.assertIn("賣 2330", h)
+        self.assertNotIn("k2330", h, "說明文字不應再包含舊版 k2330 指令")
 
     @patch("line_server._cmd_buy", return_value="BUY_DISPATCHED")
     @patch("line_server._cmd_sell", return_value="SELL_DISPATCHED")
@@ -173,13 +160,12 @@ class TestCommandHandlers(unittest.TestCase):
     @patch("line_server._cmd_add_watchlist", return_value="ADD_WATCH_DISPATCHED")
     @patch("line_server._cmd_remove_watchlist", return_value="REM_WATCH_DISPATCHED")
     @patch("line_server._cmd_view_watchlist", return_value="VIEW_WATCH_DISPATCHED")
-    @patch("line_server._cmd_5m_query", return_value="5M_DISPATCHED")
     @patch("line_server._cmd_help", return_value="HELP_DISPATCHED")
     @patch("line_server._cmd_stock_query", return_value="STOCK_QUERY_DISPATCHED")
-    def test_handle_user_command_dispatcher(self, mock_stock, mock_help, mock_5m,
+    def test_handle_user_command_dispatcher(self, mock_stock, mock_help,
                                             mock_vwatch, mock_rwatch, mock_awatch,
                                             mock_port, mock_sell, mock_buy):
-        """Test handle_user_command routes to all 9 sub-handlers properly."""
+        """Test handle_user_command routes to sub-handlers properly."""
         uid = "U_DISPATCH"
 
         # 1. Buy
@@ -205,15 +191,11 @@ class TestCommandHandlers(unittest.TestCase):
         self.assertEqual(handle_user_command(uid, "自選"), "VIEW_WATCH_DISPATCHED")
         self.assertEqual(handle_user_command(uid, "清單"), "VIEW_WATCH_DISPATCHED")
 
-        # 7. 5m Query
-        self.assertEqual(handle_user_command(uid, "k2330"), "5M_DISPATCHED")
-        self.assertEqual(handle_user_command(uid, "5k 2330"), "5M_DISPATCHED")
-
-        # 8. Help
+        # 7. Help
         self.assertEqual(handle_user_command(uid, "說明"), "HELP_DISPATCHED")
         self.assertEqual(handle_user_command(uid, "help"), "HELP_DISPATCHED")
 
-        # 9. Stock query (single ticker)
+        # 8. Stock query (single ticker)
         self.assertEqual(handle_user_command(uid, "2330"), "STOCK_QUERY_DISPATCHED")
 
         # 10. Empty command
