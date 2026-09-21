@@ -29,7 +29,7 @@ from cachetools import TTLCache
 
 import bot_db
 import bot_flex
-from kline import get_info, fetch_realtime_bar, analyze_stock, analyze_stock_5m, compute_risk_stop
+from kline import get_info, fetch_realtime_bar, analyze_stock, analyze_stock_5m, compute_risk_stop, __version__
 
 # 設定記錄檔
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -255,6 +255,7 @@ def startup_event():
 def health_check():
     return {
         "status": "online",
+        "version": __version__,
         "service": "Stock Quantitative LINE Bot",
         "line_sdk_configured": line_bot_api is not None
     }
