@@ -5,6 +5,7 @@ bot_db.py - SQLite 個人持倉與風控告警資料庫模組
 """
 
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
@@ -96,6 +97,21 @@ def init_db(db_path=None):
         )
         """)
         conn.commit()
+        # 自動清理無效代號（非 4~6 碼數字代號之歷史髒資料）
+        cleanup_invalid_positions(db_path=db_path)
+
+
+def cleanup_invalid_positions(db_path=None):
+    """清理歷史非標準代號的無效持股與自選項目（如誤填的中文股名）"""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM positions WHERE ticker NOT GLOB '[0-9]*'")
+        pos_del = cursor.rowcount
+        cursor.execute("DELETE FROM watchlist WHERE ticker NOT GLOB '[0-9]*'")
+        wl_del = cursor.rowcount
+        conn.commit()
+        return pos_del + wl_del
+
 
 def get_or_create_user(line_user_id, display_name=None, db_path=None):
     """取得或建立 LINE 用戶，回傳用戶 dict"""
@@ -360,7 +376,8 @@ def import_db_snapshot(data, db_path=None):
         # 2. 持倉（updated_at 較新者為準，空時間戳由 Python 填入台灣時間，杜絕 SQLite CURRENT_TIMESTAMP 的 UTC 回溯）
         for pos in data.get("positions", []):
             local_uid = id_map.get(pos.get("user_id"))
-            if local_uid is None or not pos.get("ticker"):
+            ticker_val = str(pos.get("ticker", "")).strip().upper()
+            if local_uid is None or not ticker_val or not re.match(r"^\d{4,6}[a-zA-Z]?$", ticker_val):
                 stats["skipped"] += 1
                 continue
             pos_created_at = pos.get("created_at") or now_tw_str
@@ -378,7 +395,7 @@ def import_db_snapshot(data, db_path=None):
                 updated_at = excluded.updated_at
             WHERE excluded.updated_at >= positions.updated_at
             """, (
-                local_uid, pos.get("ticker"), pos.get("stock_name"), pos.get("shares", 1000),
+                local_uid, ticker_val, pos.get("stock_name"), pos.get("shares", 1000),
                 pos.get("cost_price"), pos.get("stop_loss_pct", -7.0), pos.get("status", "OPEN"),
                 pos_created_at, pos_updated_at
             ))
@@ -388,7 +405,8 @@ def import_db_snapshot(data, db_path=None):
         # 3. 自選觀察名單（updated_at 較新者為準，空時間戳由 Python 填入台灣時間）
         for w in data.get("watchlist", []):
             local_uid = id_map.get(w.get("user_id"))
-            if local_uid is None or not w.get("ticker"):
+            ticker_val = str(w.get("ticker", "")).strip().upper()
+            if local_uid is None or not ticker_val or not re.match(r"^\d{4,6}[a-zA-Z]?$", ticker_val):
                 stats["skipped"] += 1
                 continue
             w_created_at = w.get("created_at") or now_tw_str
@@ -404,7 +422,7 @@ def import_db_snapshot(data, db_path=None):
                 updated_at = excluded.updated_at
             WHERE excluded.updated_at >= watchlist.updated_at
             """, (
-                local_uid, w.get("ticker"), w.get("stock_name"), w.get("note"),
+                local_uid, ticker_val, w.get("stock_name"), w.get("note"),
                 w.get("active", 1), w_created_at, w_updated_at
             ))
             if cursor.rowcount > 0:

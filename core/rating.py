@@ -4,6 +4,7 @@
 """
 import pandas as pd
 import yfinance as yf
+from core.market_regime import get_market_regime_status
 
 
 def get_rating_badge(s):

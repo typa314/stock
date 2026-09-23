@@ -728,7 +728,18 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
     is_noise_extreme = noise_ratio > 2.8   # 單根波幅大於均幅 2.8 倍：失控巨震，置信區間過寬
     is_vol_dull = noise_ratio < 0.35      # 單根波幅小於均幅 0.35 倍：過度鈍化，假突破機率極高
 
-    if body / rng >= 0.6:
+    # 取得台股 Tick 級距
+    tick = get_tw_tick(close_now)
+    # 判斷是否為無方向性的極微幅跳動（單根波幅小於 2 個 Tick 或波動過度鈍化）
+    is_micro_range = (rng < 2.0 * tick) or (noise_ratio < 0.35)
+
+    # 最新 5 分K 棒形態分析（嚴格遵循 BPA：趨勢棒必須具備實質展開與有效波幅，拒絕 1 Tick 噪音誤判為趨勢）
+    if is_micro_range:
+        if body / rng <= 0.25:
+            bar_type = "⚖️ 十字休整棒 (Micro Doji)"
+        else:
+            bar_type = "⚪ 窄幅休整棒 (Micro Bar)"
+    elif body / rng >= 0.6:
         bar_type = "🟢 多頭趨勢棒 (Bull Trend)" if bar_c > bar_o else "🔴 空頭趨勢棒 (Bear Trend)"
     elif (min(bar_c, bar_o) - bar_l >= 0.5 * rng) and (bar_h - max(bar_c, bar_o) < 0.25 * rng):
         # 長下影線 + 短上影線，確認是真正的多頭反轉棒（排除 Spinning Top）
@@ -742,15 +753,21 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         bar_type = "⚪ 普通震盪棒 (Trading Bar)"
 
     # 台股 Tick 級風控與結構性波段掛單建議（結合波段擺動低點與防高頻超短線摩擦保護）
-    tick = get_tw_tick(close_now)
-    buy_stop = round(bar_h + tick, 2)
-    sell_stop = round(bar_l - tick, 2)
-    
     # 嚴防高頻微幅刷單（Anti-Scalping Protection）：
     # 台股交易摩擦成本（手續費+證交稅）約 0.45%~0.585%，單筆波段 R 空間必須至少為 1.8%，
     # 以確保扣除交易成本與滑價後仍具備健康正期望值，徹底拒絕 0.5%~0.71% 之微小高頻噪音。
     MIN_SWING_R_PCT = 0.018  # 1.8% 最低健康波段空間門檻
     min_buffer = max(3 * tick, round(close_now * MIN_SWING_R_PCT, 2))
+
+    # 取得近 4 根棒（約 20 分鐘）之微型整理區間高低，避免微幅休整時掛單遭 1 Tick 噪音綁架
+    micro_len = min(len(df), 4)
+    micro_h = float(df["high"].tail(micro_len).max()) if micro_len > 0 else bar_h
+    micro_l = float(df["low"].tail(micro_len).min()) if micro_len > 0 else bar_l
+    ref_h = max(bar_h, micro_h) if is_micro_range else bar_h
+    ref_l = min(bar_l, micro_l) if is_micro_range else bar_l
+
+    buy_stop = round(ref_h + tick, 2)
+    sell_stop = round(ref_l - tick, 2)
 
     # 取得近 12 根 5m 棒（約 1 小時）之結構性波段低點 (Swing Low) 與高點 (Swing High)
     sw_len = min(len(df), 12)
@@ -787,14 +804,28 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         stop_direction = "-"
         entry_type = "區間高出低進價位"
 
-    # ── 多時框對齊 (Multi-Timeframe Alignment: MTF) 架構判斷 ──
+    # ── 多時框對齊 (Multi-Timeframe Alignment: MTF) 獨立架構判斷 ──
     # 日線是否處於空方破線架構（AIS 或跌破日MA20達0.5%以上，或波段評分 <= -2）
     is_daily_bear = (daily_always_code == "AIS") or (close_now < daily_ma20 * 0.995) or (daily_trend_score <= -2)
     # 日線是否處於多頭主控架構（AIL 且站穩日MA20）
     is_daily_bull = (daily_always_code == "AIL") and (close_now >= daily_ma20 * 0.995)
 
+    if "多" in bpa_status:
+        if is_daily_bear:
+            mtf_status = "⚠️ 逆日線弱彈（空方趨勢中的反彈）"
+        elif is_daily_bull:
+            mtf_status = "🟢 雙時框多方共振 (高勝率)"
+        else:
+            mtf_status = "🟢 偏多整理"
+    elif "空" in bpa_status:
+        if is_daily_bear:
+            mtf_status = "🔴 雙時框空方共振"
+        else:
+            mtf_status = "🔴 偏空整理"
+    else:
+        mtf_status = "🟡 區間震盪整理"
+
     # ── 5m 當沖動作決策（多時框硬門檻 + Conformal 拒絕開倉機制） ──
-    mtf_status = "中性整理"
     conformal_status = "充足 (合格)"
     
     if is_noise_extreme:
@@ -804,9 +835,14 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         action_color_5m = "#f43f5e"
         conformal_status = f"⚠️ 雜訊過大 ({noise_ratio:.1f}x 均幅)"
     elif is_vol_dull:
-        # 情況 2: 波動過度鈍化 (< 0.35x ATR)，動能不足，假突破風險高，波段空間狹窄
-        action_tag_5m = "🛑 暫緩開倉 (動能不足/空間狹窄)"
-        action_sub_5m = f"當前 5m 波幅僅均幅 {noise_ratio:.1f} 倍且波動過窄，扣除摩擦成本期望值偏低，拒絕高頻刷單，建議觀望。"
+        # 情況 2: 波動過度鈍化 (< 0.35x ATR)，動能暫歇或空間狹窄
+        action_tag_5m = "🛑 暫緩開倉 (動能暫歇/空間狹窄)"
+        if "多方共振" in mtf_status:
+            action_sub_5m = f"雙時框偏多但當前 5m 動能暫歇（波幅僅 {noise_ratio:.1f}x 均幅），高檔量縮整理中，切忌追價，等待回測 20 EMA（{ema_now:.2f}元）。"
+        elif "空方共振" in mtf_status:
+            action_sub_5m = f"雙時框偏空且當前 5m 波動過窄（僅 {noise_ratio:.1f}x 均幅），防守空間不足，避免低檔盲目殺跌。"
+        else:
+            action_sub_5m = f"當前 5m 波幅僅均幅 {noise_ratio:.1f} 倍且波動過窄，扣除摩擦成本期望值偏低，拒絕高頻刷單，建議觀望。"
         action_color_5m = "#94a3b8"
         conformal_status = f"💤 波動過低 ({noise_ratio:.1f}x 均幅)"
     elif "多" in bpa_status:
@@ -815,44 +851,66 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
             action_tag_5m = "⚠️ 逆日線弱彈 (觀望)"
             action_sub_5m = f"5m 短線雖在均線上，但受制日線空方架構 (日MA20: {daily_ma20:.2f}元)，嚴防假突破，切忌搶反彈！"
             action_color_5m = "#f59e0b"
-            mtf_status = "⚠️ 逆日線弱彈（空方趨勢中的反彈）"
         elif is_daily_bull:
             action_tag_5m = "🔥 建議順勢做多"
             action_sub_5m = f"日線與 5m 雙時框多方共振！站穩 5m 20 EMA（{ema_now:.2f}元），拉回守穩可順勢佈局"
             action_color_5m = "#22c55e"
-            mtf_status = "🟢 雙時框多方共振 (高勝率)"
         else:
             action_tag_5m = "🟢 建議偏多買進"
             action_sub_5m = f"順應 5m 20 EMA（{ema_now:.2f} 元）支撐拉回逢低買進"
             action_color_5m = "#22c55e"
-            mtf_status = "🟢 偏多整理"
     elif "空" in bpa_status:
         if is_daily_bear:
             action_tag_5m = "🔴 雙時框順勢做空"
             action_sub_5m = f"日線與 5m 均處空方軌道，反彈逢 5m 20 EMA（{ema_now:.2f}元）反壓或破底順勢放空"
             action_color_5m = "#ef4444"
-            mtf_status = "🔴 雙時框空方共振"
         else:
             action_tag_5m = "🔴 建議逢高做空"
             action_sub_5m = f"受制 5m 20 EMA（{ema_now:.2f} 元）反壓，反彈逢高或破底順勢放空"
             action_color_5m = "#ef4444"
-            mtf_status = "🔴 偏空整理"
     else:
         action_tag_5m = "🟡 建議觀望整理"
         action_sub_5m = "日內箱型均線糾結，高出低進或暫不開倉"
         action_color_5m = "#fbbf24"
-        mtf_status = "🟡 區間震盪整理"
 
     # 5m 20MA 成交量均線與主力爆量異動檢測
+    # ⚠️ 重要：使用「昨日末棒的 vol_ma20」作為不可汙染基線（vol_ma20_baseline）
+    # 原因：今日若有爆量棒，rolling(20) 均量會被大幅拉高（如從 7萬→110萬股），
+    #       導致後期棒的 vol_ratio 恆低（0.1x），使「爆量後量縮休整」永遠無法觸發。
+    #       解法：以今日開盤前的最後一根昨日棒的 vol_ma20 為基線（反映正常日均量水位）。
     df["vol_ma20"] = df["volume"].rolling(20, min_periods=1).mean()
     vol_now = float(df["volume"].iloc[-1])
-    vol_ma20_5m = float(df["vol_ma20"].iloc[-1])
+
+    # 計算不可汙染基線：取今日第一根棒前的昨日末棒 vol_ma20
+    today_date = pd.Timestamp.now(tz="Asia/Taipei").date()
+    # 防護：測試環境 df.index 可能是 RangeIndex，需確認是 DatetimeIndex 才能做 tz_convert
+    if hasattr(df.index, "tz_convert"):
+        df_yesterday = df[df.index.tz_convert("Asia/Taipei").date < today_date]
+    else:
+        df_yesterday = pd.DataFrame()  # fallback: 無法辨識日期，視為無昨日資料
+    if not df_yesterday.empty:
+        vol_ma20_baseline = float(df_yesterday["vol_ma20"].iloc[-1])
+    else:
+        # fallback：若無昨日資料（例如長假第一天），用 rolling 均量
+        vol_ma20_baseline = float(df["vol_ma20"].iloc[-1])
+
+    # 當前棒對照基線的量比（不被今日爆量棒汙染）
+    vol_ma20_5m = vol_ma20_baseline
     vol_ratio_5m = round(vol_now / (vol_ma20_5m + 1e-9), 1)
 
     is_above_ema = close_now > ema_now
     is_bull_bar = bar_c > bar_o
     lower_sh = min(bar_c, bar_o) - bar_l
     upper_sh = bar_h - max(bar_c, bar_o)
+
+    # 檢測近 6 根棒（近 30 分鐘）是否曾出現主力巨量推升（>= 1.8x 基線均量）
+    # 同樣使用 vol_ma20_baseline 避免汙染問題
+    recent_v_tail = df.tail(6)
+    had_recent_whale_surge = False
+    if len(recent_v_tail) >= 2:
+        had_recent_whale_surge = bool(
+            ((recent_v_tail["volume"] / (vol_ma20_baseline + 1e-9)) >= 1.8).any()
+        )
 
     if vol_ratio_5m >= 1.8:
         if is_above_ema and slope > 0 and is_bull_bar and body / rng >= 0.5:
@@ -886,6 +944,16 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
             whale_color = "#a855f7"
             whale_bg = "rgba(168, 85, 247, 0.16)"
             whale_advice = f"爆出 5m 均量 {vol_ratio_5m} 倍巨量，多空劇烈分歧，密切關注 20 EMA（{ema_now:.2f} 元）支撐。"
+    elif had_recent_whale_surge and vol_ratio_5m <= 0.8 and is_above_ema:
+        whale_tag = "💤 爆量後量縮休整"
+        whale_color = "#38bdf8"
+        whale_bg = "rgba(56, 189, 248, 0.12)"
+        whale_advice = f"盤中巨量推升後短線急遽量縮（{vol_ratio_5m:.1f}倍均量），屬高檔換手整理，靜待量能重啟或回踩 20 EMA（{ema_now:.2f} 元）。"
+    elif had_recent_whale_surge and vol_ratio_5m <= 0.8 and not is_above_ema:
+        whale_tag = "⚠️ 爆量轉弱量縮"
+        whale_color = "#fbbf24"
+        whale_bg = "rgba(245, 158, 11, 0.12)"
+        whale_advice = f"巨量異動後跌破 20 EMA（{ema_now:.2f} 元）且量能急縮，短線多頭動能衰退，提防持續拉回。"
     else:
         whale_tag = "⚪ 常態量能流動"
         whale_color = "#94a3b8"

@@ -94,14 +94,26 @@ def compute_risk_stop(ticker, cost_price, market="tse", user_pct=None, analysis_
     else:
         pct, basis = STOP_PCT_FALLBACK, f"固定 -{STOP_PCT_FALLBACK * 100:.0f}%（無法取得 ATR）"
         try:
+            atr_pct = None
             if analysis_res is not None:
-                res = analysis_res
+                atr_pct = compute_atr_pct(analysis_res.get("df") if analysis_res else None)
             else:
-                # 延遲匯入以避免 core.analyzer <-> core.indicators 的循環匯入
-                from core.analyzer import analyze_stock
-                res = analyze_stock(ticker, months=12, generate_html=False,
-                                     print_report=False, quick_mode=True)
-            atr_pct = compute_atr_pct(res.get("df") if res else None)
+                # 優先自本地 SQLite Kline 快取取得近 2 個月日K計算 ATR（耗時 < 1ms，極速無外網依賴）
+                try:
+                    from core.kline_cache import get_daily_kline_records
+                    recs = get_daily_kline_records(ticker, market=market, months=2)
+                    if recs and len(recs) >= 20:
+                        df_quick = pd.DataFrame(recs)
+                        atr_pct = compute_atr_pct(df_quick)
+                except Exception:
+                    pass
+
+                if atr_pct is None:
+                    # 延遲匯入以避免 core.analyzer <-> core.indicators 的循環匯入
+                    from core.analyzer import analyze_stock
+                    res = analyze_stock(ticker, months=12, generate_html=False,
+                                         print_report=False, quick_mode=True)
+                    atr_pct = compute_atr_pct(res.get("df") if res else None)
             if atr_pct:
                 if is_market_bear:
                     # 熊市防禦收縮：2x ATR，夾在 -5% ~ -8%

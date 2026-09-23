@@ -41,7 +41,13 @@ def build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct):
                 })
 
             item_pnl_color = get_tw_pnl_color(item["pnl"])
-            item_sign = "+" if item["pnl"] > 0 else ""
+            pnl_amt_val = int(item.get("pnl_amount", 0))
+            if pnl_amt_val > 0:
+                item_amt_str = f"+${pnl_amt_val:,}"
+            elif pnl_amt_val < 0:
+                item_amt_str = f"-${abs(pnl_amt_val):,}"
+            else:
+                item_amt_str = "$0"
 
             body_contents.append({
                 "type": "box",
@@ -85,7 +91,7 @@ def build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct):
                             },
                             {
                                 "type": "text",
-                                "text": f"{item_sign}{item['pnl_pct']:+.2f}%",
+                                "text": f"{item['pnl_pct']:+.2f}%",
                                 "size": "sm",
                                 "color": item_pnl_color,
                                 "weight": "bold",
@@ -108,7 +114,7 @@ def build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct):
                             },
                             {
                                 "type": "text",
-                                "text": f"損益 {item_sign}{int(item['pnl_amount']):,}",
+                                "text": f"損益 {item_amt_str}",
                                 "size": "xs",
                                 "color": item_pnl_color,
                                 "align": "end",
@@ -118,6 +124,15 @@ def build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct):
                     }
                 ]
             })
+
+    # 投資組合總損益字串格式化
+    tot_pnl_val = int(total_pnl)
+    if tot_pnl_val > 0:
+        tot_amt_str = f"+${tot_pnl_val:,}"
+    elif tot_pnl_val < 0:
+        tot_amt_str = f"-${abs(tot_pnl_val):,}"
+    else:
+        tot_amt_str = "$0"
 
     flex_bubble = {
         "type": "bubble",
@@ -170,7 +185,7 @@ def build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct):
                         },
                         {
                             "type": "text",
-                            "text": f"{total_sign}${int(total_pnl):,} ({total_sign}{total_pnl_pct:+.2f}%)",
+                            "text": f"{tot_amt_str} ({total_pnl_pct:+.2f}%)",
                             "size": "md",
                             "color": total_color,
                             "weight": "bold",
@@ -1368,6 +1383,14 @@ def build_5m_stock_flex(res5: dict) -> dict:
     else:
         range_label = f"振幅 {range_today:.2f}元 ({low_today:.2f}~{high_today:.2f})"
 
+    total_vol = int(rt_info.get("volume", 0)) if (rt_info and rt_info.get("volume")) else 0
+    if total_vol >= 10000:
+        vol_sub_txt = f"5m {int(vol_now)}張 ｜ 全日 {total_vol / 10000:.1f}萬張"
+    elif total_vol > 0:
+        vol_sub_txt = f"5m {int(vol_now)}張 ｜ 全日 {total_vol:,}張"
+    else:
+        vol_sub_txt = f"現量 {int(vol_now)} 張"
+
     flex_bubble = {
         "type": "bubble",
         "size": "giga",
@@ -1591,7 +1614,7 @@ def build_5m_stock_flex(res5: dict) -> dict:
                             "contents": [
                                 {"type": "text", "text": "5m 量能倍數", "size": "xxs", "color": "#94a3b8"},
                                 {"type": "text", "text": f"{vol_ratio_5m:.1f}倍 均量", "weight": "bold", "size": "xs", "color": whale_color, "margin": "xs"},
-                                {"type": "text", "text": f"現量 {int(vol_now)} 張", "size": "xxs", "color": "#64748b", "margin": "xs"}
+                                {"type": "text", "text": vol_sub_txt, "size": "xxs", "color": "#64748b", "margin": "xs"}
                             ]
                         }
                     ]

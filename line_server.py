@@ -291,21 +291,50 @@ async def post_db_snapshot(req: Request):
 
 # ── 指令處理子模組 (Command Handlers) ──────────────────────
 
+def resolve_ticker(raw_input: str):
+    """
+    解析台股代號或中文名稱。
+    回傳: (ticker, market, stock_name)
+    若無法解析，回傳 ("", "", "")
+    """
+    if not raw_input:
+        return "", "", ""
+    cleaned = re.sub(r"\.(tw|two)$", "", raw_input.strip(), flags=re.IGNORECASE).upper()
+    m = re.search(r"^\d{4,6}[a-zA-Z]?$", cleaned, re.IGNORECASE)
+    if m:
+        ticker = m.group().upper()
+        market, sname = get_info(ticker)
+        return ticker, market, sname
+
+    # 嘗試從中文股票名稱反查代號 (例如 "晶技" -> "3042")
+    try:
+        import twstock
+        name_clean = cleaned.strip()
+        for code, info in twstock.codes.items():
+            if info.name == name_clean:
+                market = "otc" if info.data_source == "tpex" else "tse"
+                return code, market, info.name
+    except Exception:
+        pass
+
+    return "", "", ""
+
+
 def _cmd_buy(user_id: str, tokens: list) -> str:
     """處理買進/建倉指令"""
     if len(tokens) < 3:
-        return "⚠️ 格式錯誤！請輸入：\n買 [股票代號] [成本價] [股數(選填)]\n範例：買 2330 980 或 買 00708L 81.2 1000"
+        return "⚠️ 格式錯誤！請輸入：\n買 [股票代號或名稱] [成本價] [股數(選填)]\n範例：買 2330 980 或 買 晶技 196 2000"
     raw_t = tokens[1].strip()
-    cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
-    ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
-    ticker = ticker_match.group().upper() if ticker_match else cleaned_t
+    ticker, market, sname = resolve_ticker(raw_t)
+    if not ticker:
+        return f"⚠️ 查無台股代號或名稱「{raw_t}」！\n請輸入正確的台股代號（如 2330）或中文股名（如 晶技）。"
+
     try:
         cost_p = float(tokens[2])
         shares = int(tokens[3]) if len(tokens) >= 4 else 1000
     except ValueError:
         return "⚠️ 成本或股數必須為數字！範例：買 2330 980 1000"
 
-    market, sname = get_info(ticker)
     bot_db.add_or_update_position(user_id, ticker, cost_p, shares, sname)
     sync_to_cloud_async()
     stop_7, stop_pct, stop_basis = compute_risk_stop(ticker, cost_p, market=market)
@@ -328,11 +357,12 @@ def _cmd_buy(user_id: str, tokens: list) -> str:
 def _cmd_sell(user_id: str, tokens: list) -> str:
     """處理賣出/平倉指令"""
     if len(tokens) < 2:
-        return "⚠️ 格式錯誤！請輸入：\n賣 [股票代號]\n範例：賣 2330 或 賣 00708L"
+        return "⚠️ 格式錯誤！請輸入：\n賣 [股票代號或名稱]\n範例：賣 2330 或 賣 晶技"
     raw_t = tokens[1].strip()
-    cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
-    ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
-    ticker = ticker_match.group().upper() if ticker_match else cleaned_t
+    ticker, market, sname = resolve_ticker(raw_t)
+    if not ticker:
+        ticker = raw_t.strip().upper()
+
     ok = bot_db.close_position(user_id, ticker)
     if ok:
         sync_to_cloud_async()
@@ -342,38 +372,74 @@ def _cmd_sell(user_id: str, tokens: list) -> str:
 
 
 def _cmd_portfolio(user_id: str, user_name: str):
-    """查詢持倉與即時損益總覽"""
-    positions = bot_db.get_user_positions(user_id)
-    if not positions:
+    """查詢持倉與即時損益總覽（Quote Hub 批次取價與毫秒級快取強化）"""
+    raw_positions = bot_db.get_user_positions(user_id)
+    if not raw_positions:
         return "💼 您目前尚無任何持倉記錄。\n請輸入「買 2330 980」建立首檔持股！"
+
+    # 安全過濾：僅處理標準 4~6 碼股票代號
+    positions = [
+        p for p in raw_positions
+        if p.get("ticker") and re.match(r"^\d{4,6}[a-zA-Z]?$", str(p.get("ticker")).strip())
+    ]
+    if not positions:
+        return "💼 您目前尚無任何有效持倉記錄。\n請輸入「買 2330 980」建立首檔持股！"
+
+    pos_meta = []
+    for p in positions:
+        t = str(p["ticker"]).strip().upper()
+        market, sname = get_info(t)
+        pos_meta.append((p, t, market, sname or p.get("stock_name", t)))
+
+    # 透過中央 Quote Hub 批次一次性取得所有即時撮合行情（單次網路請求，杜絕多檔累積逾時）
+    from core.quote_hub import fetch_realtime_quotes_batch
+    quotes_map = fetch_realtime_quotes_batch([(t, market) for _, t, market, _ in pos_meta])
 
     items = []
     total_cost = 0.0
     total_val = 0.0
 
-    for p in positions:
-        t = p["ticker"]
-        market, sname = get_info(t)
+    for p, t, market, sname in pos_meta:
         cost_p = float(p["cost_price"])
         shares = int(p["shares"])
 
-        # 抓取即時行情撮合
-        rt = fetch_realtime_bar(t, market)
+        rt = quotes_map.get(t)
         if rt and rt.get("close") and rt["close"] > 0:
             cur_p = float(rt["close"])
         else:
+            # 盤後或即時撮合無回傳時，優先讀取本地 SQLite Kline 快取日K收盤價（耗時 < 1ms，無需外網請求）
+            cur_p = None
             try:
-                res_alt = get_cached_stock_analysis(t, months=12)
-                cur_p = float(res_alt["close_now"]) if res_alt and "close_now" in res_alt else cost_p
+                from core.kline_cache import get_daily_kline_records
+                recs = get_daily_kline_records(t, market=market, months=1)
+                if recs and len(recs) > 0:
+                    cur_p = float(recs[-1]["close"])
             except Exception:
-                cur_p = cost_p
+                pass
+
+            if cur_p is None:
+                # 備援退回 TTLCache 快速分析
+                try:
+                    res_alt = get_cached_stock_analysis(t, months=12, quick_mode=True)
+                    cur_p = float(res_alt["close_now"]) if res_alt and "close_now" in res_alt else cost_p
+                except Exception:
+                    cur_p = cost_p
 
         diff = cur_p - cost_p
         pnl_pct = (diff / cost_p) * 100 if cost_p > 0 else 0.0
         pnl_amt = diff * shares
-        stop_7, stop_pct, stop_basis = compute_risk_stop(
-            t, cost_p, market=market, user_pct=p.get("stop_loss_pct")
-        )
+
+        # 防禦性停損計算：單檔異常隔離
+        try:
+            stop_7, stop_pct, stop_basis = compute_risk_stop(
+                t, cost_p, market=market, user_pct=p.get("stop_loss_pct")
+            )
+        except Exception as se:
+            logger.warning(f"計算【{t}】停損價失敗，沿用 -7% 預設: {se}")
+            stop_pct = 0.07
+            stop_7 = round(cost_p * 0.93, 2)
+            stop_basis = "固定 -7%"
+
         stop_10 = round(cost_p * (1 - stop_pct - 0.03), 2)
         buf_7 = cur_p - stop_7
 
@@ -395,7 +461,7 @@ def _cmd_portfolio(user_id: str, user_name: str):
 
         items.append({
             "ticker": t,
-            "stock_name": sname or p.get("stock_name", t),
+            "stock_name": sname,
             "shares": shares,
             "cost_price": cost_p,
             "current_price": cur_p,
@@ -423,13 +489,12 @@ def _cmd_add_watchlist(user_id: str, cmd: str, tokens: list) -> str:
         raw_t = tokens[1].strip() if len(tokens) >= 2 else ""
 
     if not raw_t:
-        return "⚠️ 格式錯誤！請輸入：\n+2330 或 關注 2330\n範例：+2330 或 +00708L"
+        return "⚠️ 格式錯誤！請輸入：\n+2330 或 關注 2330\n範例：+2330 或 +00708L 或 關注 晶技"
 
-    cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
-    ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
-    ticker = ticker_match.group().upper() if ticker_match else cleaned_t
+    ticker, market, sname = resolve_ticker(raw_t)
+    if not ticker:
+        return f"⚠️ 查無台股代號或名稱「{raw_t}」！\n請輸入正確的台股代號（如 +2330）或中文股名（如 關注 晶技）。"
 
-    market, sname = get_info(ticker)
     ok, msg = bot_db.add_to_watchlist(user_id, ticker, stock_name=sname)
     if not ok:
         return msg
@@ -461,11 +526,11 @@ def _cmd_remove_watchlist(user_id: str, cmd: str, tokens: list) -> str:
         raw_t = tokens[1].strip() if len(tokens) >= 2 else ""
 
     if not raw_t:
-        return "⚠️ 格式錯誤！請輸入：\n-2330 或 取消關注 2330\n範例：-2330 或 -00708L"
+        return "⚠️ 格式錯誤！請輸入：\n-2330 或 取消關注 2330\n範例：-2330 或 取消關注 00708L"
 
-    cleaned_t = re.sub(r"\.(tw|two)$", "", raw_t, flags=re.IGNORECASE).upper()
-    ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_t, re.IGNORECASE)
-    ticker = ticker_match.group().upper() if ticker_match else cleaned_t
+    ticker, _, sname = resolve_ticker(raw_t)
+    if not ticker:
+        ticker = raw_t.strip().upper()
 
     ok = bot_db.remove_from_watchlist(user_id, ticker)
     if ok:
@@ -552,12 +617,17 @@ def _cmd_view_watchlist(user_id: str, user_name: str):
 
 
 def _cmd_stock_query(cmd: str):
-    """單檔股票代號查詢 (日K 4合1 旗艦 + 5分K 當沖 Carousel 雙時框輪播)"""
-    cleaned_cmd = re.sub(r"\.(tw|two)\b", "", cmd, flags=re.IGNORECASE)
+    """單檔股票代號查詢 (日K 4合1 旗艦 + 5分K 當沖 Carousel 雙時框輪播，支援代號與中文股名)"""
+    cleaned_cmd = re.sub(r"\.(tw|two)\b", "", cmd, flags=re.IGNORECASE).strip()
     ticker_match = re.search(r"\d{4,6}[a-zA-Z]?", cleaned_cmd, re.IGNORECASE)
-    if not ticker_match:
-        return "⚠️ 請提供欲查詢的股票代號，例如「2330」或「00708L」"
-    ticker = ticker_match.group().upper()
+    if ticker_match:
+        ticker = ticker_match.group().upper()
+    else:
+        t_res, _, _ = resolve_ticker(cleaned_cmd)
+        if t_res:
+            ticker = t_res
+        else:
+            return "⚠️ 請提供欲查詢的股票代號或名稱，例如「2330」或「晶技」"
 
     try:
         res = get_cached_stock_analysis(ticker, months=12)
@@ -662,8 +732,15 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     elif action in ["賣", "賣出", "平倉", "del", "sell"]:
         return _cmd_sell(user_id, tokens)
 
-    # 3. 查詢持倉與即時損益總覽
-    elif action in ["持倉", "庫存", "損益", "portfolio", "pos", "p"]:
+    # 3. 查詢持倉與即時損益總覽 (支援 持倉, 庫存, 損益, 我的持倉, 查看持倉, 查持倉, 持股, 我的持股, 現股, 投資組合, 部位 等)
+    elif (
+        action in [
+            "持倉", "庫存", "損益", "portfolio", "pos", "p",
+            "我的持倉", "查看持倉", "查持倉", "持股", "我的持股",
+            "現股", "投資組合", "我的庫存", "查庫存", "部位", "查損益"
+        ]
+        or cmd in ["持倉", "庫存", "損益", "我的持倉", "查看持倉", "查持倉", "持股", "我的持股", "我的庫存", "部位"]
+    ):
         return _cmd_portfolio(user_id, user_name)
 
     # 3.1 加入自選觀察清單 (追蹤回測底部買點，支援 +2330, + 2330, 關注 2330 等)
@@ -678,12 +755,14 @@ def handle_user_command(user_id: str, text: str, user_name: str = "投資人", i
     elif action in ["自選", "自選股", "觀察名單", "清單", "watchlist", "wl"]:
         return _cmd_view_watchlist(user_id, user_name)
 
-    # 4. 單檔股票代號查詢 (支援純代號 2330, 00708L, 查 2330, 診斷 00708L, 2330.TW 等)
+    # 4. 單檔股票代號或名稱查詢 (支援純代號 2330, 00708L, 查 2330, 診斷 00708L, 2330.TW, 晶技, 查 晶技 等)
     elif (
         re.match(r"^\d{4,6}[a-zA-Z]?(\.(tw|two))?$", action, re.IGNORECASE)
         or (action in ["查", "查詢", "診斷", "分析", "看", "bpa", "stock", "個股"] and len(tokens) >= 2)
         or (len(tokens) == 1 and re.search(r"\d{4,6}[a-zA-Z]?", action, re.IGNORECASE))
         or re.search(r"\d{4,6}[a-zA-Z]?", cmd, re.IGNORECASE)
+        or bool(resolve_ticker(cmd)[0])
+        or (len(tokens) >= 2 and bool(resolve_ticker(tokens[1])[0]))
     ):
         return _cmd_stock_query(cmd)
 

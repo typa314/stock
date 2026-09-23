@@ -44,3 +44,6 @@ cloudflared.exe
 
 # Generated Rich Menu
 rich_menu.png
+
+# Temporary drive uploads
+.tmp.driveupload/

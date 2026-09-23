@@ -13,12 +13,14 @@ Tests the 9 specialized sub-commands and main dispatcher in isolation:
   9. handle_user_command Dispatcher routing
 """
 
+import json
 import os
 import tempfile
 import unittest
 from unittest.mock import patch
 
 import bot_db
+import bot_flex
 from line_server import (
     _cmd_buy, _cmd_sell, _cmd_portfolio, _cmd_add_watchlist,
     _cmd_remove_watchlist, _cmd_view_watchlist,
@@ -176,9 +178,12 @@ class TestCommandHandlers(unittest.TestCase):
         self.assertEqual(handle_user_command(uid, "賣 2330"), "SELL_DISPATCHED")
         self.assertEqual(handle_user_command(uid, "del 2330"), "SELL_DISPATCHED")
 
-        # 3. Portfolio
+        # 3. Portfolio & Aliases
         self.assertEqual(handle_user_command(uid, "持倉"), "PORTFOLIO_DISPATCHED")
         self.assertEqual(handle_user_command(uid, "庫存"), "PORTFOLIO_DISPATCHED")
+        self.assertEqual(handle_user_command(uid, "我的持倉"), "PORTFOLIO_DISPATCHED")
+        self.assertEqual(handle_user_command(uid, "查看持倉"), "PORTFOLIO_DISPATCHED")
+        self.assertEqual(handle_user_command(uid, "持股"), "PORTFOLIO_DISPATCHED")
 
         # 4. Add Watchlist
         self.assertEqual(handle_user_command(uid, "+2330"), "ADD_WATCH_DISPATCHED")
@@ -195,11 +200,49 @@ class TestCommandHandlers(unittest.TestCase):
         self.assertEqual(handle_user_command(uid, "說明"), "HELP_DISPATCHED")
         self.assertEqual(handle_user_command(uid, "help"), "HELP_DISPATCHED")
 
-        # 8. Stock query (single ticker)
+        # 8. Stock query (single ticker & Chinese name)
         self.assertEqual(handle_user_command(uid, "2330"), "STOCK_QUERY_DISPATCHED")
+        self.assertEqual(handle_user_command(uid, "晶技"), "STOCK_QUERY_DISPATCHED")
 
         # 10. Empty command
         self.assertIn("請輸入指令", handle_user_command(uid, "   "))
+
+    def test_cmd_buy_chinese_stock_name(self):
+        """Test buying by Chinese stock name automatically resolves ticker."""
+        uid = "U_BUY_CN_TEST"
+        res = _cmd_buy(uid, ["買", "晶技", "196", "2000"])
+        self.assertIn("晶技 (3042)", res)
+        self.assertIn("196.00", res)
+        self.assertIn("2,000", res)
+
+    def test_cmd_buy_invalid_stock(self):
+        """Test buying with an invalid non-existent stock name is rejected."""
+        uid = "U_BUY_INVALID"
+        res = _cmd_buy(uid, ["買", "絕對無此股票", "100"])
+        self.assertIn("查無台股代號或名稱", res)
+
+    def test_portfolio_flex_no_double_plus(self):
+        """Test build_portfolio_flex does not contain '++' double plus formatting error."""
+        items = [{
+            "ticker": "2330",
+            "stock_name": "台積電",
+            "shares": 1000,
+            "cost_price": 980.0,
+            "current_price": 1050.0,
+            "pnl": 70.0,
+            "pnl_pct": 7.14,
+            "pnl_amount": 70000.0,
+            "stop_7": 900.0,
+            "stop_pct": 0.08,
+            "buf_7": 150.0,
+            "tag": "🟢 獲利持有",
+            "tag_color": "#22c55e"
+        }]
+        bubble = bot_flex.build_portfolio_flex("測試員", items, 70000.0, 7.14)
+        bubble_str = json.dumps(bubble, ensure_ascii=False)
+        self.assertNotIn("++", bubble_str)
+        self.assertIn("+7.14%", bubble_str)
+        self.assertIn("+$70,000", bubble_str)
 
 
 if __name__ == "__main__":
