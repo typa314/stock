@@ -658,7 +658,7 @@ def _cmd_stock_query(cmd: str):
             sr=sr
         )
 
-        # 2. 整合 5 分鐘 K 線當沖研判為雙時框 Carousel 輪播 (左右滑動切換)
+        # 2. 整合 5 分鐘 K 線當沖研判與 Fibonacci 回測為三時框 Carousel 輪播 (左右滑動切換)
         try:
             res5 = get_cached_5m_analysis(ticker, days=3)
             # 確保 5m 卡片與日K即時行情 100% 共享最新撮合與昨收基準
@@ -669,11 +669,13 @@ def _cmd_stock_query(cmd: str):
                 res5["prev_close"] = float(prev_close)
                 res5["change_today"] = round(res5["close_now"] - res5["prev_close"], 2)
                 res5["change_today_pct"] = round(res5["change_today"] / res5["prev_close"] * 100, 2)
-            bubble_5m = bot_flex.build_5m_stock_flex(res5)
-            flex_dict = bot_flex.build_stock_carousel_flex(bubble_daily, bubble_5m)
+            bubble_5m  = bot_flex.build_5m_stock_flex(res5)
+            bubble_fib = bot_flex.build_fibonacci_stock_flex(res5)
+            flex_dict  = bot_flex.build_stock_carousel_flex(bubble_daily, bubble_5m, bubble_fib)
         except Exception as e5:
             logger.warning(f"取得【{ticker}】5分K當沖資料失敗，降級回傳日K單卡: {e5}")
             flex_dict = bubble_daily
+
 
         return flex_dict
     except Exception as e:

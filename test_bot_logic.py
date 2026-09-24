@@ -235,19 +235,19 @@ class TestLineBotCore(unittest.TestCase):
         res_single = line_server.handle_user_command(self.user_id, "2330")
         self.assertIsInstance(res_single, dict)
         self.assertEqual(res_single.get("type"), "carousel")
-        self.assertEqual(len(res_single.get("contents", [])), 2, "Carousel 應包含日K與5分K兩張圖卡")
+        self.assertEqual(len(res_single.get("contents", [])), 3, "Carousel 應包含日K、5分K、Fib回測三張圖卡")
 
         # 測試 槓桿/反向 ETF 與英數字後綴代號 (如 00708L)
         res_etf = line_server.handle_user_command(self.user_id, "00708L")
         self.assertIsInstance(res_etf, dict)
         self.assertEqual(res_etf.get("type"), "carousel")
-        self.assertEqual(len(res_etf.get("contents", [])), 2)
+        self.assertEqual(len(res_etf.get("contents", [])), 3)
 
         # 測試小寫代號輸入 (如 00708l) 自動轉大寫處理
         res_etf_lower = line_server.handle_user_command(self.user_id, "00708l")
         self.assertIsInstance(res_etf_lower, dict)
         self.assertEqual(res_etf_lower.get("type"), "carousel")
-        self.assertEqual(len(res_etf_lower.get("contents", [])), 2)
+        self.assertEqual(len(res_etf_lower.get("contents", [])), 3)
 
         # 測試 持倉 / 庫存 指令
         res_pos_empty = line_server.handle_user_command(self.user_id, "持倉")

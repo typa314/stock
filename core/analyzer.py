@@ -960,7 +960,95 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         whale_bg = "rgba(148, 163, 184, 0.12)"
         whale_advice = "量能處於常態合理區間，無失控或突發大單異動。"
 
+    # ─── 斐波那契（Fibonacci）回測點位計算 ───────────────────────────────
+    # 以今日 5m 高低點為 swing，依多空方向計算標準 Fib 回測與擴展位
+    # 多方架構（AIL）：自低點向高點計算回測（往下支撐位）
+    # 空方架構（AIS）：自高點向低點計算反彈（往上阻力位）
+    _fib_ratios = [0.0, 0.236, 0.382, 0.500, 0.618, 0.786, 1.000]
+    _fib_labels = ["0.0%", "23.6%", "38.2%", "50.0%", "61.8%", "78.6%", "100.0%"]
+    _fib_swing_h = high_today
+    _fib_swing_l = low_today
+    _fib_rng     = _fib_swing_h - _fib_swing_l
+
+    # 判斷主方向：依 bpa_status 多空方向決定回測基準
+    _fib_is_bull = "多" in bpa_status
+    _fib_levels_dict: dict[str, float] = {}
+    if _fib_is_bull:
+        # 多方：從低點（0%）向高點（100%），回測往下
+        for ratio, label in zip(_fib_ratios, _fib_labels):
+            _fib_levels_dict[label] = round(_fib_swing_h - _fib_rng * ratio, 2)
+        _fib_ext_127 = round(_fib_swing_l + _fib_rng * 1.272, 2)  # 上方擴展目標
+        _fib_ext_162 = round(_fib_swing_l + _fib_rng * 1.618, 2)
+        _fib_direction = "bull"
+    else:
+        # 空方：從高點（0%）向低點（100%），反彈往上
+        for ratio, label in zip(_fib_ratios, _fib_labels):
+            _fib_levels_dict[label] = round(_fib_swing_l + _fib_rng * ratio, 2)
+        _fib_ext_127 = round(_fib_swing_h - _fib_rng * 1.272, 2)  # 下方擴展目標
+        _fib_ext_162 = round(_fib_swing_h - _fib_rng * 1.618, 2)
+        _fib_direction = "bear"
+
+    # 找現價最近的上方阻力與下方支撐
+    _sorted_vals = sorted(_fib_levels_dict.items(), key=lambda x: x[1])
+    _fib_support  = [(lbl, val) for lbl, val in _sorted_vals if val <= close_now]
+    _fib_resist   = [(lbl, val) for lbl, val in _sorted_vals if val >  close_now]
+    _nearest_sup  = _fib_support[-1]  if _fib_support  else (None, None)
+    _nearest_res  = _fib_resist[0]    if _fib_resist   else (None, None)
+
+    fib_levels = {
+        "swing_high":       _fib_swing_h,
+        "swing_low":        _fib_swing_l,
+        "direction":        _fib_direction,
+        "levels":           _fib_levels_dict,
+        "ext_127":          _fib_ext_127,
+        "ext_162":          _fib_ext_162,
+        "nearest_support":  _nearest_sup,
+        "nearest_resist":   _nearest_res,
+        "close_now":        close_now,
+        # fib_ladder: 供 Card 3 Fib 專屬卡逐行渲染用，含公式字串與技術意義
+        "fib_ladder": [
+            {
+                "ratio":   "23.6%",
+                "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.236)",
+                "price":   round(_fib_swing_h - _fib_rng * 0.236, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.236, 1),
+                "meaning": "淺回測，強勢整理常見",
+                "color":   "#38bdf8",
+            },
+            {
+                "ratio":   "38.2%",
+                "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.382)",
+                "price":   round(_fib_swing_h - _fib_rng * 0.382, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.382, 1),
+                "meaning": "最常見的健康回測區",
+                "color":   "#f59e0b",
+            },
+            {
+                "ratio":   "50.0%",
+                "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.500)",
+                "price":   round(_fib_swing_h - _fib_rng * 0.500, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.500, 1),
+                "meaning": "中性回測，重要心理關卡",
+                "color":   "#94a3b8",
+            },
+            {
+                "ratio":   "61.8%",
+                "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.618)",
+                "price":   round(_fib_swing_h - _fib_rng * 0.618, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.618, 1),
+                "meaning": "較深回測，需觀察是否止跌",
+                "color":   "#f97316",
+            },
+            {
+                "ratio":   "78.6%",
+                "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.786)",
+                "price":   round(_fib_swing_h - _fib_rng * 0.786, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.786, 1),
+                "meaning": "接近今日低點，風險較高",
+                "color":   "#f43f5e",
+            },
+        ],
+    }
+    # ──────────────────────────────────────────────────────────────────────
+
+
     # 繪製 Plotly 5 分K 互動圖表
+
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True,
         row_heights=[0.75, 0.25], vertical_spacing=0.03,
@@ -989,6 +1077,27 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
                       annotation_text=f"今日最高 {high_today}", annotation_position="top right", annotation_font_size=10)
         fig.add_hline(y=low_today, line_dash="dot", line_color="#22c55e", row=1, col=1,
                       annotation_text=f"今日最低 {low_today}", annotation_position="bottom right", annotation_font_size=10)
+
+    # Fibonacci 回測水平線標記（僅畫關鍵 4 條：38.2 / 50.0 / 61.8 / 78.6）
+    _fib_plot_keys = [
+        ("38.2%", "#f59e0b", "solid",  1.5),   # 黃金一：金色實線
+        ("50.0%", "#94a3b8", "dash",   1.0),   # 中位：灰色虛線
+        ("61.8%", "#f59e0b", "solid",  2.0),   # 黃金二：金色加粗實線
+        ("78.6%", "#f43f5e", "dot",    1.0),   # 深回測：玫紅虛線警告
+    ]
+    if not df_today.empty and _fib_rng > 0:
+        for _fk, _fc, _fd, _fw in _fib_plot_keys:
+            _fv = fib_levels["levels"].get(_fk)
+            if _fv is not None and low_today <= _fv <= high_today:
+                fig.add_hline(
+                    y=_fv,
+                    line_dash=_fd, line_color=_fc, line_width=_fw,
+                    row=1, col=1,
+                    annotation_text=f"Fib {_fk} {_fv:.2f}",
+                    annotation_position="bottom left",
+                    annotation_font_size=9,
+                    annotation_font_color=_fc,
+                )
 
     # 成交量副圖（爆量 >= 1.8x 特殊高亮標記）
     vol_colors = []
@@ -1083,7 +1192,8 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         "intraday_change_pct": intraday_change_pct,
         "realtime_info": realtime_info,
         "is_delayed": True,
-        "data_source": "Yahoo Finance (5分K)"
+        "data_source": "Yahoo Finance (5分K)",
+        "fib_levels": fib_levels,
     }
 
 # ── 7. 命令列執行入口 ─────────────────────────────────────────
