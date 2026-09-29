@@ -977,15 +977,16 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         # 多方：從低點（0%）向高點（100%），回測往下
         for ratio, label in zip(_fib_ratios, _fib_labels):
             _fib_levels_dict[label] = round(_fib_swing_h - _fib_rng * ratio, 2)
-        _fib_ext_127 = round(_fib_swing_l + _fib_rng * 1.272, 2)  # 上方擴展目標
+        _fib_ext_127 = round(_fib_swing_l + _fib_rng * 1.272, 2)  # 向上突破擴展目標
         _fib_ext_162 = round(_fib_swing_l + _fib_rng * 1.618, 2)
         _fib_direction = "bull"
     else:
-        # 空方：從高點（0%）向低點（100%），反彈往上
+        # 空方：從高點（0%）向低點（100%），反彈往上（_fib_levels_dict 供支撐阻力判斷）
         for ratio, label in zip(_fib_ratios, _fib_labels):
             _fib_levels_dict[label] = round(_fib_swing_l + _fib_rng * ratio, 2)
-        _fib_ext_127 = round(_fib_swing_h - _fib_rng * 1.272, 2)  # 下方擴展目標
-        _fib_ext_162 = round(_fib_swing_h - _fib_rng * 1.618, 2)
+        # 延伸目標：Card 3 統一顯示向上突破目標，與多空方向判定解耦
+        _fib_ext_127 = round(_fib_swing_l + _fib_rng * 1.272, 2)
+        _fib_ext_162 = round(_fib_swing_l + _fib_rng * 1.618, 2)
         _fib_direction = "bear"
 
     # 找現價最近的上方阻力與下方支撐
@@ -1006,39 +1007,41 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
         "nearest_resist":   _nearest_res,
         "close_now":        close_now,
         # fib_ladder: 供 Card 3 Fib 專屬卡逐行渲染用，含公式字串與技術意義
+        # ⚠️ 定義鎖定：Fibonacci Retracement = 自今日最高點往下計算各支撐位
+        # 公式統一為 high - rng × ratio，與多空方向無關，嚴禁依 bpa_status 切換
         "fib_ladder": [
             {
                 "ratio":   "23.6%",
                 "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.236)",
-                "price":   round(_fib_swing_h - _fib_rng * 0.236, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.236, 1),
+                "price":   round(_fib_swing_h - _fib_rng * 0.236, 1),
                 "meaning": "淺回測，強勢整理常見",
                 "color":   "#38bdf8",
             },
             {
                 "ratio":   "38.2%",
                 "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.382)",
-                "price":   round(_fib_swing_h - _fib_rng * 0.382, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.382, 1),
+                "price":   round(_fib_swing_h - _fib_rng * 0.382, 1),
                 "meaning": "最常見的健康回測區",
                 "color":   "#f59e0b",
             },
             {
                 "ratio":   "50.0%",
                 "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.500)",
-                "price":   round(_fib_swing_h - _fib_rng * 0.500, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.500, 1),
+                "price":   round(_fib_swing_h - _fib_rng * 0.500, 1),
                 "meaning": "中性回測，重要心理關卡",
                 "color":   "#94a3b8",
             },
             {
                 "ratio":   "61.8%",
                 "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.618)",
-                "price":   round(_fib_swing_h - _fib_rng * 0.618, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.618, 1),
+                "price":   round(_fib_swing_h - _fib_rng * 0.618, 1),
                 "meaning": "較深回測，需觀察是否止跌",
                 "color":   "#f97316",
             },
             {
                 "ratio":   "78.6%",
                 "formula": f"{_fib_swing_h:.1f} - ({_fib_rng:.1f} × 0.786)",
-                "price":   round(_fib_swing_h - _fib_rng * 0.786, 1) if _fib_is_bull else round(_fib_swing_l + _fib_rng * 0.786, 1),
+                "price":   round(_fib_swing_h - _fib_rng * 0.786, 1),
                 "meaning": "接近今日低點，風險較高",
                 "color":   "#f43f5e",
             },
