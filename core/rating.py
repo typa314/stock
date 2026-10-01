@@ -150,31 +150,119 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         bpa_sub = "區間高出低進"
         bpa_color = "#fbbf24"
 
-    # 4. 籌碼與量價結構
-    v_score = vol_eval.get("score", 0) if vol_eval else 0
-    inst_5d = int(inst_df.tail(5)["total"].sum()) if (inst_df is not None and not inst_df.empty) else 0
-    if inst_5d > 0 and v_score >= 0:
-        chip_zh = "法人主力加碼"
-        chip_sub = f"5日買超 {inst_5d:,}張"
-        chip_color = "#4ade80"
-    elif inst_5d < 0 and v_score <= 0:
-        chip_zh = "法人主力調節"
-        chip_sub = f"5日賣超 {abs(inst_5d):,}張"
-        chip_color = "#f87171"
-    elif inst_5d > 0:
-        chip_zh = "籌碼偏多支撐"
-        chip_sub = "內外資偏多佈局"
-        chip_color = "#60a5fa"
-    else:
-        chip_zh = "籌碼動向觀望"
-        chip_sub = "多空分歧整理"
-        chip_color = "#fbbf24"
+    # 4. 籌碼與量價結構（法人細分 5 階層）
+    v_score   = vol_eval.get("score", 0) if vol_eval else 0
+    _has_fini  = inst_df is not None and not inst_df.empty and "fini"  in inst_df.columns
+    _has_trust = inst_df is not None and not inst_df.empty and "trust" in inst_df.columns
+    _has_total = inst_df is not None and not inst_df.empty and "total" in inst_df.columns
 
-    # 綜合評分與操盤定位
-    minervini_score = (m_passed / 7.0) * 35 if m_passed is not None else 0.0
-    bpa_score_val = _bpa_score(bpa_res)
-    total_score = minervini_score + (max(0, c_score) / 5.0) * 25 + bpa_score_val + (10 if inst_5d > 0 else 0)
-    total_score = int(round(total_score))
+    inst_5d  = int(inst_df.tail(5)["total"].sum()) if _has_total else 0
+    fini_5d  = int(inst_df.tail(5)["fini"].sum())  if _has_fini  else 0
+    trust_5d = int(inst_df.tail(5)["trust"].sum())  if _has_trust else 0
+
+    if _has_fini and _has_trust:
+        if fini_5d > 0 and trust_5d > 0:
+            inst_score_val = 10
+            chip_zh    = "外資投信雙主力加碼"
+            chip_sub   = f"外資+投信合買 {inst_5d:,} 張"
+            chip_color = "#4ade80"
+        elif trust_5d > 0 and fini_5d <= 0:
+            inst_score_val = 7
+            chip_zh    = "投信本土認養"
+            chip_sub   = f"投信買超 {trust_5d:,} 張（外資觀望）"
+            chip_color = "#60a5fa"
+        elif fini_5d > 0 and trust_5d <= 0:
+            inst_score_val = 6
+            chip_zh    = "外資波段推升"
+            chip_sub   = f"外資買超 {fini_5d:,} 張（投信未參與）"
+            chip_color = "#60a5fa"
+        elif (fini_5d > 1000 and trust_5d < -500) or (fini_5d < -1000 and trust_5d > 500):
+            inst_score_val = 3
+            chip_zh    = "⚠️ 土洋對作分歧"
+            chip_sub   = "外資投信多空方向相反"
+            chip_color = "#fbbf24"
+        elif inst_5d > 0:
+            inst_score_val = 5
+            chip_zh    = "籌碼偏多支撐"
+            chip_sub   = f"5日合計買超 {inst_5d:,} 張"
+            chip_color = "#60a5fa"
+        else:
+            inst_score_val = 0
+            chip_zh    = "法人主力調節" if inst_5d < 0 else "籌碼動向觀望"
+            chip_sub   = f"5日賣超 {abs(inst_5d):,} 張" if inst_5d < 0 else "多空分歧整理"
+            chip_color = "#f87171" if inst_5d < 0 else "#fbbf24"
+    else:
+        # 向下相容：僅有 total 欄位時
+        if inst_5d > 0 and v_score >= 0:
+            inst_score_val = 10
+            chip_zh    = "法人主力加碼"
+            chip_sub   = f"5日買超 {inst_5d:,} 張"
+            chip_color = "#4ade80"
+        elif inst_5d < 0 and v_score <= 0:
+            inst_score_val = 0
+            chip_zh    = "法人主力調節"
+            chip_sub   = f"5日賣超 {abs(inst_5d):,} 張"
+            chip_color = "#f87171"
+        elif inst_5d > 0:
+            inst_score_val = 7
+            chip_zh    = "籌碼偏多支撐"
+            chip_sub   = "法人偏多佈局"
+            chip_color = "#60a5fa"
+        else:
+            inst_score_val = 0
+            chip_zh    = "籌碼動向觀望"
+            chip_sub   = "多空分歧整理"
+            chip_color = "#fbbf24"
+
+    # ── 綜合評分 + 懲罰扣分機制 (Rating Calibration) ─────────────────────────
+    from core.constants import (
+        PENALTY_BIAS_TIER1_THRESHOLD, PENALTY_BIAS_TIER1_POINTS,
+        PENALTY_BIAS_TIER2_THRESHOLD, PENALTY_BIAS_TIER2_POINTS,
+        PENALTY_VOL_DULL_THRESHOLD,   PENALTY_VOL_DULL_POINTS,
+    )
+
+    minervini_score  = (m_passed / 7.0) * 35 if m_passed is not None else 0.0
+    bpa_score_val    = _bpa_score(bpa_res)
+    canslim_score_val = (max(0, c_score) / 5.0) * 25
+    base_score       = minervini_score + canslim_score_val + bpa_score_val + inst_score_val
+
+    # 懲罰扣分
+    penalties = []
+    deduction = 0
+
+    # 1. 20 EMA 正乖離過熱懲罰 (Overextended Bias Penalty)
+    bias_pct = ((c_now - ema_val) / (ema_val + 1e-9)) * 100.0 if ema_val > 0 else 0.0
+    if bias_pct > PENALTY_BIAS_TIER2_THRESHOLD:
+        deduction += PENALTY_BIAS_TIER2_POINTS
+        penalties.append(
+            f"正乖離過大 (+{bias_pct:.1f}% > +{PENALTY_BIAS_TIER2_THRESHOLD:.0f}%)："
+            f"追高風險極高，扣 {PENALTY_BIAS_TIER2_POINTS} 分"
+        )
+    elif bias_pct > PENALTY_BIAS_TIER1_THRESHOLD:
+        deduction += PENALTY_BIAS_TIER1_POINTS
+        penalties.append(
+            f"正乖離偏高 (+{bias_pct:.1f}% > +{PENALTY_BIAS_TIER1_THRESHOLD:.0f}%)："
+            f"技術面易遭拉回，扣 {PENALTY_BIAS_TIER1_POINTS} 分"
+        )
+
+    # 2. 當日量能萎縮懲罰，僅在上漲日觸發（防量縮整理被誤罰）
+    vol_now_d  = float(df["volume"].iloc[-1]) if "volume" in df.columns else 0.0
+    vol_ma20_d = float(df["volume"].rolling(20).mean().iloc[-1]) if (
+        "volume" in df.columns and len(df) >= 20
+    ) else vol_now_d
+    vol_ratio_d = (vol_now_d / (vol_ma20_d + 1e-9)) if vol_ma20_d > 0 else 1.0
+
+    if len(df) >= 2 and float(df["close"].iloc[-1]) >= float(df["close"].iloc[-2]):
+        if vol_ratio_d < PENALTY_VOL_DULL_THRESHOLD:
+            deduction += PENALTY_VOL_DULL_POINTS
+            penalties.append(
+                f"量能萎縮 ({vol_ratio_d:.2f}x 均量 < {PENALTY_VOL_DULL_THRESHOLD:.0%})："
+                f"上漲無量，扣 {PENALTY_VOL_DULL_POINTS} 分"
+            )
+
+    total_score = max(0, min(100, int(round(base_score - deduction))))
+
+
 
     if total_score >= 80 and (m_passed is not None and m_passed >= 5):
         badge = "⭐⭐⭐⭐⭐ 頂級飆股體質（Stage 2 主升）"
@@ -331,8 +419,14 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
         "market_regime": market_regime,
         "is_stage4_bear": is_stage4_bear,
         "is_market_bear": is_market_bear,
-        "time_horizon": "40~60 交易日（波段動能跟隨）"
+        "time_horizon": "40~60 交易日（波段動能跟隨）",
+        "penalties": penalties,
+        "score_base": int(round(base_score)),
+        "score_deduction": deduction,
+        "bias_pct": round(bias_pct, 2),
+        "vol_ratio_d": round(vol_ratio_d, 2),
     }
+
 
 
 def check_anti_chase(signal_close: float, next_open: float, max_chase_pct: float = 1.5) -> dict:

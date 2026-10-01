@@ -447,7 +447,8 @@ def build_dashboard_stock_flex(
     sr: dict,
     mtf_status: str = None,
     conformal_status: str = None,
-    regime_status: str = None
+    regime_status: str = None,
+    arbitration: dict = None
 ):
     """
     建立 1:1 復刻 Web 儀表板的旗艦級 4合1 多維綜合評鑑 Flex Bubble
@@ -637,6 +638,43 @@ def build_dashboard_stock_flex(
             "backgroundColor": "#0f172a",
             "paddingAll": "14px",
             "contents": [
+                # ── 跨時框仲裁主決策橫幅 (若有仲裁結果則顯示) ──
+                *([{
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": arbitration.get("master_bg", "rgba(245,158,11,0.18)"),
+                    "cornerRadius": "8px",
+                    "paddingAll": "10px",
+                    "borderWidth": "2px",
+                    "borderColor": arbitration.get("master_border", "#fbbf24"),
+                    "margin": "none",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"🎯 {arbitration.get('master_tag', '')}",
+                            "weight": "bold",
+                            "size": "xs",
+                            "color": arbitration.get("master_color", "#fbbf24"),
+                            "wrap": True
+                        },
+                        {
+                            "type": "text",
+                            "text": arbitration.get("conflict_reason", ""),
+                            "size": "xxs",
+                            "color": "#cbd5e1",
+                            "wrap": True,
+                            "margin": "xs"
+                        },
+                        {
+                            "type": "text",
+                            "text": arbitration.get("waiting_conditions", ""),
+                            "size": "xxs",
+                            "color": "#f8fafc",
+                            "wrap": True,
+                            "margin": "xs"
+                        }
+                    ]
+                }] if arbitration else []),
                 # 行動指引橫幅
                 {
                     "type": "box",
@@ -1310,7 +1348,8 @@ def build_buy_signal_alert_flex(
     return flex_bubble
 
 
-def build_5m_stock_flex(res5: dict) -> dict:
+def build_5m_stock_flex(res5: dict, arbitration: dict = None) -> dict:
+
     """
     建立 5 分鐘 K 線 (5m) 日內當沖多維研判 Flex Bubble
     包含：
@@ -1512,6 +1551,35 @@ def build_5m_stock_flex(res5: dict) -> dict:
             "backgroundColor": "#0f172a",
             "paddingAll": "14px",
             "contents": [
+                # ── 跨時框仲裁主決策橫幅 (若有仲裁結果則顯示) ──
+                *([{
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": arbitration.get("master_bg", "rgba(245,158,11,0.18)"),
+                    "cornerRadius": "8px",
+                    "paddingAll": "10px",
+                    "borderWidth": "2px",
+                    "borderColor": arbitration.get("master_border", "#fbbf24"),
+                    "margin": "none",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": f"🎯 {arbitration.get('master_tag', '')}",
+                            "weight": "bold",
+                            "size": "xs",
+                            "color": arbitration.get("master_color", "#fbbf24"),
+                            "wrap": True
+                        },
+                        {
+                            "type": "text",
+                            "text": arbitration.get("waiting_conditions", ""),
+                            "size": "xxs",
+                            "color": "#f8fafc",
+                            "wrap": True,
+                            "margin": "xs"
+                        }
+                    ]
+                }] if arbitration else []),
                 # 操盤方針與主力雷達橫幅
                 {
                     "type": "box",

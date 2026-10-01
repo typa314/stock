@@ -30,6 +30,8 @@ from cachetools import TTLCache
 import bot_db
 import bot_flex
 from kline import get_info, fetch_realtime_bar, analyze_stock, analyze_stock_5m, compute_risk_stop, __version__
+from core.decision_engine import arbitrate_signals
+
 
 # 設定記錄檔
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -641,6 +643,23 @@ def _cmd_stock_query(cmd: str):
         chg_pct = (chg_val / prev_close) * 100 if prev_close > 0 else 0.0
 
         # 1. 建立日K 4合1 旗艦研判 Bubble
+        # 先取得 5m 資料，供仲裁引擎使用（日K卡橫幅也需要仲裁結果）
+        res5 = None
+        arbitration = None
+        try:
+            res5 = get_cached_5m_analysis(ticker, days=3)
+            if res.get("close_now") and res.get("realtime_info"):
+                res5["close_now"] = float(res["close_now"])
+                res5["realtime_info"] = res.get("realtime_info")
+            if prev_close and prev_close > 0:
+                res5["prev_close"] = float(prev_close)
+                res5["change_today"] = round(res5["close_now"] - res5["prev_close"], 2)
+                res5["change_today_pct"] = round(res5["change_today"] / res5["prev_close"] * 100, 2)
+            # 執行跨時框仲裁
+            arbitration = arbitrate_signals(res, res5)
+        except Exception as e5_pre:
+            logger.warning(f"【{ticker}】5m 預取或仲裁失敗，降級為無仲裁模式: {e5_pre}")
+
         bubble_daily = bot_flex.build_dashboard_stock_flex(
             stock_name=sname,
             ticker=ticker,
@@ -655,21 +674,15 @@ def _cmd_stock_query(cmd: str):
             trend_stage=res.get("trend_stage", ""),
             rating_badge=res.get("rating_badge", ""),
             comp=res.get("composite_rating"),
-            sr=sr
+            sr=sr,
+            arbitration=arbitration
         )
 
-        # 2. 整合 5 分鐘 K 線當沖研判與 Fibonacci 回測為三時框 Carousel 輪播 (左右滑動切換)
+        # 2. 整合 5 分鐘 K 線當沖研判與 Fibonacci 回測為三時框 Carousel 輪播
         try:
-            res5 = get_cached_5m_analysis(ticker, days=3)
-            # 確保 5m 卡片與日K即時行情 100% 共享最新撮合與昨收基準
-            if res.get("close_now") and res.get("realtime_info"):
-                res5["close_now"] = float(res["close_now"])
-                res5["realtime_info"] = res.get("realtime_info")
-            if prev_close and prev_close > 0:
-                res5["prev_close"] = float(prev_close)
-                res5["change_today"] = round(res5["close_now"] - res5["prev_close"], 2)
-                res5["change_today_pct"] = round(res5["change_today"] / res5["prev_close"] * 100, 2)
-            bubble_5m  = bot_flex.build_5m_stock_flex(res5)
+            if res5 is None:
+                raise ValueError("5m 資料未取得")
+            bubble_5m  = bot_flex.build_5m_stock_flex(res5, arbitration=arbitration)
             bubble_fib = bot_flex.build_fibonacci_stock_flex(res5)
             flex_dict  = bot_flex.build_stock_carousel_flex(bubble_daily, bubble_5m, bubble_fib)
         except Exception as e5:

@@ -1284,3 +1284,59 @@ Parquet åˆè¨ˆ 2.2 MBï¼Œpickle å¿«å– 6.6 MBã€‚
    - ¾É­P¥d¤ù±q¤W¨ì¤Uªº»ù®æ±Æ¦C§e²{©Ç²§ªº¡u2495 -> 2479.7 -> 2482.6 -> 2485.0 -> 2487.4 -> 2490.7 -> 2475¡v¡C
 3. **®Ú¥»­ì¦]**¡G
    - core/analyzer.py ªº _fib_is_bull = "¦h" in bpa_status »~±N¡u½c«¬¾_Àú¡v·í¦¨ªÅ¤è¡A¨«¤J¤F¥[ªk¤À¤ä low + rng * ratio¡F¦ý UI ªº¤½¦¡¦r¦ê»P¤å¦r·N¸q«o¼g¦º¬°°ªÂI´îªk high - rng * ratio¡A¾É­P¨âªÌ¬Û¤Ï¡C
+
+---
+## Session N+11 ¡X 2026-09-30T11:12 (¦h®É®Øºî¦X¨Mµ¦¼h ? µû¤À®Õ·Ç ? ¹ê¾Ô°õ¦æ°Ñ¼Æ³W¹º)
+
+### ®Ö¤ßµ²½×»P¬[ºc³W¹º§¹¦¨
+1. **µhÂI½T¥ß**¡G
+   - °T¸¹½Ä¬ð¡G¤é½u BUY (100/100) »P 5m ¼È½w¶}­Ü¦U¦Û¿W¥ß¿é¥X¡A¯Ê¥F¸ó®É®Ø¥òµôªÌ¡C
+   - µû¤Àµê­D¡G¯Â¥[¤À¨îµLÃg»@¶µ¡A¦b°ª¨ÄÂ÷ (+10%+) ©Î¶q¯à¬\ºÜ®É¨ÌµM¥X²{ 100 º¡¤À¡C
+   - ¯Ê¥F¨ãÅé°õ¦æ­±¡G¯Ê¥F¶i³õ°Ï¶¡¡B°ÊºA°±·lÂI¡B­Ü¦ì«ØÄ³»P¥¢®Ä±ø¥ó¡C
+2. **³W¹º¿é¥X¼Ò²Õ**¡G
+   - core/decision_engine.py¡G¸ó®É®Ø°T¸¹¥òµô¤ÞÀº¡A¤é½u¦hÀY+5m¶qÁY¦Û°Ê©w½Õ¬°¡uÆ[±æ¡]ÁÍ¶Õ¦hÀY¡A°Ê¯à¼È·²¡^¡Aµ¥«Ý©ñ¶q¬ð¯}©Î¦^½ò20 EMA¡v¡C
+   - core/rating.py¡G¥[¤J¨ÄÂ÷²v¹L¤j¦©¤À¡]>+8% ¦©12¤À¡A>+12% ¦©20¤À¡^¡B¶q¯àµäÁY¦©¤À¡Bªk¤H¤g¬v¹ï§@¤À¯Å¡C
+   - core/execution_rules.py¡G²£¥Xºë·Ç¶i³õ°Ï¶¡¡B°ÊºA 2.5x ATR °±·l¡BRRR ´Á±æ­È»P¥¢®Ä±ø¥ó¡C
+   - ot_flex.py¡G³»³¡¥þ°ì¥D¨Mµ¦¾î´T»P½Ä¬ð¤Æ¸Ñ«ü¤Þ¡C
+3. **¹ê§@¤å¥ó¤w´Nºü**¡G
+   - §¹¾ã²Ó¸`¤w¼g¤J Artifact¡Gimplementation_plan.md¡C
+   - ÄY®æ¿í¦u³W½d¡GGemini ¶È¨î©w¹ê§@­pµe¡A«Ý¼f¾\«á¥Ñ«ü©w°õ¦æªÌ¹ê¬I¡C
+
+---
+## ¬ö¿ý§ó·s ¡X 2026-09-30T11:16 (¿í¦u Gemini ¤£°Ê¥N½X­ì«h¡Aµ¥«Ý¨Ï¥ÎªÌ«ü¥Ü)
+- ­è¤~¦]¨t²ÎÄ²µo Stop Hook (Auto-approved artifact, proceed to execution) ¶i¤J¥N½X½s¿è¬yµ{¡C
+- ¨Ï¥ÎªÌ¤Î®É´£¿ô³Ì°ª­ì«h¡G¡uGemini ¥u¦w±Æ­pµe¡A¤£­×§ï¥N½X¡v¡C
+- ¥ß§Y°±¤î©Ò¦³¥N½X­×§ï°Ê§@¡A¥Ø«e­Ü®wª¬ºA¬°¡G
+  - M core/rating.py (µû¤À®Õ·Ç­ì«¬)
+  - ?? core/decision_engine.py (¨Mµ¦¥òµô­ì«¬)
+  - ?? core/execution_rules.py (¹ê¾Ô°õ¦æ°Ñ¼Æ­ì«¬)
+  - ?? test_decision_engine.py (´ú¸Õ)
+  - ?? test_execution_rules.py (´ú¸Õ)
+- µ¥«Ý¨Ï¥ÎªÌµô¨M¡G¥ß§YÁÙ­ì¡]git checkout / ²M²z¥¼°lÂÜÀÉ®×¡^©Î«O¯d¨Ñ Claude ±µ¤â¸¨¹ê¡C
+
+---
+## ¬ö¿ý§ó·s ¡X 2026-09-30T11:18 (¤w§¹¥þ²M²z¥¼°lÂÜÀÉ®×¡A¥N½X®w 100% ¦^¨ì­ì©l°®²bª¬ºA)
+- ¤w°õ¦æ git checkout core/rating.py ÁÙ­ì©Ò¦³¥N½X­×§ï¡C
+- ¤w§¹¥þ§R°£©Ò¦³¥¼°lÂÜÀÉ®×¡]core/decision_engine.py¡Bcore/execution_rules.py¡B	est_decision_engine.py¡B	est_execution_rules.py¡^¡C
+- °õ¦æ¥þ®M°ò·Ç¦^Âk´ú¸Õ¡G27/27 PASS¡A½T»{Àô¹Ò 100% °®²b¥BµL¥ô¦ó´Ý¯d¡C
+- §¹¾ã¹ê§@¬[ºc­pµe¤w§´µ½«O¦s©ó Artifact¡Gimplementation_plan.md¡AÀR«Ý¤Á´«¦Ü Claude Sonnet 4.6 ±µ¤â°õ¦æ¡C
+
+---
+## ³W®æ©w½Z ¡X 2026-09-30T11:18 (¨Ï¥ÎªÌµô©w¤T¤j®Ö¤ß°Ñ¼Æ§¹¦¨¡A³W®æ®Ñ¥¿¦¡©w½Z)
+
+### ¨Ï¥ÎªÌµô©w½T»{¤º®e¡G
+1. **¦©¤ÀªùÂe°Ñ¼Æ**¡G
+   - ¨ÄÂ÷²v > +8% ¦© 12 ¤À
+   - ¨ÄÂ÷²v > +12% ¦© 20 ¤À
+   - ·í¤é¶q¯à < 0.7x MA20 ÃB¥~¦© 8 ¤À
+   - ¼g¤J core/constants.py ±`¼Æ
+2. **¥òµôÀu¥ý¯Å**¡G
+   - ½T»{±Ä¥Î²Î¤@­°¯Å³W«h¡G¤é½u BUY ? 5m ¼È½w¶}­Ü ? ³»³¡¥D¾î´T²Î¤@§ï¬° ?? «ØÄ³Æ[±æ (ÁÍ¶Õ°¾¦h¦ýµu½u°Ê¯à¼È·²)¡A°Æ¼Ð¸É¥R¨ãÅéµ¥«Ý±ø¥ó¡C
+3. **°±·l¼Ò«¬**¡G
+   - ¥¿¦¡¼Ð·Ç¡G°±·l»ù = max(¦¨¥» * (1 - 2.5 * ATR20%), µ²ºc§CÂI - 1 Tick)
+   - ¤W¤U­­§¨ºò¡G³Ìºò¤£¤p©ó -8%¡A³Ì¼e¤£¶W¹L -15%¡C
+
+### ·í«eª¬ºA¡G
+- ¥N½X®w¥Ø«eºû«ù 100% ­ì©l°®²bª¬ºA¡]Commit 71df319¡^¡C
+- ³Ì²×¹ê§@³W®æ®Ñ¤w§¹¾ã§ó·s¦Ü¡Gimplementation_plan.md¡C
+- ÀR«Ý¤Á´«¦Ü Claude Sonnet 4.6 ¼Ò«¬±µ¤â°õ¦æ¥N½X¹ê§@¡C
