@@ -1340,3 +1340,43 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 - �N�X�w�ثe���� 100% ��l���b���A�]Commit 71df319�^�C
 - �̲׹�@�W��Ѥw�����s�ܡGimplementation_plan.md�C
 - �R�ݤ����� Claude Sonnet 4.6 �ҫ��������N�X��@�C
+
+---
+## Session 2026-10-01 v3.6.0 實作完成
+
+### 完成工作
+1. **新建 core/decision_engine.py**
+   - arbitrate_signals(daily_res, res5) 跨時框仲裁引擎
+   - 5 大情境矩陣：SELL / AVOID_HIGH_VOLATILITY / WAIT_PULLBACK_OR_BREAKOUT / BUY_RESONANCE / BUY_NORMAL / HOLD
+   - 核心痛點破解：日線BUY + 5m暫緩 -> WAIT_PULLBACK_OR_BREAKOUT (has_conflict=True)
+   - 輸出含精確價位的 waiting_conditions 等待條件
+
+2. **修改 core/constants.py**
+   - STOP_ATR_MULT: 3.0 -> 2.5（回測實證 2.5×ATR 更優）
+   - 新增 PENALTY_BIAS_TIER1/TIER2 與 PENALTY_VOL_DULL 等 6 項懲罰常數
+
+3. **修改 core/rating.py**
+   - 法人籌碼評分：一刀切 -> 五階層（外資投信雙買10分…調節0分）
+   - 乖離扣分：>+8% 扣12分、>+12% 扣20分
+   - 量縮扣分：上漲日 <0.7x 扣8分
+   - 回傳 penalties / score_base / score_deduction 欄位
+
+4. **修改 bot_flex.py**
+   - build_dashboard_stock_flex 與 build_5m_stock_flex 新增 arbitration=None 參數
+   - 兩張卡片均渲染「🎯 跨時框仲裁結論」頂部橫幅
+
+5. **修改 line_server.py**
+   - _cmd_stock_query 提前取得 5m + 執行仲裁
+   - 將 arbitration 注入兩個 build 函式
+
+### 驗證結果
+- 27/27 回歸測試全通過
+- 仲裁引擎 3 情境驗算 PASS
+- 評分扣分精準命中（base 100 -> 扣 20 -> 最終 80 分）
+- Commit: 13e69cf (test/mtf-strategy)
+
+### 代碼庫狀態
+- 分支: test/mtf-strategy
+- 版本: v3.6.0
+- 所有測試: 27/27 PASS
+- 狀態: 100% 乾淨，等待使用者審查後決定是否推送
