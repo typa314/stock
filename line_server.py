@@ -683,8 +683,8 @@ def _cmd_stock_query(cmd: str):
             if res5 is None:
                 raise ValueError("5m 資料未取得")
             bubble_5m  = bot_flex.build_5m_stock_flex(res5, arbitration=arbitration)
-            bubble_fib = bot_flex.build_fibonacci_stock_flex(res5)
-            flex_dict  = bot_flex.build_stock_carousel_flex(bubble_daily, bubble_5m, bubble_fib)
+            bubble_map = bot_flex.build_key_levels_flex(res5, daily_res=res, arbitration=arbitration)
+            flex_dict  = bot_flex.build_stock_carousel_flex(bubble_daily, bubble_5m, bubble_map)
         except Exception as e5:
             logger.warning(f"取得【{ticker}】5分K當沖資料失敗，降級回傳日K單卡: {e5}")
             flex_dict = bubble_daily

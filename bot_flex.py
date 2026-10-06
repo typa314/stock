@@ -1820,15 +1820,14 @@ def build_5m_stock_flex(res5: dict, arbitration: dict = None) -> dict:
 
 
 
-def build_fibonacci_stock_flex(res5: dict) -> dict:
+def build_key_levels_flex(res5: dict, daily_res: dict = None, arbitration: dict = None) -> dict:
     """
-    Card 3: 📐 斐波那契（Fibonacci）波段回測點位詳細卡
-    包含：
-    1. Header：股票資訊、Swing 基準（今日高/低/振幅）、現價落點動態橫幅
-    2. Body：完整 Fib 回測階梯表（比例/公式/點位/技術意義）+ 現價高亮行
-             擴展目標（127.2%%、161.8%%）、微觀結構評估（Conformal 雜訊比）
-    3. Footer：三卡導覽 + 關注/持倉按鈕
+    Card 3: 🗺️ 關鍵價位地圖
+    取代原有的 Fib 表格，以垂直階梯式呈現現價相對於各支撐、壓力、停損、目標之位置。
     """
+    daily_res = daily_res or {}
+    arbitration = arbitration or {}
+
     ticker     = str(res5.get("ticker", "")).upper()
     stock_name = res5.get("stock_name", ticker)
     market     = str(res5.get("market", "tse")).lower()
@@ -1839,95 +1838,85 @@ def build_fibonacci_stock_flex(res5: dict) -> dict:
     chg_today_pct = float(res5.get("change_today_pct", 0.0))
     chg_color     = get_tw_pnl_color(chg_today)
     chg_sign      = "+" if chg_today > 0 else ""
-
+    
+    data_time_str = res5.get("data_time_str", "")
+    bar_time      = data_time_str.split(" ")[-1] if data_time_str else ""
+    
+    # 取得價位
     fib_levels = res5.get("fib_levels", {})
-    fib_h      = fib_levels.get("swing_high", close_now)
-    fib_l      = fib_levels.get("swing_low",  close_now)
-    fib_rng    = round(fib_h - fib_l, 2)
-    fib_dir    = fib_levels.get("direction", "bull")
-    fib_ext127 = fib_levels.get("ext_127", 0.0)
     fib_ext162 = fib_levels.get("ext_162", 0.0)
+    fib_ext127 = fib_levels.get("ext_127", 0.0)
     fib_ladder = fib_levels.get("fib_ladder", [])
-    fib_dir_icon = "📈" if fib_dir == "bull" else "📉"
-
-    conformal_status = res5.get("conformal_status", "—")
-    noise_ratio      = float(res5.get("noise_ratio", 0.0))
-    data_time_str    = res5.get("data_time_str", "")
-    bar_time         = data_time_str.split(" ")[-1] if data_time_str else ""
-
-    # ── 現價落點區間識別 ─────────────────────────────────────────────────────
-    if fib_rng > 0 and close_now >= fib_h:
-        zone_status = f"🔥 突破高點延伸（>{fib_h:.1f} 元）極強勢"
-        zone_bg     = "#1a2a1a"
-        zone_color  = "#4ade80"
-    elif fib_rng > 0 and fib_ladder:
-        sorted_desc = sorted(fib_ladder, key=lambda x: -x["price"])
-        hit_row = None
-        for step in sorted_desc:
-            if close_now >= step["price"]:
-                hit_row = step
-                break
-        if hit_row:
-            zone_status = f"現價 {close_now:.1f} 元 ▶ {hit_row['ratio']} 支撐區上方（{hit_row['meaning']}）"
-            zone_bg     = "#1a1a2e"
-            zone_color  = hit_row["color"]
-        else:
-            zone_status = f"現價 {close_now:.1f} 元 ▶ 低於所有 Fib 位（深度回測警戒）"
-            zone_bg     = "#2a1a1a"
-            zone_color  = "#f43f5e"
-    else:
-        zone_status = f"現價 {close_now:.1f} 元"
-        zone_bg     = "#1e293b"
-        zone_color  = "#94a3b8"
-
-    # ── 建立單行 Fib 回測列（動態高亮命中行）────────────────────────────────
-    def _build_fib_row(step: dict) -> dict:
-        ratio   = step["ratio"]
-        formula = step["formula"]
-        price   = step["price"]
-        meaning = step["meaning"]
-        color   = step["color"]
-
-        all_prices_asc     = sorted([s["price"] for s in fib_ladder])
-        prices_at_or_below = [p for p in all_prices_asc if p <= close_now]
-        nearest_below      = prices_at_or_below[-1] if prices_at_or_below else None
-        is_hit = (nearest_below is not None and abs(price - nearest_below) < 0.01)
-
-        row_bg      = "#1e3a5f" if is_hit else "#0f172a"
-        price_label = f"{price:.1f} 元  ← 現價在此" if is_hit else f"{price:.1f} 元"
-        w_price     = "bold" if is_hit else "regular"
-        sz_price    = "sm"   if is_hit else "xs"
-
+    
+    high_today = float(res5.get("high_today", 0.0))
+    low_today  = float(res5.get("low_today", 0.0))
+    ema5       = float(res5.get("ema_now", 0.0))
+    
+    stop_loss  = float(res5.get("stop_loss", 0.0))
+    buy_stop   = float(res5.get("buy_stop", 0.0))
+    target_1r  = float(res5.get("target_1r", 0.0))
+    target_2r  = float(res5.get("target_2r", 0.0))
+    
+    levels = []
+    if fib_ext162 > 0: levels.append({"price": fib_ext162, "label": "Ext 161.8%", "icon": "🎯", "color": "#f43f5e", "meaning": "目標二"})
+    if fib_ext127 > 0: levels.append({"price": fib_ext127, "label": "Ext 127.2%", "icon": "🎯", "color": "#f43f5e", "meaning": "目標一"})
+    if high_today > 0: levels.append({"price": high_today, "label": "今日最高", "icon": "🔴", "color": "#ef4444", "meaning": "日內頂部"})
+    
+    fib618_val = 0.0
+    for step in fib_ladder:
+        ratio = step.get("ratio", "")
+        p = step.get("price", 0.0)
+        if ratio == "61.8%":
+            fib618_val = p
+        if ratio not in ["0.0%", "100.0%"] and p > 0:
+            levels.append({"price": p, "label": f"Fib {ratio}", "icon": "🟡", "color": "#fbbf24", "meaning": step.get("meaning", "")})
+            
+    if ema5 > 0: levels.append({"price": ema5, "label": "5m 20 EMA", "icon": "🌀", "color": "#818cf8", "meaning": "均線支撐"})
+    if buy_stop > 0: levels.append({"price": buy_stop, "label": "Buy Stop", "icon": "🟢", "color": "#4ade80", "meaning": "觸發價"})
+    if stop_loss > 0: levels.append({"price": stop_loss, "label": "Stop Loss", "icon": "🛑", "color": "#f43f5e", "meaning": "結構停損"})
+    if low_today > 0: levels.append({"price": low_today, "label": "今日最低", "icon": "🔴", "color": "#ef4444", "meaning": "日內底部"})
+    
+    levels.sort(key=lambda x: x["price"], reverse=True)
+    
+    def _build_level_row(price, label, icon, color, meaning, close_val, is_current):
+        diff = price - close_val
+        diff_str = f"{diff:+.2f}" if not is_current else meaning
+        
+        bg_color = "#1e3a5f" if is_current else "transparent"
+        weight = "bold" if is_current else "regular"
+        sz = "sm" if is_current else "xs"
+        
         return {
             "type": "box",
-            "layout": "vertical",
-            "backgroundColor": row_bg,
+            "layout": "horizontal",
+            "backgroundColor": bg_color,
             "cornerRadius": "4px",
-            "paddingAll": "6px",
-            "margin": "xs",
+            "paddingAll": "4px",
+            "margin": "xs" if is_current else "none",
             "contents": [
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "contents": [
-                        {"type": "text",
-                         "text": f"{'📍 ' if is_hit else '　'}{ratio}",
-                         "size": "xs", "color": color, "weight": "bold", "flex": 2},
-                        {"type": "text", "text": price_label,
-                         "size": sz_price, "color": "#ffffff" if is_hit else color,
-                         "weight": w_price, "align": "center", "flex": 3},
-                        {"type": "text", "text": meaning,
-                         "size": "xxs", "color": color if is_hit else "#64748b",
-                         "align": "end", "flex": 3, "wrap": True}
-                    ]
-                },
-                {"type": "text", "text": f"= {formula}",
-                 "size": "xxs", "color": "#334155", "margin": "xs"}
+                {"type": "text", "text": f"{icon} {label}", "size": sz, "color": color, "weight": weight, "flex": 5},
+                {"type": "text", "text": f"{price:.2f}", "size": sz, "color": color if is_current else "#e2e8f0", "weight": "bold", "align": "center", "flex": 3},
+                {"type": "text", "text": diff_str, "size": "xxs", "color": color if is_current else "#64748b", "align": "end", "flex": 3}
             ]
         }
-
-    fib_rows = [_build_fib_row(step) for step in fib_ladder]
-
+        
+    levels_contents = []
+    inserted_current = False
+    
+    for i, lv in enumerate(levels):
+        if not inserted_current and lv["price"] <= close_now:
+            if len(levels_contents) > 0:
+                levels_contents.append({"type": "separator", "margin": "sm", "color": "#1e3a5f"})
+            levels_contents.append(_build_level_row(close_now, "現   價", "📍", "#38bdf8", "← 此處", close_now, True))
+            levels_contents.append({"type": "separator", "margin": "sm", "color": "#1e3a5f"})
+            inserted_current = True
+            
+        levels_contents.append(_build_level_row(lv["price"], lv["label"], lv["icon"], lv["color"], lv["meaning"], close_now, False))
+        
+    if not inserted_current:
+        levels_contents.append({"type": "separator", "margin": "sm", "color": "#1e3a5f"})
+        levels_contents.append(_build_level_row(close_now, "現   價", "📍", "#38bdf8", "← 此處", close_now, True))
+        
     flex_bubble = {
         "type": "bubble",
         "size": "giga",
@@ -1937,13 +1926,11 @@ def build_fibonacci_stock_flex(res5: dict) -> dict:
             "backgroundColor": "#0b1329",
             "paddingAll": "16px",
             "contents": [
-                # 股票代號 + 市場
                 {
                     "type": "box",
                     "layout": "horizontal",
                     "contents": [
-                        {"type": "text", "text": f"{stock_name} ({ticker})",
-                         "weight": "bold", "size": "lg", "color": "#ffffff", "flex": 4},
+                        {"type": "text", "text": f"{stock_name} ({ticker})", "weight": "bold", "size": "lg", "color": "#ffffff", "flex": 4},
                         {
                             "type": "box",
                             "layout": "vertical",
@@ -1952,56 +1939,19 @@ def build_fibonacci_stock_flex(res5: dict) -> dict:
                             "paddingAll": "4px",
                             "flex": 2,
                             "contents": [
-                                {"type": "text", "text": m_label,
-                                 "size": "xxs", "color": "#64748b", "align": "center"}
+                                {"type": "text", "text": m_label, "size": "xxs", "color": "#64748b", "align": "center"}
                             ]
                         }
                     ]
                 },
-                # 標題
-                {"type": "text",
-                 "text": f"📐 今日波段 Fibonacci 回測點位 {fib_dir_icon}",
-                 "weight": "bold", "size": "sm", "color": "#f59e0b", "margin": "sm"},
-                # Swing 基準行
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "margin": "xs",
-                    "contents": [
-                        {"type": "text", "text": f"最高  {fib_h:.1f} 元",
-                         "size": "xxs", "color": "#ef4444", "flex": 1},
-                        {"type": "text", "text": f"最低  {fib_l:.1f} 元",
-                         "size": "xxs", "color": "#22c55e", "align": "center", "flex": 1},
-                        {"type": "text", "text": f"振幅  {fib_rng:.1f} 元",
-                         "size": "xxs", "color": "#94a3b8", "align": "end", "flex": 1}
-                    ]
-                },
-                {"type": "separator", "margin": "sm", "color": "#1e3a5f"},
-                # 現價 + 漲跌幅
+                {"type": "text", "text": f"🗺️ 關鍵價位地圖", "weight": "bold", "size": "sm", "color": "#38bdf8", "margin": "sm"},
                 {
                     "type": "box",
                     "layout": "horizontal",
                     "margin": "sm",
                     "contents": [
-                        {"type": "text", "text": f"{close_now:.1f} 元",
-                         "weight": "bold", "size": "xl", "color": chg_color, "flex": 2},
-                        {"type": "text",
-                         "text": f"{chg_sign}{chg_today:.2f} ({chg_sign}{chg_today_pct:.2f}%%)",
-                         "size": "xs", "color": chg_color, "align": "end", "flex": 2}
-                    ]
-                },
-                # 落點動態橫幅
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "backgroundColor": zone_bg,
-                    "cornerRadius": "6px",
-                    "paddingAll": "6px",
-                    "margin": "xs",
-                    "contents": [
-                        {"type": "text", "text": zone_status,
-                         "size": "xxs", "color": zone_color,
-                         "weight": "bold", "wrap": True, "flex": 1}
+                        {"type": "text", "text": f"{close_now:.1f} 元", "weight": "bold", "size": "xl", "color": chg_color, "flex": 2},
+                        {"type": "text", "text": f"{chg_sign}{chg_today:.2f} ({chg_sign}{chg_today_pct:.2f}%)", "size": "xs", "color": chg_color, "align": "end", "flex": 2}
                     ]
                 }
             ]
@@ -2012,127 +1962,59 @@ def build_fibonacci_stock_flex(res5: dict) -> dict:
             "backgroundColor": "#0a0f1e",
             "paddingAll": "12px",
             "contents": [
-                # 欄位標題行
                 {
                     "type": "box",
                     "layout": "horizontal",
                     "paddingAll": "4px",
                     "contents": [
-                        {"type": "text", "text": "回測比例",
-                         "size": "xxs", "color": "#475569", "weight": "bold", "flex": 2},
-                        {"type": "text", "text": "回測點位",
-                         "size": "xxs", "color": "#475569", "weight": "bold",
-                         "align": "center", "flex": 3},
-                        {"type": "text", "text": "技術意義",
-                         "size": "xxs", "color": "#475569", "weight": "bold",
-                         "align": "end", "flex": 3}
+                        {"type": "text", "text": "標籤", "size": "xxs", "color": "#475569", "weight": "bold", "flex": 5},
+                        {"type": "text", "text": "價位", "size": "xxs", "color": "#475569", "weight": "bold", "align": "center", "flex": 3},
+                        {"type": "text", "text": "距現價", "size": "xxs", "color": "#475569", "weight": "bold", "align": "end", "flex": 3}
                     ]
                 },
-                # 0%% 起點（今日最高）
+                *levels_contents,
+                {"type": "separator", "margin": "md", "color": "#1e3a5f"},
                 {
                     "type": "box",
                     "layout": "horizontal",
-                    "backgroundColor": "#1a0a0a" if close_now >= fib_h else "#0f172a",
-                    "cornerRadius": "4px",
-                    "paddingAll": "6px",
-                    "margin": "xs",
+                    "margin": "md",
+                    "spacing": "sm",
                     "contents": [
-                        {"type": "text",
-                         "text": f"{'📍 ' if close_now >= fib_h else '　'}0.0%%",
-                         "size": "xs", "color": "#ef4444", "weight": "bold", "flex": 2},
-                        {"type": "text",
-                         "text": f"{fib_h:.1f} 元" + ("  ← 現價在此" if close_now >= fib_h else ""),
-                         "size": "xs", "color": "#ef4444", "align": "center", "flex": 3},
-                        {"type": "text", "text": "今日最高點",
-                         "size": "xxs", "color": "#64748b", "align": "end", "flex": 3}
-                    ]
-                },
-                # 動態高亮 Fib 回測階梯
-                *fib_rows,
-                # 100%% 終點（今日最低）
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "backgroundColor": "#0a1a0a" if close_now <= fib_l else "#0f172a",
-                    "cornerRadius": "4px",
-                    "paddingAll": "6px",
-                    "margin": "xs",
-                    "contents": [
-                        {"type": "text",
-                         "text": f"{'📍 ' if close_now <= fib_l else '　'}100.0%%",
-                         "size": "xs", "color": "#22c55e", "weight": "bold", "flex": 2},
-                        {"type": "text",
-                         "text": f"{fib_l:.1f} 元" + ("  ← 現價在此" if close_now <= fib_l else ""),
-                         "size": "xs", "color": "#22c55e", "align": "center", "flex": 3},
-                        {"type": "text", "text": "今日最低點",
-                         "size": "xxs", "color": "#64748b", "align": "end", "flex": 3}
-                    ]
-                },
-                {"type": "separator", "margin": "sm", "color": "#1e3a5f"},
-                # 擴展目標
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "backgroundColor": "#0f2a1a",
-                    "cornerRadius": "6px",
-                    "paddingAll": "8px",
-                    "margin": "sm",
-                    "contents": [
-                        {"type": "text", "text": "📈 突破後擴展目標（向上）",
-                         "size": "xxs", "color": "#4ade80", "weight": "bold"},
                         {
                             "type": "box",
-                            "layout": "horizontal",
-                            "margin": "xs",
+                            "layout": "vertical",
+                            "flex": 1,
+                            "backgroundColor": "#1e293b",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
                             "contents": [
-                                {"type": "text",
-                                 "text": f"127.2%%    {fib_ext127:.1f} 元",
-                                 "size": "xs", "color": "#4ade80", "weight": "bold", "flex": 1},
-                                {"type": "text",
-                                 "text": f"161.8%%    {fib_ext162:.1f} 元",
-                                 "size": "xs", "color": "#4ade80", "weight": "bold",
-                                 "align": "end", "flex": 1}
+                                {"type": "text", "text": "⚡ 進場條件", "size": "xxs", "color": "#fbbf24", "weight": "bold"},
+                                {"type": "text", "text": f"Fib 61.8% 守穩", "size": "xs", "color": "#cbd5e1", "margin": "sm"},
+                                {"type": "text", "text": f"Buy Stop: {buy_stop:.1f}", "size": "xs", "color": "#4ade80", "weight": "bold", "margin": "xs"}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "flex": 1,
+                            "backgroundColor": "#2a1a1a",
+                            "cornerRadius": "6px",
+                            "paddingAll": "8px",
+                            "contents": [
+                                {"type": "text", "text": "🛡️ 風控 (1:2)", "size": "xxs", "color": "#f43f5e", "weight": "bold"},
+                                {"type": "text", "text": f"停損: {stop_loss:.2f}", "size": "xs", "color": "#f43f5e", "weight": "bold", "margin": "sm"},
+                                {"type": "text", "text": f"1R: {target_1r:.1f} / 2R: {target_2r:.1f}", "size": "xs", "color": "#cbd5e1", "margin": "xs"}
                             ]
                         }
                     ]
                 },
-                {"type": "separator", "margin": "sm", "color": "#1e3a5f"},
-                # 微觀結構評估
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "margin": "sm",
-                    "contents": [
-                        {"type": "text", "text": "⚙️ 微觀結構",
-                         "size": "xxs", "color": "#94a3b8", "weight": "bold", "flex": 2},
-                        {"type": "text", "text": conformal_status,
-                         "size": "xxs", "color": "#cbd5e1",
-                         "align": "end", "flex": 3, "wrap": True}
-                    ]
-                },
+                {"type": "text", "text": f"5m 棒 {bar_time}  ·  數據僅供參考", "size": "xxs", "color": "#334155", "align": "center", "margin": "md"},
                 {
                     "type": "box",
                     "layout": "horizontal",
                     "margin": "xs",
                     "contents": [
-                        {"type": "text", "text": "Conformal 波幅比",
-                         "size": "xxs", "color": "#475569", "flex": 2},
-                        {"type": "text", "text": f"{noise_ratio:.2f}x ATR",
-                         "size": "xxs", "color": "#94a3b8", "align": "end", "flex": 3}
-                    ]
-                },
-                # 資料時間 + 導覽提示
-                {"type": "text", "text": f"5m 棒 {bar_time}  ·  數據僅供參考",
-                 "size": "xxs", "color": "#334155", "align": "center", "margin": "md"},
-                {
-                    "type": "box",
-                    "layout": "horizontal",
-                    "margin": "xs",
-                    "contents": [
-                        {"type": "text",
-                         "text": "👈 向右滑動返回 5分K 當沖戰略 ⚡",
-                         "size": "xxs", "color": "#38bdf8",
-                         "align": "center", "flex": 1}
+                        {"type": "text", "text": "👈 向左滑動返回 5分K 當沖戰略 ⚡", "size": "xxs", "color": "#38bdf8", "align": "center", "flex": 1}
                     ]
                 }
             ]
@@ -2174,16 +2056,17 @@ def build_fibonacci_stock_flex(res5: dict) -> dict:
     return flex_bubble
 
 
-def build_stock_carousel_flex(bubble_daily: dict, bubble_5m: dict, bubble_fib: dict = None) -> dict:
+def build_stock_carousel_flex(bubble_daily: dict, bubble_5m: dict, bubble_map: dict = None) -> dict:
     """
     建立個股三時框 Carousel 輪播卡片容器
-    Card 1: 日K 4合1 旗艦研判  |  Card 2: 5分K 當沖戰略  |  Card 3: Fib 回測詳細（可選）
-    向下相容原有 2 卡模式（bubble_fib=None 時退化為 2 卡）
+    Card 1: 日K 4合1 旗艦研判  |  Card 2: 5分K 當沖戰略  |  Card 3: 關鍵價位地圖（可選）
+    向下相容原有 2 卡模式（bubble_map=None 時退化為 2 卡）
     """
     contents = [bubble_daily, bubble_5m]
-    if bubble_fib:
-        contents.append(bubble_fib)
+    if bubble_map:
+        contents.append(bubble_map)
     return {
         "type": "carousel",
         "contents": contents
     }
+
