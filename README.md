@@ -254,7 +254,16 @@ python -X utf8 test_bot_logic.py
    - **`檢查本地備援狀態.bat`**：即時查看本機 Port 8080、Tunnel 與開機自啟狀態。
    - **`停止本地備援.bat`**：隨時一鍵終止本機服務，Worker 自動將流量無縫轉回 Render 雲端。
 
-#### 6. LINE 對話常用指令一覽
+#### 6. 🔥 配置 Firebase Firestore 雙節點資料同步（解決雲端備援與本地資料不同步）
+本系統支援將本地的 SQLite 暫存資料以**低成本增量同步 (Delta Sync)** 的方式上傳至 Firebase Firestore，確保本地端與 Render 雲端節點的資料永遠保持同步，並且不會超過免費額度：
+1. 進入 [Firebase Console](https://console.firebase.google.com/) 建立一個新的 Firebase 專案。
+2. 進入 **Cloud Firestore**，點擊 **Create database**。
+3. **重要**：請建立「原生模式 (Native Mode)」的資料庫，並將資料庫名稱保持預設的 **`default`**，位置可選 `asia-east1` (台灣)。
+4. 進入專案設定 ➔ **服務帳戶 (Service Accounts)** ➔ **產生新的私鑰 (Generate new private key)**。
+5. 將下載的 JSON 檔案重新命名為 **`firebase_key.json`** 並放入本專案的根目錄。
+6. 系統偵測到 `firebase_key.json` 後，便會自動啟用雙節點同步機制。
+
+#### 7. LINE 對話常用指令一覽
 | 指令範例 | 說明 |
 |---|---|
 | `2330` 或 `00708L` | 即刻回傳 1:1 復刻 Web 儀表板旗艦級 4合1 多維綜合評鑑圖卡 |
@@ -359,10 +368,14 @@ python -X utf8 test_bot_logic.py
 
 | 版本 | 核心里程碑與重點變更 |
 |:---:|---|
+| **`v3.7.0`** | • **Cloud-Native 雙節點增量同步架構 (`firestore_sync.py`, `bot_db.py`)**：導入 Firebase Firestore 雲端資料庫作為雙節點（本機備援與 Render 雲端）的唯一真實資料源（Single Source of Truth），徹底解決不同節點間的 SQLite 持倉資料不同步痛點<br>• **極低成本增量同步 (Delta Sync)**：嚴格落實最低限度讀寫守則，拋棄高頻輪詢與全量覆蓋。採用 `system/metadata` 單一時間戳檢查，每日盤中巡邏整天僅消耗 < 0.6% 官方免費讀取額度，且寫入時僅同步變動的持股文件 (Batch Delta Write)<br>• **零臆測單元測試安全隔離 (`firestore_sync.py`)**：內建 `is_test_env` 測試環境偵測鎖，確保 100% 回歸測試時自動截斷雲端寫入，阻絕 `U_TRADER_1` 等測試髒資料污染正式營運資料庫<br>• **平滑無痛熱遷移 (`run_migration.py`)**：提供一次性全自動遷移腳本，完整保留所有使用者的現存持股與自選名單 |
 | **`v3.6.0`** | • **跨時框訊號仲裁引擎 (`core/decision_engine.py`)**：全新模組 `arbitrate_signals(daily_res, res5)` 整合日線（Minervini/CANSLIM/BPA/籌碼）與 5m（即時動能/Conformal/形態）兩套訊號，以 5 大情境決策矩陣（SELL/AVOID_HIGH_VOLATILITY/WAIT_PULLBACK_OR_BREAKOUT/BUY_RESONANCE/BUY_NORMAL/HOLD）輸出單一主決策標籤、機器可讀 `decision_code`、衝突說明與含精確價位的等待條件，徹底消除「日線說買入、5m說暫緩」的訊號衝突痛點<br>• **日K卡與5m卡統一仲裁橫幅 (`bot_flex.py`)**：`build_dashboard_stock_flex()` 與 `build_5m_stock_flex()` 新增 `arbitration` 參數；有仲裁結果時，兩張卡片頂部均渲染「🎯 跨時框仲裁結論」橫幅（主決策標籤+衝突原因+含價位等待條件），橫幅顏色跟隨仲裁結論動態著色（綠/黃/紅），確保日K卡與5m卡呈現同一套一致決策<br>• **動態停損參數校準 (`core/constants.py`)**：依回測實證將 `STOP_ATR_MULT` 從 3.0 調整為 **2.5**（2.5×ATR20 於 20~60 日波段績效優於 3.0×ATR，貼近結構性低點防守），夾緊區間維持 [-8%, -15%]，全面棄用剛性 -7% 停損<br>• **評分三階懲罰常數 (`core/constants.py`)**：新增 6 項懲罰常數（`PENALTY_BIAS_TIER1_THRESHOLD/POINTS`、`PENALTY_BIAS_TIER2_THRESHOLD/POINTS`、`PENALTY_VOL_DULL_THRESHOLD/POINTS`），集中管理方便回測微調<br>• **評分校準：乖離扣分 + 量能扣分 (`core/rating.py`)**：正乖離 > +8% 扣 12 分、> +12% 扣 20 分；上漲日量能 < 0.7×MA20 額外扣 8 分（防高乖離+縮量雙重過熱訊號）；回傳 `penalties` 清單、`score_base`、`score_deduction` 供 UI 層顯示扣分明細<br>• **法人籌碼細化為五階層 (`core/rating.py`)**：外資投信雙主力合買 10 分 → 投信單買 7 分 → 外資單買 6 分 → 籌碼偏多 5 分 → 土洋對作分歧 3 分 → 調節 0 分，取代原本只判斷 `inst_5d > 0` 的一刀切邏輯<br>• **27/27 回歸測試全通過**；仲裁矩陣 3 情境全部驗算 PASS；評分扣分精準命中（高乖離+量縮：base 100 → 扣 20 → 最終 80 分） |
 | **`v3.5.1`** | • **Fibonacci 回測點位計算錯誤根治修復 (`core/analyzer.py`)**：修正 `fib_ladder` 在 `bpa_status` 非多頭（如箱型震盪）時，price 欄位誤走 `bear` 分支執行 `low + rng × ratio`（加法），但 `formula` 字串卻硬寫高點減法，造成公式與數值完全相反、23.6% ↔ 78.6% 與 38.2% ↔ 61.8% 上下完全顛倒的嚴重 Bug；修復方式：統一鎖定 `price = high - rng × ratio`（Fibonacci Retracement 定義 = 自今日最高點往下計算支撐，與多空方向無關），徹底消除條件分支引發的公式/數值矛盾<br>• **擴展目標統一鎖定向上突破延伸 (`core/analyzer.py`)**：修正 `ext_127 / ext_162` 在 `bear` 分支錯誤計算為 `high - rng × 1.272`（向下延伸，可能低於今日最低），統一鎖定為 `low + rng × 1.272 / 1.618`（向上突破延伸），與 Card 3「突破後擴展目標（向上）」的語意 100% 對齊<br>• **實測驗證**：台積電 (2330) High=2495 / Low=2475 / Range=20：23.6%=2490.3、38.2%=2487.4、50.0%=2485.0、61.8%=2482.6、78.6%=2479.3，全部 PASS；27/27 回歸測試全通過 |
 
 | **`v3.5.0`** | • **獨立斐波那契（Fibonacci）波段回測點位詳細卡 (`bot_flex.py`)**：新增 `build_fibonacci_stock_flex()` 函式，建構全新 Card 3 專屬 Flex Bubble；以今日 5m 高低點為 Swing 基準，完整呈現 0% / 23.6% / 38.2% / 50.0% / 61.8% / 78.6% / 100% 七階回測點位，每行附帶計算公式字串（如 `201.5 - (22.5 × 0.382)`）與技術意義文字說明<br>• **現價落點動態高亮行 (Dynamic Price Zone Highlight)**：Card 3 自動識別現價落在哪個 Fib 回測區間，命中行以藍色光暈背景 + `📍 現價在此` 標記動態高亮，視覺層次清晰，使用者一眼掌握當前股價的回測強弱位階<br>• **擴展目標整合 (Fibonacci Extensions)**：Card 3 加入向上突破擴展目標（127.2% 與 161.8%），今日實戰驗證：晶技 (3042) Fibonacci 127.2% 計算點位 207.6 元，盤中最高精確來到 212 元（161.8% 目標 215.4 元尚未達到）<br>• **3-Bubble Carousel 輪播架構重構 (`bot_flex.py`, `line_server.py`)**：原有雙時框 2 卡輪播（日K + 5分K）升級為三時框 3 卡輪播（日K + 5分K + Fib 回測）；Card 2（5分K 當沖戰略卡）移除嵌入式 Fib 小摘要，聚焦極速掛單決策；`build_stock_carousel_flex()` 支援可變卡數，向下相容 2 卡模式（`bubble_fib=None`）<br>• **fib_levels 資料結構強化 (`core/analyzer.py`)**：新增 `fib_ladder` 列表（含 ratio/formula/price/meaning/color）與 `close_now` 欄位，讓 UI 層動態高亮邏輯全部由 analyzer 計算結果驅動，嚴格遵守「數據層不可臆測」原則 |
+<details>
+<summary><b>點擊展開舊版歷史紀錄 (v3.4.3 及更早版本)</b></summary>
+
 | **`v3.4.3`** | • **5分K 棒形態分類加入最小有效波幅門檻 (`core/analyzer.py`)**：嚴格遵循 Al Brooks 價格行為學（BPA）原則，修復單根振幅僅 1 個 Tick（如 0.50 元）或 Conformal 波動度過低（`noise_ratio < 0.35`）之微幅跳動被百分比公式誤判為「🔴 空頭趨勢棒」的嚴重演算法缺陷；加入 `is_micro_range` 門檻精準識別為「⚪ 窄幅休整棒 (Micro Bar)」與「⚖️ 十字休整棒 (Micro Doji)」，消除對看盤者的恐慌誤導<br>• **多時框位階 (MTF Status) 與 Conformal 鈍化決策解耦 (`core/analyzer.py`)**：將日線方向 vs 5m 結構之多時框位階判定提前獨立執行，徹底解決盤中短線量縮休整觸發 `is_vol_dull` 暫緩開倉時 `mtf_status` 被遺漏覆蓋為「中性整理」的瑕疵，確保忠實呈現「🟢 雙時框多方共振 (高勝率)」<br>• **主力巨量異動與短線量縮休整脈絡識別 (`core/analyzer.py`, `bot_flex.py`)**：新增近 30 分鐘波段巨量檢測與狀態加權，若盤中剛經歷多波段主力放量推升但當前棒急遽量縮，精準輸出「💤 爆量後量縮休整」，徹底終結爆量暴衝後被單根誤標為「常態量能無異動」的語意脫節；5m 卡片 2x2 Grid 同步呈現「5m現量 ｜ 全日累積量」，消弭現量與全日量混淆<br>• **當沖風控掛單防微幅噪音綁架 (`core/analyzer.py`)**：於窄幅休整期自動將 Buy Stop / Sell Stop 錨定至近 4 根棒之微型整理區間高低點，杜絕掛單區間僅 1.50 元（3 個 Tick）遭隨機微小撮合雙向掃單洗盤的實戰風險 |
 | **`v3.4.2`** | • **個人持倉（Portfolio）效能極致躍升與批次化架構 (`line_server.py`, `core/indicators.py`)**：重構 `_cmd_portfolio` 報價擷取管線，比照自選股全面改採中央 `Quote Hub` 單次批次撮合取價（`fetch_realtime_quotes_batch`），並於盤後優先讀取本地 SQLite Kline 快取日K收盤價；`compute_risk_stop` 動態停損計算優先自 SQLite 日K計算 ATR20，將多檔持倉（含 6 檔以上）查詢總耗時由原本的 > 35 秒極速壓縮至 **0.8 秒以內**，徹底消除 Cloudflare Worker 與 LINE Webhook 逾時風險<br>• **中文股名智慧雙向解析與非標準代號防呆防護 (`line_server.py`, `bot_db.py`)**：新增 `resolve_ticker` 模組，`買`、`賣`、`關注`、`查詢` 全面支援中文股名輸入（如「買 晶技 196」、「關注 台積電」），自動對映並標準化為正規 4~6 碼數字代號；若遇無效代號立即阻擋並回傳友善錯誤，嚴防非數字字串寫入資料庫；資料庫快照同步（`import_db_snapshot`）與開機自動清理歷史非數字髒資料，阻斷無效爬蟲死循環<br>• **持倉 Flex Message 卡片格式修正與指令別名擴充 (`bot_flex.py`, `line_server.py`)**：徹底修復持倉卡片個股與總損益百分比前綴重複帶入 `+` 號出現 `++` 的格式瑕疵；損益金額強化以正負金錢符號（`+$3,250` / `-$25,000`）規範輸出；指令路由器擴充支援「我的持倉」、「查看持倉」、「查持倉」、「持股」、「我的持股」等自然語義 |
 | **`v3.4.1`** | • **5分K 漲跌幅基準嚴格修正 (`core/analyzer.py`)**：徹底修正 5 分鐘 K 線漲跌幅誤用「今開」而非「昨收」之重大計算瑕疵；統一以官方結算之前一交易日收盤價 (`prev_close`) 為基準，徹底消弭盤中日K顯示大漲紅字、5分K卻反向顯示重挫綠字的紅綠顛倒與數值矛盾<br>• **5分K 報價即時撮合同步與解耦架構 (`core/analyzer.py`, `bot_flex.py`)**：提前整合日線 MTF 即時分析，若取得 TWSE MIS 秒級最新撮合價，5分K 頂部現價自動同步為即時撮合價，徹底消弭盤中日K與5分K因 yfinance 物理延遲產生的報價價差；同時完整保留 5m 棒收盤價 (`bar_close`) 供 BPA 形態與 20 EMA 序列計算，維持量化模型嚴密純淨<br>• **LINE 5分K 卡片時間戳與今開振幅強化 (`bot_flex.py`)**：Header 明確標註 `⚡ 即時 HH:MM (5m HH:MM)`，並將開盤以來強弱以輔助標籤 `今開 ±X.XX%` 呈現，提供日內當沖交易者最精確、透明且無歧義的操盤資訊<br>• **高覆蓋率自動化單元測試集擴增 (`test_analyzer_pipeline.py`)**：新增 `test_5m_price_and_change_calculation` 昨收基準測試，全系統單元測試 100% 通過無回歸 |
@@ -385,3 +398,4 @@ python -X utf8 test_bot_logic.py
 | **`v2.0.0`** | • **Al Brooks BPA 體系**：導入 20 EMA 基準線、逐根 K 線形態分類（趨勢棒/反轉棒/孕線/外部棒/十字棒）<br>• **多維量化決策**：Always-In 市場狀態判定、H1/H2/L1/L2 情境濾網、主圖支撐壓力線與台股 Tick 風控<br>• **品質規範**：建立 BPA 零臆測標準作業規範與自動化交叉驗證測試腳本 |
 | **`v1.1.0`** | • 支援三大法人買賣超數據（外資、投信、自營商）與視覺化呈現<br>• 支援上市（TWSE）與上櫃（TPEX）雙市場自動切換<br>• **5m 量比基線防汙染根治修復 (core/analyzer.py)**：發現今日盤中爆量棒（晶技最高達 63 倍基線均量）透過 rolling(20) 大幅拉高 vol_ma20（從 7 萬股飆升至 110 萬股），導致後期縮量棒 vol_ratio 恆低於 0.1x，使「💤 爆量後量縮休整」標籤永遠無法觸發；改以「今日開盤前之昨日末棒 vol_ma20」作為不可汙染基線（ol_ma20_baseline），had_recent_whale_surge 同步使用基線計算，完全消除滾動均量被今日爆量汙染的系統性盲點 |
 | **`v1.0.0`** | • 初始版本發布：台股 K 線圖量價分析、技術指標（MACD、RSI、KD、均線）與終端多因子研判報告 |
+</details>

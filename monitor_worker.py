@@ -410,6 +410,13 @@ def start_worker_loop(interval_sec=60, force_test=False):
     while True:
         try:
             if is_market_open(force_test=force_test):
+                try:
+                    import firestore_sync
+                    if firestore_sync.sync_from_firestore(bot_db.DEFAULT_DB_PATH):
+                        logger.info("已從 Firestore 同步最新的雙節點變動資料。")
+                except Exception as e:
+                    pass
+
                 logger.info("執行盤中風控巡邏比對...")
                 triggered_stop = run_patrol_cycle(force_test=force_test)
                 if triggered_stop > 0:

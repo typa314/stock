@@ -9,10 +9,10 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone, timedelta
+import threading
 
 # 台股標準時區 (GMT+8)
 TW_TZ = timezone(timedelta(hours=8))
-
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "portfolio.db")
 
 @contextmanager
@@ -133,7 +133,15 @@ def get_or_create_user(line_user_id, display_name=None, db_path=None):
         )
         conn.commit()
         cursor.execute("SELECT * FROM users WHERE id = last_insert_rowid()")
-        return dict(cursor.fetchone())
+        user_dict = dict(cursor.fetchone())
+        
+    try:
+        import firestore_sync
+        firestore_sync.trigger_delta_write('users', line_user_id, line_user_id, user_dict)
+    except Exception:
+        pass
+        
+    return user_dict
 
 def add_or_update_position(line_user_id, ticker, cost_price, shares=1000, stock_name=None, db_path=None):
     """新增或更新持股，若已存在則覆蓋成本與股數"""
@@ -159,7 +167,15 @@ def add_or_update_position(line_user_id, ticker, cost_price, shares=1000, stock_
         conn.commit()
 
         cursor.execute("SELECT * FROM positions WHERE user_id = ? AND ticker = ?", (user_id, t))
-        return dict(cursor.fetchone())
+        pos_dict = dict(cursor.fetchone())
+        
+    try:
+        import firestore_sync
+        firestore_sync.trigger_delta_write('positions', line_user_id, t, pos_dict)
+    except Exception:
+        pass
+        
+    return pos_dict
 
 def close_position(line_user_id, ticker, db_path=None):
     """將持股標記為結案平倉（CLOSED）"""
@@ -179,7 +195,16 @@ def close_position(line_user_id, ticker, db_path=None):
         )
         affected = cursor.rowcount
         conn.commit()
-        return affected > 0
+        
+    if affected > 0:
+        try:
+            import firestore_sync
+            # Close 操作只需更新狀態與時間
+            firestore_sync.trigger_delta_write('positions', line_user_id, t, {'status': 'CLOSED', 'updated_at': now_str})
+        except Exception:
+            pass
+            
+    return affected > 0
 
 def get_user_positions(line_user_id, db_path=None):
     """取得指定用戶的所有開啟中持倉"""
@@ -272,7 +297,16 @@ def add_to_watchlist(line_user_id, ticker, stock_name=None, note=None, max_limit
             updated_at = excluded.updated_at
         """, (user_id, t, stock_name, note, now_str))
         conn.commit()
-        return True, f"✅ 已成功將【{stock_name or t} ({t})】加入自選觀察名單！"
+        
+    try:
+        import firestore_sync
+        firestore_sync.trigger_delta_write('watchlist', line_user_id, t, {
+            'stock_name': stock_name, 'note': note, 'active': 1, 'updated_at': now_str
+        })
+    except Exception:
+        pass
+        
+    return True, f"✅ 已成功將【{stock_name or t} ({t})】加入自選觀察名單！"
 
 def remove_from_watchlist(line_user_id, ticker, db_path=None):
     """將股票自用戶觀察名單移除（標記 active=0）"""
@@ -290,7 +324,15 @@ def remove_from_watchlist(line_user_id, ticker, db_path=None):
         )
         affected = cursor.rowcount
         conn.commit()
-        return affected > 0
+        
+    if affected > 0:
+        try:
+            import firestore_sync
+            firestore_sync.trigger_delta_write('watchlist', line_user_id, t, {'active': 0, 'updated_at': now_str})
+        except Exception:
+            pass
+            
+    return affected > 0
 
 def get_user_watchlist(line_user_id, db_path=None):
     """取得指定用戶的所有有效觀察名單"""
@@ -349,6 +391,7 @@ def import_db_snapshot(data, db_path=None):
 
         # 1. 用戶對映：來源 id -> 本地 id
         id_map = {}
+        line_uid_map = {}
         for u in data.get("users", []):
             line_uid = u.get("line_user_id")
             if not line_uid:
@@ -371,11 +414,12 @@ def import_db_snapshot(data, db_path=None):
                 local_id = cursor.lastrowid
             if u.get("id") is not None:
                 id_map[u["id"]] = local_id
+            line_uid_map[line_uid] = local_id
             stats["users"] += 1
 
         # 2. 持倉（updated_at 較新者為準，空時間戳由 Python 填入台灣時間，杜絕 SQLite CURRENT_TIMESTAMP 的 UTC 回溯）
         for pos in data.get("positions", []):
-            local_uid = id_map.get(pos.get("user_id"))
+            local_uid = id_map.get(pos.get("user_id")) or line_uid_map.get(pos.get("line_user_id"))
             ticker_val = str(pos.get("ticker", "")).strip().upper()
             if local_uid is None or not ticker_val or not re.match(r"^\d{4,6}[a-zA-Z]?$", ticker_val):
                 stats["skipped"] += 1
@@ -404,7 +448,7 @@ def import_db_snapshot(data, db_path=None):
 
         # 3. 自選觀察名單（updated_at 較新者為準，空時間戳由 Python 填入台灣時間）
         for w in data.get("watchlist", []):
-            local_uid = id_map.get(w.get("user_id"))
+            local_uid = id_map.get(w.get("user_id")) or line_uid_map.get(w.get("line_user_id"))
             ticker_val = str(w.get("ticker", "")).strip().upper()
             if local_uid is None or not ticker_val or not re.match(r"^\d{4,6}[a-zA-Z]?$", ticker_val):
                 stats["skipped"] += 1

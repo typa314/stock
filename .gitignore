@@ -47,3 +47,4 @@ rich_menu.png
 
 # Temporary drive uploads
 .tmp.driveupload/
+*firebase_key*.json
