@@ -1380,3 +1380,52 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 - 版本: v3.6.0
 - 所有測試: 27/27 PASS
 - 狀態: 100% 乾淨，等待使用者審查後決定是否推送
+
+---
+## 2026-10-06 Firebase as Server: feasibility evaluation (no code changes)
+
+### Facts verified in the codebase
+- line_server.py:861 webhook returns 200 first, then does the work in a background thread (_WEBHOOK_POOL.submit)
+- line_server.py:245 + monitor_worker.py:410 run the market-hours patrol as a while True background thread
+- bot_db.py:21 sqlite3 (portfolio.db); core/kline_cache.py reuses the same SQLite connection for the daily K-line cache
+- TTLCache is an in-process memory cache; a Dockerfile already exists (uvicorn line_server:app, port 8080)
+
+### Platform constraints (official docs)
+- Cloud Functions 2nd gen requires the Blaze (pay-as-you-go) plan
+- Cloud Run / Functions gen2 throttle CPU by default once the response is sent -> background threads stall
+- Avoiding throttling requires CPU always allocated + min-instances, billed for the whole time the instance is alive
+
+### Conclusion
+- Firebase Cloud Functions as the server: not recommended (3 blockers: replies sent from background threads, the while True patrol, the local SQLite disk)
+- Cron keep-alive only mitigates cold starts; it cannot fix CPU throttling of background threads
+- Feasible path: Cloud Run (existing Dockerfile) + Firestore + Cloud Scheduler; Firebase Hosting can rewrite to Cloud Run
+- Required changes: (1) process webhooks synchronously inside the request (2) patrol as a /patrol endpoint triggered by Scheduler (3) SQLite -> Firestore (4) kline cache rebuilt from parquet on cold start
+- Status: waiting for the user to pick a direction
+
+---
+## 2026-10-06 Firebase pros/cons evaluation (no code changes)
+- Pros: Firestore removes sync_db dual-node reconciliation (line_server.py L48-171); Cloud Scheduler patrol does not depend on the process being awake (today the patrol thread stops when Render free sleeps); asia-east1 Taiwan region; Secret Manager; integrated logging
+- Cons: Blaze plan has no hard spending cap (budget alerts only); Cloud Functions incompatible with current architecture; Firestore bills per read; patrol reads = docs read per run x 270 runs/day (09:00-13:30), free quota 50,000 reads/day; must rewrite bot_db.py and test_bot_db_isolated.py; vendor lock-in
+- Recommendation: if adopting, start with Firestore only and keep the server as-is
+
+---
+## 2026-10-06 Dual-node sync fix (in progress, NOT verified, NOT committed)
+### Measured (read-only drift_check.py)
+- Render cloud DB is empty: users 0 / positions 0 / watchlist 0; local: 15 / 17 / 32
+- Root causes (verified in code): (1) worker.js defaults PREFER_RENDER -> Render is the primary node (2) cloud node never pushes, and local only pulls once at boot (3) render.yaml plan: free -> ephemeral disk, DB is wiped on spin-down or redeploy (4) both nodes run the patrol, but alert_logs were not synced
+- Local DB also contains test accounts (N_TEST/T_REAL/T_TEST/test_u/user_1/er_001/h_test/st_001/ortcut); NOT deleted yet, waiting for the user to decide
+### Changes made (uncommitted)
+- bot_db.py: snapshot export/import now includes the last 7 days of alert_logs (idempotent dedupe)
+- line_server.py: bootstrap_db_sync becomes a pull-then-push loop every SYNC_INTERVAL_SEC (default 60); force push when the cloud is empty; otherwise push only when the local fingerprint changed
+### Still to do: py_compile, full regression tests, add new unit tests, restart local server, re-run drift_check to confirm cloud is repopulated
+### Limitation: with the local PC off, Render data is still lost on spin-down -> the real fix needs a persistent hosted DB (e.g. Firestore)
+
+## 2026-10-06 Can the agent create the Firebase project directly
+- This machine has no firebase CLI / gcloud / node installed
+- Project creation, Google login and the Blaze billing card must be done by the user; the agent can deploy and write code afterwards with CLI + a service account
+
+---
+## 2026-10-06 User check on Key Price Map (Card 3)
+- I verified git state: bot_flex.py has the uncommitted uild_key_levels_flex replacement (diff shows uild_fibonacci_stock_flex was removed and replaced).
+- However, line_server.py had lost the change calling uild_key_levels_flex due to my earlier git checkout -- line_server.py command (it reverted line 686 back to calling uild_fibonacci_stock_flex).
+- I am now restoring the line_server.py integration so the Key Price Map is properly wired up.
