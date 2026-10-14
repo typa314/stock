@@ -125,7 +125,7 @@ def compute_risk_stop(ticker, cost_price, market="tse", user_pct=None, analysis_
                     mult = STOP_ATR_MULT
                     min_pct, max_pct = STOP_PCT_MIN, STOP_PCT_MAX
                     pct = min(max_pct, max(min_pct, mult * atr_pct))
-                    basis = f"{mult:.0f}×ATR20（日波動 {atr_pct * 100:.2f}%）"
+                    basis = f"{mult:g}×ATR20（日波動 {atr_pct * 100:.2f}%）"
                 # 僅在成功算出波動度時快取；暫時性失敗不鎖住整天的警戒價位
                 _STOP_LEVEL_CACHE[key] = (pct, basis)
         except Exception as e:

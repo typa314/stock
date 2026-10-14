@@ -194,7 +194,7 @@ def get_cached_stock_analysis(ticker: str, months: int = 12, quick_mode: bool = 
             logger.info(f"快取命中！【{ticker_clean}】(quick_mode={quick_mode}) 自記憶體即刻回傳（耗時 < 1ms）")
             return _STOCK_CACHE[cache_key]
 
-    res = analyze_stock(ticker_clean, months=months, generate_html=False, print_report=False, quick_mode=quick_mode)
+    res = analyze_stock(ticker_clean, months=months, generate_html=False, print_report=False, quick_mode=quick_mode, build_chart=False)
     if res and "close_now" in res:
         with _STOCK_CACHE_LOCK:
             _STOCK_CACHE[cache_key] = res
@@ -714,7 +714,7 @@ def _cmd_help() -> str:
         "📌 個股雙時框 (日K+5分K) 輪播：\n"
         "   直接輸入代號，如「2330」或「00708L」（左右滑動切換波段與當沖）\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "🛡️ 盤中跌破 -7% 停損或觸發高勝率買點時主動通知！"
+        "🛡️ 盤中跌破浮虧警戒線或觸發高勝率買點時主動通知！"
     )
 
 

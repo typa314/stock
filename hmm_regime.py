@@ -1,26 +1,26 @@
 # -*- coding: utf-8 -*-
 """
 Lightweight, numerically stable 2-state / 3-state Gaussian HMM for market regime detection.
-Zero external dependencies beyond numpy and scipy.
+Zero external dependencies beyond numpy.
 Strictly point-in-time forward filtering (zero lookahead bias).
 """
 import numpy as np
-try:
-    from scipy.special import logsumexp
-except ImportError:
-    def logsumexp(a, axis=None, keepdims=False):
-        """Pure NumPy numerically stable logsumexp fallback."""
-        a = np.asarray(a)
-        a_max = np.amax(a, axis=axis, keepdims=True)
-        a_max_clean = np.where(np.isfinite(a_max), a_max, 0.0)
-        tmp = np.exp(a - a_max_clean)
-        s = np.sum(tmp, axis=axis, keepdims=keepdims)
-        s_clean = np.where(s > 0, s, 1.0)
-        out = np.where(s > 0, np.log(s_clean), -np.inf)
-        if not keepdims:
-            a_max_clean = np.squeeze(a_max_clean, axis=axis)
-        out += a_max_clean
-        return out
+
+
+# 一律使用純 NumPy 實作：scipy 未列在 requirements.txt，改為單一實作可確保本機與雲端部署行為一致
+def logsumexp(a, axis=None, keepdims=False):
+    """Pure NumPy numerically stable logsumexp (matches scipy.special.logsumexp)."""
+    a = np.asarray(a)
+    a_max = np.amax(a, axis=axis, keepdims=True)
+    a_max_clean = np.where(np.isfinite(a_max), a_max, 0.0)
+    tmp = np.exp(a - a_max_clean)
+    s = np.sum(tmp, axis=axis, keepdims=keepdims)
+    s_clean = np.where(s > 0, s, 1.0)
+    out = np.where(s > 0, np.log(s_clean), -np.inf)
+    if not keepdims:
+        a_max_clean = np.squeeze(a_max_clean, axis=axis)
+    out += a_max_clean
+    return out
 
 class GaussianHMM1D2D:
     def __init__(self, n_components=2, n_iter=30, tol=1e-4, random_state=42):

@@ -2,7 +2,7 @@
 """
 monitor_worker.py - 盤中風控巡邏守護引擎
 平日交易時段（09:00~13:35）每 60 秒批次比對所有用戶持股
-當現價跌破 -7% 強制停損時，透過 LINE Push Notification 發送緊急警報
+當現價跌破波動度自適應浮虧警戒線（compute_risk_stop）時，透過 LINE Push Notification 發送警報
 內建單日單股去重冷卻機制，確保每月用量極低（<20則），守護官方 200 則免費額度
 """
 
@@ -185,7 +185,7 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
             with _WORKER_ANALYSIS_LOCK:
                 res = _WORKER_ANALYSIS_CACHE.get(ticker)
             if res is None:
-                res = analyze_stock(ticker, months=12, generate_html=False, print_report=False)
+                res = analyze_stock(ticker, months=12, generate_html=False, print_report=False, build_chart=False)
                 if res and "close_now" in res:
                     with _WORKER_ANALYSIS_LOCK:
                         _WORKER_ANALYSIS_CACHE[ticker] = res
@@ -220,6 +220,13 @@ def check_bottom_confirmation_signals(ticker, market="tse", analysis_res=None):
         signals = bpa_res.get("signals", [])
         ema20_val = float(df["ema20"].iloc[-1]) if ("ema20" in df.columns and not df.empty) else close_now
         last_bar = bpa_res.get("last_bar_type", "")
+
+        # ── 正乖離過熱追高攔截 (Overextension Gate) ──
+        # 若現價正乖離超過 20 EMA 達 +8.0% 以上，短線拉回風險高，不主動推播追高買點
+        bias_ema20_pct = ((close_now - ema20_val) / (ema20_val + 1e-9)) * 100.0 if ema20_val > 0 else 0.0
+        if bias_ema20_pct > 8.0:
+            logger.info(f"【{ticker}】20 EMA 正乖離達 +{bias_ema20_pct:.1f}% (> +8.0%)，攔截追高推播！")
+            return {"triggered": False}
 
         # ── 籌碼硬門檻審核 (Institutional Hard Gate) ──
         # 若近 3 日三大法人合計大賣超過 300 張，視為主力持續提款，技術面反彈極易破底，嚴格攔截不予推播

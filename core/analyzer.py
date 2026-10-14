@@ -269,7 +269,7 @@ def classify_candlestick_patterns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=True, print_report=True, quick_mode=False, display_months=None, **kwargs):
+def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=True, print_report=True, quick_mode=False, display_months=None, build_chart=True, **kwargs):
     ticker = str(ticker).strip()
     market, auto_name = get_info(ticker)
     stock_name = custom_name if custom_name else auto_name
@@ -423,7 +423,7 @@ def analyze_stock(ticker, months=12, cost=None, custom_name=None, generate_html=
 
     # ── 8. Plotly 互動圖表繪製 ──────────────────────────────────
     fig = None
-    if not quick_mode:
+    if not quick_mode and (generate_html or build_chart):
         fig = build_stock_chart(ticker, stock_name, df, cost, close_now, trend_score, rating_badge, r1, r2, s1, s2, stop_loss, display_months=display_months)
 
     output = f"{ticker}_kline.html"
@@ -970,24 +970,14 @@ def analyze_stock_5m(ticker, days=3, custom_name=None):
     _fib_swing_l = low_today
     _fib_rng     = _fib_swing_h - _fib_swing_l
 
-    # 判斷主方向：依 bpa_status 多空方向決定回測基準
+    # 統一斐波那契回測基準：與 fib_ladder 一致，均自今日高點往下計算回測位 (high - rng * ratio)，消除多空切換導致的上下顛倒
     _fib_is_bull = "多" in bpa_status
     _fib_levels_dict: dict[str, float] = {}
-    if _fib_is_bull:
-        # 多方：從低點（0%）向高點（100%），回測往下
-        for ratio, label in zip(_fib_ratios, _fib_labels):
-            _fib_levels_dict[label] = round(_fib_swing_h - _fib_rng * ratio, 2)
-        _fib_ext_127 = round(_fib_swing_l + _fib_rng * 1.272, 2)  # 向上突破擴展目標
-        _fib_ext_162 = round(_fib_swing_l + _fib_rng * 1.618, 2)
-        _fib_direction = "bull"
-    else:
-        # 空方：從高點（0%）向低點（100%），反彈往上（_fib_levels_dict 供支撐阻力判斷）
-        for ratio, label in zip(_fib_ratios, _fib_labels):
-            _fib_levels_dict[label] = round(_fib_swing_l + _fib_rng * ratio, 2)
-        # 延伸目標：Card 3 統一顯示向上突破目標，與多空方向判定解耦
-        _fib_ext_127 = round(_fib_swing_l + _fib_rng * 1.272, 2)
-        _fib_ext_162 = round(_fib_swing_l + _fib_rng * 1.618, 2)
-        _fib_direction = "bear"
+    for ratio, label in zip(_fib_ratios, _fib_labels):
+        _fib_levels_dict[label] = round(_fib_swing_h - _fib_rng * ratio, 2)
+    _fib_ext_127 = round(_fib_swing_l + _fib_rng * 1.272, 2)
+    _fib_ext_162 = round(_fib_swing_l + _fib_rng * 1.618, 2)
+    _fib_direction = "bull" if _fib_is_bull else "bear"
 
     # 找現價最近的上方阻力與下方支撐
     _sorted_vals = sorted(_fib_levels_dict.items(), key=lambda x: x[1])

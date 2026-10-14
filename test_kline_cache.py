@@ -7,10 +7,12 @@ import os
 import shutil
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 import pandas as pd
 from unittest.mock import patch, MagicMock
 
 import bot_db
+from core.constants import TW_TZ
 from core.kline_cache import (
     init_kline_cache_table,
     load_ticker_from_seed,
@@ -63,9 +65,13 @@ class TestKlineCache(unittest.TestCase):
 
     def test_03_cold_ticker_yfinance_fallback(self):
         """測試未在種子檔中的冷門股票走 yfinance 兜底寫入快取"""
+        # 日期相對於今天產生，避免寫死日期隨時間落出 months 查詢視窗
+        now_tw = datetime.now(TW_TZ)
+        d1 = (now_tw - timedelta(days=10)).strftime("%Y-%m-%d")
+        d2 = (now_tw - timedelta(days=9)).strftime("%Y-%m-%d")
         mock_yfinance_data = [
-            {"date": "2026-09-01", "open": 50.0, "high": 52.0, "low": 49.0, "close": 51.0, "volume": 100.0},
-            {"date": "2026-09-02", "open": 51.0, "high": 53.0, "low": 50.0, "close": 52.5, "volume": 120.0},
+            {"date": d1, "open": 50.0, "high": 52.0, "low": 49.0, "close": 51.0, "volume": 100.0},
+            {"date": d2, "open": 51.0, "high": 53.0, "low": 50.0, "close": 52.5, "volume": 120.0},
         ]
         with patch("core.kline_cache.load_ticker_from_seed", return_value=0):
             with patch("core.kline_cache._fetch_yfinance_bars", return_value=mock_yfinance_data):

@@ -174,6 +174,7 @@ def install_patches():
         mod.fetch_realtime_bar = lambda ticker, market: None
         mod.get_info = lambda t: (S["market"], t)
         mod.yf = _FakeYF
+    c_an.build_stock_chart = lambda *a, **k: None
 
     c_rt.yf = _FakeYF
 

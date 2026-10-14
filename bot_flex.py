@@ -283,8 +283,8 @@ def build_stop_loss_alert_flex(stock_name, ticker, current_price, cost_price, st
                     "layout": "horizontal",
                     "margin": "sm",
                     "contents": [
-                        {"type": "text", "text": "強制停損線", "size": "sm", "color": "#f87171", "weight": "bold", "flex": 2},
-                        {"type": "text", "text": f"{stop_price:.2f} 元 (-7.0%)", "size": "sm", "color": "#f87171", "weight": "bold", "align": "end", "flex": 3}
+                        {"type": "text", "text": "浮虧警戒線", "size": "sm", "color": "#f87171", "weight": "bold", "flex": 2},
+                        {"type": "text", "text": f"{stop_price:.2f} 元 (-{stop_pct * 100:.1f}%)", "size": "sm", "color": "#f87171", "weight": "bold", "align": "end", "flex": 3}
                     ]
                 },
                 {
@@ -1989,7 +1989,7 @@ def build_key_levels_flex(res5: dict, daily_res: dict = None, arbitration: dict 
                             "paddingAll": "8px",
                             "contents": [
                                 {"type": "text", "text": "⚡ 進場條件", "size": "xxs", "color": "#fbbf24", "weight": "bold"},
-                                {"type": "text", "text": f"Fib 61.8% 守穩", "size": "xs", "color": "#cbd5e1", "margin": "sm"},
+                                {"type": "text", "text": (f"回測 Fib 61.8% ({fib618_val:.1f}) 守穩" if fib618_val > 0 else "回測 20 EMA 守穩"), "size": "xs", "color": "#cbd5e1", "margin": "sm"},
                                 {"type": "text", "text": f"Buy Stop: {buy_stop:.1f}", "size": "xs", "color": "#4ade80", "weight": "bold", "margin": "xs"}
                             ]
                         },

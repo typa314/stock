@@ -245,14 +245,16 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
             f"技術面易遭拉回，扣 {PENALTY_BIAS_TIER1_POINTS} 分"
         )
 
-    # 2. 當日量能萎縮懲罰，僅在上漲日觸發（防量縮整理被誤罰）
+    # 2. 當日量能萎縮懲罰，僅在實質上漲日 (> +0.5%) 且量縮時觸發（排除平盤整理與高檔微幅鎖碼）
     vol_now_d  = float(df["volume"].iloc[-1]) if "volume" in df.columns else 0.0
     vol_ma20_d = float(df["volume"].rolling(20).mean().iloc[-1]) if (
         "volume" in df.columns and len(df) >= 20
     ) else vol_now_d
     vol_ratio_d = (vol_now_d / (vol_ma20_d + 1e-9)) if vol_ma20_d > 0 else 1.0
 
-    if len(df) >= 2 and float(df["close"].iloc[-1]) >= float(df["close"].iloc[-2]):
+    prev_c_d = float(df["close"].iloc[-2]) if len(df) >= 2 else c_now
+    chg_pct_d = ((c_now - prev_c_d) / (prev_c_d + 1e-9)) * 100.0 if prev_c_d > 0 else 0.0
+    if len(df) >= 2 and chg_pct_d > 0.5:
         if vol_ratio_d < PENALTY_VOL_DULL_THRESHOLD:
             deduction += PENALTY_VOL_DULL_POINTS
             penalties.append(
@@ -260,7 +262,12 @@ def evaluate_composite_rating(df, bpa_res, vol_eval, inst_df, fundamentals, tick
                 f"上漲無量，扣 {PENALTY_VOL_DULL_POINTS} 分"
             )
 
-    total_score = max(0, min(100, int(round(base_score - deduction))))
+    # 防護地板：若基礎體質評分 >= 75 且處於多頭結構，短線乖離/量縮扣分最低降為 70 分（HOLD/觀望拉回，絕不誤打入 <50 的 SELL）
+    raw_after_deduct = int(round(base_score - deduction))
+    if round(base_score) >= 75 and ("多" in bpa_zh or (m_passed is not None and m_passed >= 5)):
+        total_score = max(70, min(100, raw_after_deduct))
+    else:
+        total_score = max(0, min(100, raw_after_deduct))
 
 
 
