@@ -28,8 +28,9 @@ description: >-
 ### 關卡 1：語法與靜態檢查
 * 使用 `python -c "import ast; ast.parse(...)"` 或 linter 確保改動後的檔案無語法錯誤、無未閉合括號或縮排問題。
 
-### 關卡 2：全單元測試回歸
+### 關卡 2：全單元測試回歸與 LINE Flex 圖卡強制驗證（嚴禁未檢查即上傳）
 * 執行 `python test_bot_logic.py`，確認所有單元測試、整合測試全數通過（`OK`）。
+* **強制執行 `python scripts/verify_flex_before_push.py`**：驗證全數 LINE Flex Message 圖卡（三時框 Carousel、持倉、自選）之色碼 100% 為合法 `#RRGGBB`（嚴禁 CSS `rgba(...)` 或 `transparent`）、文字非空，並通過 LINE 官方 `/v2/bot/message/validate/reply` API `HTTP 200` 驗證。**嚴禁任何 Agent 不檢查此項圖卡功能就上傳代碼**（已由 `.git/hooks/pre-push` 自動強制攔截）。
 * 若改動涉及既有邏輯（例如訊息格式、警報門檻、字串替換），必須同步確認未引發回歸錯誤。
 
 ### 關卡 3：歷史與實時數據回測驗證 (堅持客觀驗證)

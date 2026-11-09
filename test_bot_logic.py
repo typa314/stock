@@ -490,5 +490,76 @@ class TestLineBotCore(unittest.TestCase):
         if 80 <= r_adverse_80["score"] < 85:
             self.assertEqual(r_adverse_80["action_type"], "WAIT", "震盪市況下 80~84 分應降級為 WAIT 觀望")
 
+    def test_flex_colors_strictly_hex(self):
+        """驗證所有 Flex Message 卡片（含跨時框仲裁橫幅與關鍵價位地圖）色碼 100% 為合法 Hex (#RRGGBB)，嚴禁 rgba 或 transparent"""
+        import re
+        from core.decision_engine import arbitrate_signals
+
+        daily_res = {
+            "composite_rating": {"score": 88, "action_type": "BUY"},
+            "bpa_res": {"always_in_zh": "🟢 多頭主升趨勢"},
+            "close_now": 1390.0,
+            "ema20": 1363.41,
+        }
+        res5 = {
+            "ticker": "6446",
+            "stock_name": "藥華藥",
+            "market": "two",
+            "close_now": 1390.0,
+            "change_today": 15.0,
+            "change_today_pct": 1.09,
+            "bpa_status": "🟢 多方控盤",
+            "noise_ratio": 1.1,
+            "action_tag": "🟢 順勢做多",
+            "ema_now": 1380.0,
+            "high_today": 1405.0,
+            "low_today": 1370.0,
+            "buy_stop": 1395.0,
+            "sell_stop": 1365.0,
+            "stop_loss": 1370.0,
+            "target_1r": 1420.0,
+            "target_2r": 1445.0,
+            "fib_levels": {
+                "ext_162": 1430.0,
+                "ext_127": 1415.0,
+                "fib_ladder": [
+                    {"ratio": "38.2%", "price": 1391.6, "meaning": "強勢淺回"},
+                    {"ratio": "50.0%", "price": 1387.5, "meaning": "中軸支撐"},
+                    {"ratio": "61.8%", "price": 1383.4, "meaning": "黃金分割"},
+                ],
+            },
+        }
+        arb = arbitrate_signals(daily_res, res5)
+        b_daily = bot_flex.build_dashboard_stock_flex(
+            stock_name="藥華藥", ticker="6446", market="two",
+            close_now=1390.0, chg_val=15.0, chg_pct=1.09,
+            realtime_info={"is_realtime": False}, df=None,
+            bpa_res=daily_res["bpa_res"], trend_score=85, trend_stage="第二階段",
+            rating_badge="A+", comp=daily_res["composite_rating"],
+            sr={"s1": 1350.0, "r1": 1420.0}, arbitration=arb
+        )
+        b_5m = bot_flex.build_5m_stock_flex(res5, arbitration=arb)
+        b_map = bot_flex.build_key_levels_flex(res5, daily_res=daily_res, arbitration=arb)
+        carousel = bot_flex.build_stock_carousel_flex(b_daily, b_5m, b_map)
+
+        hex_re = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
+        invalid = []
+
+        def _walk(obj, path=""):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    cur = f"{path}/{k}"
+                    if k in ("color", "backgroundColor", "borderColor") and isinstance(v, str):
+                        if not hex_re.match(v):
+                            invalid.append((cur, v))
+                    _walk(v, cur)
+            elif isinstance(obj, list):
+                for idx, item in enumerate(obj):
+                    _walk(item, f"{path}/{idx}")
+
+        _walk(carousel)
+        self.assertEqual(invalid, [], f"Flex Message 發現非法色碼（LINE API 會回傳 400 拒絕）: {invalid}")
+
+
 if __name__ == "__main__":
     unittest.main()

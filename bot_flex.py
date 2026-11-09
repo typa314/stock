@@ -12,6 +12,23 @@ def get_tw_pnl_color(pnl):
         return "#22c55e"
     return "#94a3b8"
 
+
+def _to_flex_bg_hex(raw_bg: str, border_hex: str = "#fbbf24") -> str:
+    """將 CSS rgba(...) 或任意背景色安全轉換為 LINE Flex 支援之 #RRGGBB 深色十六進位色碼"""
+    s = str(raw_bg or "").strip()
+    if s.startswith("#") and len(s) in (7, 9):
+        return s
+    key = f"{s} {border_hex}".lower()
+    if "34, 197, 94" in key or "34,197,94" in key or "#22c55e" in key or "#4ade80" in key:
+        return "#052e16"
+    if "239, 68, 68" in key or "239,68,68" in key or "244, 63, 94" in key or "244,63,94" in key or "#ef4444" in key or "#f43f5e" in key:
+        return "#450a0a"
+    if "56, 189, 248" in key or "56,189,248" in key or "#38bdf8" in key:
+        return "#082f49"
+    if "245, 158, 11" in key or "245,158,11" in key or "#fbbf24" in key or "#f59e0b" in key:
+        return "#422006"
+    return "#1e293b"
+
 def build_portfolio_flex(user_name, items, total_pnl, total_pnl_pct):
     """
     建立個人持股風控總覽 Flex Bubble
@@ -642,7 +659,7 @@ def build_dashboard_stock_flex(
                 *([{
                     "type": "box",
                     "layout": "vertical",
-                    "backgroundColor": arbitration.get("master_bg", "rgba(245,158,11,0.18)"),
+                    "backgroundColor": _to_flex_bg_hex(arbitration.get("master_bg", ""), arbitration.get("master_border", "#fbbf24")),
                     "cornerRadius": "8px",
                     "paddingAll": "10px",
                     "borderWidth": "2px",
@@ -1413,7 +1430,7 @@ def build_5m_stock_flex(res5: dict, arbitration: dict = None) -> dict:
     is_rt = bool(rt_info and rt_info.get("is_realtime"))
     rt_time = rt_info.get("time", "") if is_rt else ""
     bar_time = data_time_str.split(" ")[-1] if data_time_str else ""
-    time_label = f"⚡ 即時 {rt_time} (5m {bar_time})" if (is_rt and rt_time) else (f"5m棒 {bar_time}" if bar_time else "")
+    time_label = f"⚡ 即時 {rt_time} (5m {bar_time})" if (is_rt and rt_time) else (f"5m棒 {bar_time}" if bar_time else "📅 盤後定盤")
 
     intraday_pct = float(res5.get("intraday_change_pct", 0.0)) if res5.get("intraday_change_pct") is not None else None
     if intraday_pct is not None:
@@ -1555,7 +1572,7 @@ def build_5m_stock_flex(res5: dict, arbitration: dict = None) -> dict:
                 *([{
                     "type": "box",
                     "layout": "vertical",
-                    "backgroundColor": arbitration.get("master_bg", "rgba(245,158,11,0.18)"),
+                    "backgroundColor": _to_flex_bg_hex(arbitration.get("master_bg", ""), arbitration.get("master_border", "#fbbf24")),
                     "cornerRadius": "8px",
                     "paddingAll": "10px",
                     "borderWidth": "2px",
@@ -1882,14 +1899,12 @@ def build_key_levels_flex(res5: dict, daily_res: dict = None, arbitration: dict 
         diff = price - close_val
         diff_str = f"{diff:+.2f}" if not is_current else meaning
         
-        bg_color = "#1e3a5f" if is_current else "transparent"
         weight = "bold" if is_current else "regular"
         sz = "sm" if is_current else "xs"
         
-        return {
+        row_box = {
             "type": "box",
             "layout": "horizontal",
-            "backgroundColor": bg_color,
             "cornerRadius": "4px",
             "paddingAll": "4px",
             "margin": "xs" if is_current else "none",
@@ -1899,6 +1914,9 @@ def build_key_levels_flex(res5: dict, daily_res: dict = None, arbitration: dict 
                 {"type": "text", "text": diff_str, "size": "xxs", "color": color if is_current else "#64748b", "align": "end", "flex": 3}
             ]
         }
+        if is_current:
+            row_box["backgroundColor"] = "#1e3a5f"
+        return row_box
         
     levels_contents = []
     inserted_current = False

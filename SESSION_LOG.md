@@ -1429,3 +1429,35 @@ Parquet 合計 2.2 MB，pickle 快取 6.6 MB。
 - I verified git state: bot_flex.py has the uncommitted uild_key_levels_flex replacement (diff shows uild_fibonacci_stock_flex was removed and replaced).
 - However, line_server.py had lost the change calling uild_key_levels_flex due to my earlier git checkout -- line_server.py command (it reverted line 686 back to calling uild_fibonacci_stock_flex).
 - I am now restoring the line_server.py integration so the Key Price Map is properly wired up.
+
+---
+## 2026-11-09 線上 LINE Bot 服務狀態健檢（收不到圖卡排查）
+### 實測數據（Read-only 檢查）
+1. **LINE Webhook 設定**：https://tw-stock-bpa-router.typa3-14.workers.dev/callback (ctive: true)，執行 LINE 官方 webhook/test 回傳 200 OK。
+2. **LINE 推播額度**：	ype: limited, value: 200，當月已消耗 	otalUsage: 3（額度充足）。
+3. **Cloudflare Worker 路由器 (/health)**：
+   - 第 1 順位 💻 本地電腦 (高算力優先) (https://html-assured-urgent-reasonable.trycloudflare.com)：status: http_530（離線）。
+   - 第 2 順位 ☁️ Render 雲端 (留守備援) (https://tw-stock-bpa-bot.onrender.com)：status: online，版本 3.6.0，line_sdk_configured: true，延遲 194ms。
+4. **根因定位**：
+   - **原因 A（Cloudflare Worker 路由邏輯缺陷）**：線上部署的 Worker 將 http_530（Cloudflare Tunnel 離線錯誤碼，屬 5xx）透過 
+es.status >= 200 && res.status < 500 過濾後雖會 fallback 到 Render，但若為 Render Free Tier 休眠冷啟動（Cold Start 需 30~50 秒），LINE Webhook 與 Worker 探測在首次請求時可能逾時或延遲，且當 Render 休眠重啟後，因 3.7.0 (Firestore 同步) 尚未 git push 至遠端 (origin/main 停在 ce8d71c v3.6.0)，Render 雲端 SQLite 為空（users: 0, positions: 0, watchlist: 0）。
+   - **原因 B（若查詢「持倉」或「自選」圖卡）**：由於 Render 雲端目前運行舊版 3.6.0（無 Firestore 持久化），容器休眠重啟後雲端資料庫被清空，查詢持倉/自選會回傳純文字空庫存提示而非 Flex 圖卡。
+
+---
+## 2026-11-09 修復 LINE 查詢個股僅收到「📊 【量化診斷回報】...現價與指標已計算完成」純文字備援 (Flex HTTP 400)
+### G1 根因與實測證據
+1. **症狀**：使用者於 LINE 輸入 `6446`，只收到純文字備援訊息：
+   `📊 【量化診斷回報】 / 📊 【6446】雙時框量化診斷 (日K + 5分K) / 現價與指標已計算完成。`
+2. **根因與出處**：
+   - `line_server.py:911-915`：當 `safe_reply` 傳送 `FlexSendMessage` 遭 LINE Messaging API 回傳 `HTTP 400 Bad Request` (`REPLY_FAILED`) 時，自動降級傳送上述 `fallback_txt`。
+   - 經呼叫 LINE 官方驗證端點 `POST https://api.line.me/v2/bot/message/validate/reply` 實測，三張卡片均因 `backgroundColor` 含有非十六進位色碼遭退回 `HTTP 400`：
+     - **Card 0 (日K, `bot_flex.py:645`) & Card 1 (5分K, `bot_flex.py:1558`)**：直接將 `arbitration.get("master_bg", "rgba(245,158,11,0.18)")` 傳給 Flex Box `backgroundColor`（報錯 `invalid property: /contents/0/body/contents/0/backgroundColor`）。
+     - **Card 2 (關鍵價位地圖, `bot_flex.py:1885, 1892`)**：非現價列使用 `"backgroundColor": "transparent"`（報錯 `invalid property: /body/contents/1/backgroundColor`）。
+### G2 最小改動
+- `bot_flex.py`：新增 `_to_flex_bg_hex()` 將 `arbitration` 的 `rgba(...)` 轉換為深色 `#RRGGBB` 色碼（`#052e16`、`#450a0a`、`#082f49`、`#422006`）；`build_key_levels_flex` 的 `_build_level_row` 移除 `"transparent"`，僅在 `is_current=True` 時設定 `"backgroundColor": "#1e3a5f"`。
+- `test_bot_logic.py`：新增 `test_flex_colors_strictly_hex` 遞迴驗證 Carousel 全數色碼欄位。
+### G3 先失敗、再成功驗證
+- **修前（陽性對照）**：`POST https://api.line.me/v2/bot/message/validate/reply` 對 `_cmd_stock_query('6446')` 回傳 `400 {"message":"A message (messages[0]) in the request body is invalid","details":[{"message":"invalid property","property":"/contents/0/body/contents/0/backgroundColor"}]}`。
+- **修後**：`POST https://api.line.me/v2/bot/message/validate/reply` 對 `_cmd_stock_query('6446')` 回傳 `200 {}`；`python -m py_compile bot_flex.py test_bot_logic.py` 通過；`python test_bot_logic.py` 10 項測試 100% 通過。
+### G4 交叉審查
+- 原始輸出路徑：C:\Users\typa3\agent_tmp\xreview\20261109_143555.PqXo（Codex 審查結果：NO FINDINGS）。
